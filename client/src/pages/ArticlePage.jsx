@@ -42,7 +42,7 @@ function ShareBar({ article }) {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
-    } catch { /* ignore */ }
+    } catch {  }
   };
 
   return (
@@ -81,7 +81,6 @@ function ShareBar({ article }) {
   );
 }
 
-/** Timeline verticale des articles récents */
 function RecentTimeline({ articles, currentSlug }) {
   return (
     <ol className="relative space-y-7 border-l-2 border-brand-100 pl-6">
@@ -143,7 +142,7 @@ export default function ArticlePage() {
 
   return (
     <>
-      {/* En-tête */}
+      {}
       <section className="relative overflow-hidden bg-ink-950 pt-36 pb-16">
         <div className="absolute inset-0">
           <img src={article.image} alt="" className="h-full w-full object-cover opacity-30" />
@@ -180,7 +179,7 @@ export default function ArticlePage() {
         </div>
       </section>
 
-      {/* Corps : contenu + sidebar */}
+      {}
       <section className="container-x py-16">
         <div className="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[1.6fr_1fr]">
           <Reveal>
@@ -201,7 +200,7 @@ export default function ArticlePage() {
             </article>
           </Reveal>
 
-          {/* Sidebar */}
+          {}
           <Reveal x={36} y={0} className="space-y-7 lg:sticky lg:top-24 lg:self-start">
             <div className="card p-6">
               <h3 className="flex items-center gap-2 font-display font-bold text-ink-900">

@@ -40,7 +40,6 @@ export default function ArticlesAdmin() {
     setError('');
     try {
       const payload = { ...editing };
-      // extrait auto : 1er paragraphe du contenu si vide
       if (!payload.excerpt?.trim()) {
         const text = stripHtml(payload.content).replace(/\s+/g, ' ').trim();
         payload.excerpt = text.length > 160 ? `${text.slice(0, 157)}…` : text;

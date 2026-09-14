@@ -17,7 +17,7 @@ const emptyUser = { email: '', password: '', full_name: '', role: 'editor' };
 
 export default function UsersAdmin() {
   const [users, setUsers] = useState([]);
-  const [editing, setEditing] = useState(null); // null | {…user} (id = édition)
+  const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 

@@ -107,8 +107,7 @@ CREATE TABLE IF NOT EXISTS media (
 );
 `);
 
-// ---------- Migrations (bases existantes) ----------
-const migrate = (sql) => { try { db.exec(sql); } catch { /* colonne déjà présente */ } };
+const migrate = (sql) => { try { db.exec(sql); } catch {  } };
 migrate("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'");
 migrate('ALTER TABLE articles ADD COLUMN seo_title TEXT NOT NULL DEFAULT \'\'');
 migrate("ALTER TABLE articles ADD COLUMN seo_description TEXT NOT NULL DEFAULT ''");

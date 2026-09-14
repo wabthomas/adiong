@@ -96,7 +96,7 @@ export default function AdminLayout() {
 
   return (
     <div className="min-h-screen bg-cream">
-      {/* Mobile top bar */}
+      {}
       <div className="sticky top-0 z-40 flex items-center justify-between bg-white/90 px-5 py-4 shadow-soft backdrop-blur lg:hidden">
         <p className="font-display font-bold text-ink-900">Administration ADI</p>
         <button onClick={() => setOpen((v) => !v)} className="grid h-10 w-10 place-items-center rounded-xl bg-ink-50 text-ink-700">
@@ -105,10 +105,10 @@ export default function AdminLayout() {
       </div>
 
       <div className="mx-auto flex max-w-[1400px]">
-        {/* Desktop sidebar */}
+        {}
         <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r border-ink-100 bg-white lg:block">{sidebar}</aside>
 
-        {/* Mobile drawer */}
+        {}
         {open && (
           <div className="fixed inset-0 z-50 lg:hidden">
             <div className="absolute inset-0 bg-ink-950/40" onClick={() => setOpen(false)} />

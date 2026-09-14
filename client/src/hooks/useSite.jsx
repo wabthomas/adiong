@@ -20,7 +20,6 @@ export function SiteProvider({ children }) {
     load();
   }, []);
 
-  // Favicon dynamique (éditable dans l'admin)
   useEffect(() => {
     if (!data.site.favicon) return;
     let link = document.querySelector("link[rel~='icon']");

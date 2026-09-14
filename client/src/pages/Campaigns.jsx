@@ -27,7 +27,7 @@ export default function Campaigns() {
         image={site.campaigns_header?.image || '/uploads/seed/campaign-kits.jpg'}
       />
 
-      {/* Bandeau global */}
+      {}
       <section className="container-x -mt-10 relative z-10">
         <Reveal>
           <div className="card grid gap-8 p-8 sm:grid-cols-3">

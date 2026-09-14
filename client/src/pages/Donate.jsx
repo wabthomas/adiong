@@ -19,7 +19,7 @@ export default function Donate() {
   const [custom, setCustom] = useState('');
   const [campaignId, setCampaignId] = useState(params.get('campaignId') || '');
   const [message, setMessage] = useState('');
-  const [status, setStatus] = useState('idle'); // idle | loading | done | error
+  const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
 
   usePageSeo({

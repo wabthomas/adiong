@@ -36,7 +36,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// ---------- helpers ----------
 const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 const setSetting = (key, value) =>
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
@@ -58,11 +57,8 @@ const STRING_SETTINGS = [
 ];
 
 const JSON_SETTINGS = {
-  // liste de {title, text} ou {value, suffix, label}
   stats: [], values: [], method: [],
-  // listes plates
   marquee_items: [], donate_amounts: [], donate_why_points: [], campaign_points: [],
-  // objets {kicker, title, text, image}
   about_header: {}, work_header: {}, news_header: {}, campaigns_header: {}, donate_header: {}, contact_header: {}
 };
 
@@ -84,7 +80,6 @@ const authRequired = (req, res, next) => {
   if (!token) return res.status(401).json({ error: 'Non authentifié' });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
-    // rôle à jour depuis la base (un admin peut avoir révoqué un rôle)
     const fresh = db.prepare('SELECT role FROM users WHERE id = ?').get(req.user.id);
     req.user.role = fresh?.role || 'viewer';
     next();
@@ -114,7 +109,6 @@ const uniqueSlug = (table, desired, ignoreId = null) => {
   return slug;
 };
 
-// ---------- uploads ----------
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({
@@ -134,7 +128,6 @@ const upload = multer({
 });
 app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));
 
-// ---------- auth ----------
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
@@ -156,7 +149,6 @@ app.post('/api/auth/password', authRequired, (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- public API ----------
 app.get('/api/public/site', (req, res) => res.json(publicSite()));
 
 app.get('/api/public/articles', (req, res) => {
@@ -195,8 +187,6 @@ app.get('/api/public/campaigns/:slug', (req, res) => {
   res.json(c);
 });
 
-// ---------- SEO : sitemap.xml, robots.txt, flux RSS ----------
-// URL de base : env BASE_URL (ex. https://app.adiong.org), sinon le host de la requête.
 const siteBaseUrl = (req) =>
   (process.env.BASE_URL || `${req.protocol}://${req.headers.host}`).replace(/\/+$/, '');
 const xmlEsc = (s) => String(s ?? '')
@@ -216,14 +206,11 @@ app.get('/sitemap.xml', (req, res) => {
     { loc: `${base}/faire-un-don`, lastmod: today },
     { loc: `${base}/contact`, lastmod: today }
   ];
-  // Articles publiés (sauf noindex)
   db.prepare('SELECT slug, date FROM articles WHERE published = 1 AND (seo_noindex IS NULL OR seo_noindex = 0) ORDER BY date DESC')
     .all()
     .forEach((a) => entries.push({ loc: `${base}/actualites/${a.slug}`, lastmod: isoDate(a.date) }));
-  // Causes
   db.prepare('SELECT slug FROM causes WHERE published = 1').all()
     .forEach((c) => entries.push({ loc: `${base}/notre-travail/${c.slug}`, lastmod: today }));
-  // Collectes
   db.prepare('SELECT slug FROM campaigns WHERE published = 1').all()
     .forEach((c) => entries.push({ loc: `${base}/collectes/${c.slug}`, lastmod: today }));
 
@@ -299,7 +286,6 @@ app.post('/api/donate', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- admin API ----------
 app.get('/api/admin/dashboard', authRequired, (req, res) => {
   const q = (s) => db.prepare(s).get();
   res.json({
@@ -316,7 +302,6 @@ app.get('/api/admin/dashboard', authRequired, (req, res) => {
   });
 });
 
-// ----- articles -----
 app.get('/api/admin/articles', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM articles ORDER BY date DESC').all()));
 app.post('/api/admin/articles', authRequired, requireRole('content'), (req, res) => {
   const { title, slug, excerpt, content, category, image, author, date, published,
@@ -344,7 +329,6 @@ app.delete('/api/admin/articles/:id', authRequired, requireRole('content'), (req
   res.json({ ok: true });
 });
 
-// ----- causes -----
 app.get('/api/admin/causes', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM causes ORDER BY sort_order').all()));
 app.post('/api/admin/causes', authRequired, requireRole('content'), (req, res) => {
   const { title, slug, tagline, description, long_content, icon, image, link, sort_order } = req.body || {};
@@ -366,7 +350,6 @@ app.delete('/api/admin/causes/:id', authRequired, requireRole('content'), (req, 
   res.json({ ok: true });
 });
 
-// ----- campaigns -----
 app.get('/api/admin/campaigns', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM campaigns ORDER BY deadline').all()));
 app.post('/api/admin/campaigns', authRequired, requireRole('content'), (req, res) => {
   const { title, slug, description, image, goal_amount, collected_amount, deadline, cause_slug } = req.body || {};
@@ -388,7 +371,6 @@ app.delete('/api/admin/campaigns/:id', authRequired, requireRole('content'), (re
   res.json({ ok: true });
 });
 
-// ----- donations -----
 app.get('/api/admin/donations', authRequired, requireRole('any'), (req, res) =>
   res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC').all()));
 app.put('/api/admin/donations/:id', authRequired, requireRole('content'), (req, res) => {
@@ -400,7 +382,6 @@ app.delete('/api/admin/donations/:id', authRequired, requireRole('content'), (re
   res.json({ ok: true });
 });
 
-// ----- messages -----
 app.get('/api/admin/messages', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM messages ORDER BY created_at DESC').all()));
 app.put('/api/admin/messages/:id', authRequired, requireRole('any'), (req, res) => {
   db.prepare('UPDATE messages SET read = 1 WHERE id = ?').run(req.params.id);
@@ -411,7 +392,6 @@ app.delete('/api/admin/messages/:id', authRequired, requireRole('content'), (req
   res.json({ ok: true });
 });
 
-// ----- settings -----
 app.get('/api/admin/settings', authRequired, requireRole('admin'), (req, res) => {
   const s = publicSite();
   s.stats = JSON.parse(JSON.stringify(s.stats));
@@ -427,7 +407,6 @@ app.put('/api/admin/settings', authRequired, requireRole('admin'), (req, res) =>
   res.json(publicSite());
 });
 
-// ----- upload -----
 app.post('/api/admin/upload', authRequired, requireRole('content'), (req, res) => {
   upload.single('image')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
@@ -436,7 +415,6 @@ app.post('/api/admin/upload', authRequired, requireRole('content'), (req, res) =
   });
 });
 
-// ---------- Médias (bibliothèque d'images optimisées) ----------
 const mediaDir = path.join(uploadDir, 'media');
 if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
 
@@ -449,8 +427,6 @@ const memoryUpload = multer({
   }
 });
 
-// Redimensionne proportionnellement en passant des dimensions numériques explicites
-// (la forme objet de Jimp, `resize({w})`, est instable selon les versions).
 function scaleTo(image, maxW, maxH) {
   const { width, height } = image.bitmap;
   const scale = Math.min(maxW / width, maxH / height, 1);
@@ -471,8 +447,6 @@ async function optimizeBuffer(buffer) {
   const mainPath = path.join(mediaDir, `${stamp}.${mainExt}`);
   await image.writeAsync(mainPath);
 
-  // On garde la version la plus petite : si l'original était déjà bien compressé,
-  // la ré-encodage ne sert à rien.
   if (buffer.length > 0 && buffer.length < fs.statSync(mainPath).size) {
     fs.writeFileSync(mainPath, buffer);
   }
@@ -527,7 +501,6 @@ app.patch('/api/admin/media/:id', authRequired, requireRole('content'), (req, re
 app.delete('/api/admin/media/:id', authRequired, requireRole('content'), (req, res) => {
   const m = db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Image introuvable' });
-  // vérifie si l'image est utilisée quelque part
   const used =
     db.prepare('SELECT COUNT(*) n FROM articles WHERE image = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM causes WHERE image = ?').get(m.url).n +
@@ -538,13 +511,12 @@ app.delete('/api/admin/media/:id', authRequired, requireRole('content'), (req, r
   for (const f of [m.url, m.thumb]) {
     if (!f) continue;
     const rel = f.replace(/^\/uploads\//, '');
-    try { fs.unlinkSync(path.join(uploadDir, rel)); } catch { /* déjà supprimée */ }
+    try { fs.unlinkSync(path.join(uploadDir, rel)); } catch {  }
   }
   db.prepare('DELETE FROM media WHERE id = ?').run(m.id);
   res.json({ ok: true });
 });
 
-// ---------- Utilisateurs & rôles ----------
 const ROLE_LABELS = { admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
 
 function guardLastAdmin(id, role) {
@@ -600,7 +572,6 @@ app.delete('/api/admin/users/:id', authRequired, requireRole('admin'), (req, res
   res.json({ ok: true });
 });
 
-// ---------- static (production) ----------
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, { maxAge: '1d' }));

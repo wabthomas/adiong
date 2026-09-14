@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSite as useSiteCtx } from './useSite.jsx';
 
-/**
- * Applique le SEO d'une page : <title>, meta description,
- * Open Graph (partage Facebook/WhatsApp/X/LinkedIn), Twitter Card et canonical.
- */
+
 export default function useSeo({ title, description, image, path = '', noindex = false, type = 'website' }) {
   const [ready, setReady] = useState(false);
 
@@ -42,7 +39,6 @@ export default function useSeo({ title, description, image, path = '', noindex =
     setMeta('name', 'description', desc);
     setCanonical(url);
 
-    // Flux RSS (découverte par les lecteurs de flux & les moteurs)
     let rss = document.head.querySelector('link[rel="alternate"][type="application/rss+xml"]');
     if (!rss) {
       rss = document.createElement('link');
@@ -53,7 +49,6 @@ export default function useSeo({ title, description, image, path = '', noindex =
     }
     rss.href = `${window.location.origin}/rss.xml`;
 
-    // Open Graph
     setMeta('property', 'og:site_name', 'ADI ONG');
     setMeta('property', 'og:locale', 'fr_FR');
     setMeta('property', 'og:type', type);
@@ -62,13 +57,11 @@ export default function useSeo({ title, description, image, path = '', noindex =
     if (img) setMeta('property', 'og:image', new URL(img, window.location.origin).href);
     setMeta('property', 'og:url', url);
 
-    // Twitter
     setMeta('name', 'twitter:card', 'summary_large_image');
     setMeta('name', 'twitter:title', fullTitle);
     if (desc) setMeta('name', 'twitter:description', desc);
     if (img) setMeta('name', 'twitter:image', new URL(img, window.location.origin).href);
 
-    // noindex
     let el = document.head.querySelector('meta[name="robots"]');
     if (!el) {
       el = document.createElement('meta');
@@ -79,10 +72,7 @@ export default function useSeo({ title, description, image, path = '', noindex =
   }, [ready, title, description, image, path, noindex, type]);
 }
 
-/**
- * Wrapper : compose le titre/description de la page avec le SEO global du site.
- * Usage : usePageSeo({ title: 'À propos', description: '…' })
- */
+
 export function usePageSeo({ title, description, image, path, noindex, type }) {
   const { site } = useSiteCtx();
   const finalTitle = title

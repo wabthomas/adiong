@@ -199,7 +199,7 @@ export default function SettingsAdmin() {
         </p>
       )}
 
-      {/* Onglets */}
+      {}
       <div className="mb-8 flex flex-wrap gap-2">
         {TABS.map(([id, label]) => (
           <button

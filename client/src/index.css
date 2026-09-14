@@ -44,7 +44,7 @@
   }
 }
 
-/* ---------- Contenu d'article (HTML édité) ---------- */
+
 .prose-adi {
   @apply max-w-none;
 }
@@ -106,7 +106,7 @@
   text-align: right;
 }
 
-/* ---------- Éditeur TipTap ---------- */
+
 .prose-editor {
   @apply max-w-none;
 }

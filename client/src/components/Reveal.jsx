@@ -1,7 +1,6 @@
 import React from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 
-/** Fades + slides content in when scrolled into view. */
 export default function Reveal({ children, delay = 0, y = 28, x = 0, once = true, className = '', ...rest }) {
   const reduce = useReducedMotion();
   return (

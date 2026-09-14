@@ -9,7 +9,7 @@ function LibraryPanel({ onPick, onClose, embedded = false }) {
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState('');
   const [error, setError] = useState('');
-  const [altEdit, setAltEdit] = useState(null); // id de l'image dont on édite le texte alternatif
+  const [altEdit, setAltEdit] = useState(null);
   const [altDraft, setAltDraft] = useState('');
   const fileRef = useRef(null);
 
@@ -39,7 +39,7 @@ function LibraryPanel({ onPick, onClose, embedded = false }) {
       await navigator.clipboard.writeText(new URL(url, window.location.origin).href);
       setCopied(url);
       setTimeout(() => setCopied(''), 1500);
-    } catch { /* clipboard indisponible */ }
+    } catch {  }
   };
 
   const remove = async (m) => {
@@ -186,12 +186,7 @@ function LibraryPanel({ onPick, onClose, embedded = false }) {
   );
 }
 
-/**
- * Bibliothèque d'images : grille, recherche, upload (optimisée côté serveur :
- * redimensionnement max 1600px + compression + miniature 480px), copie de l'URL,
- * suppression. En mode `selectable`, un clic sur une image appelle onPick(url).
- * `embedded` = rendu plein écran (page Médiathèque de l'admin).
- */
+
 export default function MediaLibrary({ open, onClose, onPick, embedded = false }) {
   if (embedded) return <LibraryPanel onPick={onPick} onClose={onClose} embedded />;
   return (

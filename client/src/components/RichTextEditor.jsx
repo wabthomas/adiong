@@ -28,11 +28,7 @@ const Btn = ({ active, onClick, title, children, disabled }) => (
 
 const Sep = () => <span className="mx-1 h-6 w-px bg-ink-100" />;
 
-/**
- * Éditeur de texte riche moderne (TipTap) :
- * titres, gras, italique, souligné, barré, surligné, code, listes, citation,
- * liens, images (bibliothèque ou URL), alignements, undo/redo, aperçu, compteur.
- */
+
 export default function RichTextEditor({ value, onChange, placeholder = 'Rédigez votre article…' }) {
   const [libOpen, setLibOpen] = useState(false);
   const [preview, setPreview] = useState(false);
@@ -72,7 +68,7 @@ export default function RichTextEditor({ value, onChange, placeholder = 'Rédige
 
   return (
     <div className="overflow-hidden rounded-2xl border border-ink-200 bg-white">
-      {/* Barre d'outils */}
+      {}
       <div className="flex flex-wrap items-center gap-0.5 border-b border-ink-100 bg-cream/60 px-3 py-2">
         <Btn title="Titre" active={editor.isActive('heading', { level: 2 })}
           onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>H2</Btn>
@@ -169,7 +165,7 @@ export default function RichTextEditor({ value, onChange, placeholder = 'Rédige
         </div>
       </div>
 
-      {/* Lien actif : barre de gestion */}
+      {}
       {editor.isActive('link') && (
         <div className="flex items-center gap-2 border-b border-ink-100 bg-accent-50 px-4 py-2">
           <span className="text-xs font-bold text-accent-800">Lien :</span>
@@ -188,14 +184,14 @@ export default function RichTextEditor({ value, onChange, placeholder = 'Rédige
         </div>
       )}
 
-      {/* Zone d'édition / aperçu */}
+      {}
       {preview ? (
         <div className="prose-adi min-h-[340px] max-w-none px-6 py-5" dangerouslySetInnerHTML={{ __html: editor.getHTML() || '<p class="italic">Aperçu : rien à afficher pour le moment.</p>' }} />
       ) : (
         <EditorContent editor={editor} />
       )}
 
-      {/* Bibliothèque pour insérer une image (le texte alternatif est repris automatiquement) */}
+      {}
       <MediaLibrary
         open={libOpen}
         onClose={() => setLibOpen(false)}

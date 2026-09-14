@@ -37,7 +37,7 @@ export default function Home() {
 
   return (
     <>
-      {/* ================= HERO ================= */}
+      {}
       <section ref={heroRef} className="relative flex min-h-screen items-center overflow-hidden">
         <motion.div style={reduce ? undefined : { y: yImg }} className="absolute inset-0">
           <img
@@ -121,7 +121,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Floating stat card */}
+        {}
         <motion.div
           initial={reduce ? false : { opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
@@ -139,7 +139,7 @@ export default function Home() {
         </motion.div>
       </section>
 
-      {/* ================= MARQUEE ================= */}
+      {}
       <div className="relative overflow-hidden border-y border-brand-800 bg-brand-700 py-4">
         <div className="flex w-max animate-marquee">
           {[0, 1].map((dup) => (
@@ -154,7 +154,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ================= MISSION ================= */}
+      {}
       <section className="container-x py-24 lg:py-32">
         <div className="grid items-center gap-14 lg:grid-cols-2">
           <Reveal className="relative">
@@ -210,7 +210,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ================= CAUSES / NOTRE TRAVAIL ================= */}
+      {}
       <section className="relative bg-white py-24 lg:py-32">
         <div className="container-x">
           <div className="flex flex-wrap items-end justify-between gap-6">
@@ -237,7 +237,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ================= CAMPAGNE VEDEETTE ================= */}
+      {}
       {topCampaign && (
         <section className="container-x py-24 lg:py-32">
           <div className="grid items-center gap-14 lg:grid-cols-2">
@@ -286,7 +286,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* ================= ACTUALITES ================= */}
+      {}
       <section className="bg-white py-24 lg:py-32">
         <div className="container-x">
           <div className="flex flex-wrap items-end justify-between gap-6">
@@ -315,7 +315,7 @@ export default function Home() {
 
       <CTABanner />
 
-      {/* ================= CONTACT RAPIDE ================= */}
+      {}
       <section className="container-x pb-24">
         <Stagger className="grid gap-6 md:grid-cols-3">
           {[

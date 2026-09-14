@@ -32,7 +32,7 @@ export default function About() {
         image={site.about_header?.image || site.about_image || '/uploads/seed/about.jpg'}
       />
 
-      {/* Présentation */}
+      {}
       <section className="container-x py-24">
         <div className="grid items-center gap-14 lg:grid-cols-2">
           <Reveal>
@@ -53,7 +53,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* Valeurs */}
+      {}
       <section className="bg-white py-24">
         <div className="container-x">
           <Reveal className="mx-auto max-w-3xl text-center">
@@ -80,7 +80,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* Méthode de travail */}
+      {}
       <section className="container-x py-24">
         <div className="grid gap-14 lg:grid-cols-[1fr_1.2fr]">
           <Reveal className="lg:sticky lg:top-28 lg:self-start">
@@ -118,7 +118,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* Présence + carrières */}
+      {}
       <section className="bg-white py-24">
         <div className="container-x">
           <Stagger className="grid gap-6 md:grid-cols-2">
@@ -147,7 +147,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* Domaines d'action récap */}
+      {}
       <section className="container-x pb-24">
         <Reveal className="mx-auto max-w-3xl text-center">
           <h2 className="font-display text-3xl font-bold text-ink-900 sm:text-4xl">Nos domaines d'action</h2>

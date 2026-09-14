@@ -9,13 +9,8 @@ const slugify = (s) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
 
-/**
- * Toutes les valeurs de configuration du site.
- * Chaque clé est éditable depuis l'admin (Paramètres).
- * Les valeurs non-strings sont stockées en JSON.
- */
+
 export const DEFAULT_SETTINGS = {
-  // ---------- Identité ----------
   site_name: 'ADI ONG',
   site_tagline: "Soutenir l'inclusion des personnes handicapées dans tous les secteurs de la vie",
   logo: '',
@@ -32,14 +27,12 @@ export const DEFAULT_SETTINGS = {
   video_url: '',
   copyright: '© 2026 ADI ONG — Tous droits réservés.',
 
-  // ---------- SEO ----------
   seo_title: 'ADI ONG — Inclusion des personnes handicapées à Goma',
   seo_description: "L'ONG ADI (Accessibility and Disabled Inclusion) soutient l'inclusion des personnes handicapées dans tous les secteurs de la vie : plaidoyer, entrepreneuriat, éducation inclusive et justice climatique à Goma, RDC.",
   seo_keywords: 'ONG, handicap, inclusion, Goma, RDC, plaidoyer, éducation inclusive, entrepreneuriat, justice climatique, ADI',
   og_image: '/uploads/seed/hero.jpg',
   twitter_handle: '@adiong',
 
-  // ---------- Accueil ----------
   hero_image: '/uploads/seed/hero.jpg',
   hero_kicker: "Bienvenue dans le monde de l'ONG ADI",
   hero_title: "Soutenir l'inclusion des personnes handicapées dans tous les secteurs de la vie",
@@ -64,7 +57,6 @@ export const DEFAULT_SETTINGS = {
   cta_title: 'Chaque personne compte. Chaque contribution, chaque don compte.',
   cta_text: "Rejoignez-nous dans cette cause et aidons les personnes vivant avec handicap à prendre leur place dans tous les secteurs de la vie.",
 
-  // ---------- À propos ----------
   about_title: "À propos de l'ONG ADI",
   about_text: "L'ONG Accessibility and Disabled Inclusion (ADI) est une organisation non gouvernementale congolaise basée à Goma, ville de l'Est de la République Démocratique du Congo. Forte de 6 années d'expérience professionnelle, ADI œuvre au quotidien pour la défense des droits des Personnes Vivant avec Handicap (PvH) et pour leur inclusion dans tous les secteurs de la vie nationale.",
   about_values_kicker: 'Nos valeurs',
@@ -77,7 +69,6 @@ export const DEFAULT_SETTINGS = {
   about_career_title: 'Carrière, bénévolat & préoccupations',
   about_career_text: "Vous souhaitez rejoindre nos équipes, devenir volontaire ou partager une préoccupation ? Écrivez-nous — nous répondons à toutes les candidatures.",
 
-  // ---------- En-têtes de pages ----------
   about_header: {
     kicker: 'À propos',
     title: 'Qui sommes-nous ?',
@@ -115,7 +106,6 @@ export const DEFAULT_SETTINGS = {
     image: '/uploads/seed/cause-plaidoyer.jpg'
   },
 
-  // ---------- Don & campagnes ----------
   donate_amounts: [10, 25, 50, 100, 250, 500],
   donate_why_title: 'Pourquoi donner à ADI ONG ?',
   donate_why_points: [
@@ -129,7 +119,6 @@ export const DEFAULT_SETTINGS = {
     'Impact mesurable dans nos zones d’intervention à Goma'
   ],
 
-  // ---------- Compteurs & listes structurées ----------
   stats: [
     { value: 6, suffix: ' ans', label: "d'expérience professionnelle" },
     { value: 120, suffix: '+', label: 'personnes accompagnées' },
@@ -151,11 +140,7 @@ export const DEFAULT_SETTINGS = {
   ]
 };
 
-/**
- * Insère les clés manquantes (sans écraser les valeurs existantes).
- * Appelée à chaque démarrage : permet d'ajouter des clés nouvelles
- * sans réinitialiser la base.
- */
+
 export function ensureSettings() {
   const ins = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
@@ -166,13 +151,11 @@ export function ensureSettings() {
 export function seedIfEmpty() {
   ensureSettings();
 
-  // Le contenu (causes, articles, campagnes, admin) n'est seedé qu'une fois
   const contentCount = db.prepare('SELECT COUNT(*) AS n FROM articles').get().n;
   if (contentCount > 0) return;
 
   const now = new Date().toISOString();
 
-  // ---------- Admin user ----------
   const hash = bcrypt.hashSync('AdiOng2026!', 10);
   db.prepare('INSERT INTO users (email, password_hash, full_name) VALUES (?, ?, ?)').run(
     'admin@adiong.org',
@@ -180,7 +163,6 @@ export function seedIfEmpty() {
     'Administrateur ADI'
   );
 
-  // ---------- Causes (Notre travail) ----------
   const causes = [
     {
       slug: 'plaidoyer',
@@ -266,7 +248,6 @@ Ensemble, protégeons notre environnement et ouvrons la porte à une économie v
   for (const c of causes)
     insCause.run(c.slug, c.title, c.tagline, c.description, c.long_content, c.icon, c.image, c.link, c.sort_order, now);
 
-  // ---------- Articles (Actualités) ----------
   const articles = [
     {
       slug: 'initiative-educative-enfants-deplaces-kanyaruchinya',
@@ -358,7 +339,6 @@ Chaque personne compte, chaque contribution, chaque don compte pour créer un mo
   for (const a of articles)
     insArticle.run(a.slug, a.title, a.excerpt, a.long_content, a.category, a.image, a.author, a.date, now);
 
-  // ---------- Campaigns (Collectes) ----------
   const campaigns = [
     {
       slug: 'scolarisation-inclusive-goma',
