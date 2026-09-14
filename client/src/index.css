@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-cream text-ink-800 font-body antialiased;
+  }
+  ::selection {
+    @apply bg-accent-200 text-ink-900;
+  }
+}
+
+@layer components {
+  .container-x {
+    @apply mx-auto w-full max-w-7xl px-5 sm:px-8;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full font-semibold transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400 focus-visible:ring-offset-2;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white px-7 py-3.5 hover:bg-brand-700 hover:shadow-lift hover:-translate-y-0.5;
+  }
+  .btn-accent {
+    @apply btn bg-accent-400 text-ink-950 px-7 py-3.5 hover:bg-accent-300 hover:shadow-lift hover:-translate-y-0.5;
+  }
+  .btn-ghost {
+    @apply btn border border-ink-200 bg-white/70 text-ink-800 px-7 py-3.5 hover:border-brand-400 hover:text-brand-700;
+  }
+  .chip {
+    @apply inline-flex items-center gap-2 rounded-full bg-white/80 px-4 py-1.5 text-sm font-semibold text-brand-700 ring-1 ring-brand-200 backdrop-blur;
+  }
+  .card {
+    @apply bg-white rounded-3xl shadow-soft ring-1 ring-ink-950/5 overflow-hidden;
+  }
+  .input {
+    @apply w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-ink-900 placeholder-ink-300 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200 transition;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-semibold text-ink-700;
+  }
+}
+
+/* ---------- Contenu d'article (HTML édité) ---------- */
+.prose-adi {
+  @apply max-w-none;
+}
+.prose-adi > * + * {
+  @apply mt-4;
+}
+.prose-adi p {
+  @apply leading-[1.85] text-ink-700;
+}
+.prose-adi h2 {
+  @apply font-display text-2xl font-bold text-ink-900 scroll-mt-28;
+}
+.prose-adi h3 {
+  @apply font-display text-xl font-bold text-ink-900 scroll-mt-28;
+}
+.prose-adi h4 {
+  @apply font-display text-lg font-bold text-ink-900 scroll-mt-28;
+}
+.prose-adi strong {
+  @apply font-semibold text-ink-900;
+}
+.prose-adi a {
+  @apply font-semibold text-brand-600 underline decoration-brand-300 underline-offset-2 hover:text-brand-700;
+}
+.prose-adi ul {
+  @apply list-disc space-y-2 pl-6 text-ink-700 marker:text-brand-500;
+}
+.prose-adi ol {
+  @apply list-decimal space-y-2 pl-6 text-ink-700 marker:font-bold marker:text-brand-600;
+}
+.prose-adi li::marker {
+  @apply text-brand-500;
+}
+.prose-adi blockquote {
+  @apply rounded-2xl border-l-4 border-accent-400 bg-accent-50/60 px-6 py-4 font-display text-[17px] font-medium text-ink-800;
+}
+.prose-adi pre {
+  @apply overflow-x-auto rounded-2xl bg-ink-950 px-5 py-4 font-mono text-sm text-ink-100;
+}
+.prose-adi code {
+  @apply rounded-md bg-ink-100 px-1.5 py-0.5 font-mono text-[13px] text-brand-700;
+}
+.prose-adi pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+.prose-adi hr {
+  @apply my-8 h-0.5 w-full rounded bg-ink-100;
+}
+.prose-adi img {
+  @apply h-auto w-full rounded-2xl shadow-soft;
+}
+.prose-adi mark {
+  @apply rounded bg-accent-200 px-0.5 text-ink-900;
+}
+.prose-adi [align='center'] {
+  text-align: center;
+}
+.prose-adi [align='right'] {
+  text-align: right;
+}
+
+/* ---------- Éditeur TipTap ---------- */
+.prose-editor {
+  @apply max-w-none;
+}
+.prose-editor > * + * {
+  @apply mt-4;
+}
+.prose-editor p {
+  @apply leading-relaxed;
+}
+.prose-editor h2 {
+  @apply font-display text-2xl font-bold text-ink-900;
+}
+.prose-editor h3 {
+  @apply font-display text-xl font-bold text-ink-900;
+}
+.prose-editor h4 {
+  @apply font-display text-lg font-bold text-ink-900;
+}
+.prose-editor a {
+  @apply font-semibold text-brand-600 underline decoration-brand-300 underline-offset-2;
+}
+.prose-editor ul {
+  @apply list-disc space-y-2 pl-6 marker:text-brand-500;
+}
+.prose-editor ol {
+  @apply list-decimal space-y-2 pl-6 marker:font-bold marker:text-brand-600;
+}
+.prose-editor blockquote {
+  @apply rounded-2xl border-l-4 border-accent-400 bg-accent-50/60 px-6 py-4 font-medium text-ink-800;
+}
+.prose-editor pre {
+  @apply overflow-x-auto rounded-2xl bg-ink-950 px-5 py-4 font-mono text-sm text-ink-100;
+}
+.prose-editor code {
+  @apply rounded-md bg-ink-100 px-1.5 py-0.5 font-mono text-[13px] text-brand-700;
+}
+.prose-editor pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+.prose-editor hr {
+  @apply my-6 h-0.5 w-full rounded bg-ink-200;
+}
+.prose-editor img {
+  @apply h-auto w-full rounded-2xl shadow-soft;
+}
+.prose-editor mark {
+  @apply rounded bg-accent-200 px-0.5;
+}
+.prose-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-ink-300;
+}

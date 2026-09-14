@@ -1,0 +1,15 @@
+{
+  "name": "adiong",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Site moderne de l'ONG ADI (Accessibility and Disabled Inclusion) — React + Node.js",
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "node server/index.js",
+    "setup": "npm install && npm install --prefix server && npm install --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
