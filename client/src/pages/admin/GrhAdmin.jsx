@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getSavedUser } from '../../api.js';
+import { useSite } from '../../hooks/useSite.jsx';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
@@ -7,6 +8,7 @@ const TABS = [
   ['employees', 'Équipe'],
   ['orgchart', 'Organigramme'],
   ['leaves', 'Congés'],
+  ['payroll', 'Paie'],
   ['departments', 'Départements']
 ];
 
@@ -48,6 +50,13 @@ const DOC_CATEGORIES = {
   diplome: 'Diplôme / CV',
   medicale: 'Certificat médical',
   autre: 'Autre'
+};
+const PAY_STATUS = { brouillon: 'Brouillon', envoye: 'Envoyé' };
+const fmtMoney = (n, cur = 'USD') =>
+  `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0)} ${cur}`;
+const monthLabelFr = (m) => {
+  const [y, mo] = String(m).split('-').map(Number);
+  return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 };
 const emptyLeave = { employee_id: null, type: 'conge', start_date: '', end_date: '', reason: '', status: 'en_attente' };
 
@@ -435,6 +444,22 @@ function EmployeeFileModal({ employee, isSuper, onChanged, onClose }) {
         )}
       </div>
 
+      {isSuper && (d.salary_history || []).length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Historique salarial</p>
+          <ul className="space-y-2">
+            {d.salary_history.slice(0, 5).map((h, i) => (
+              <li key={h.id} className="flex items-center justify-between gap-3 rounded-xl bg-cream px-4 py-2.5 text-sm">
+                <span className="text-ink-600">
+                  {h.old_salary != null ? fmtMoney(h.old_salary) : '—'} → <strong className="text-ink-800">{fmtMoney(h.new_salary)}</strong>
+                </span>
+                <span className="text-xs text-ink-400">{fmtDate(h.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div>
         <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Congés récents</p>
         <ul className="space-y-2">
@@ -454,6 +479,355 @@ function EmployeeFileModal({ employee, isSuper, onChanged, onClose }) {
       </div>
 
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+    </div>
+  );
+}
+
+const PRINT_BULLETIN_CSS = `
+@page { size: A4; margin: 0; }
+@media print {
+  body * { visibility: hidden; }
+  .print-bulletin, .print-bulletin * { visibility: visible; }
+  .print-bulletin { position: fixed; top: 0; left: 50%; transform: translateX(-50%); box-shadow: none !important; margin: 0 !important; }
+  .no-print { display: none !important; }
+}
+.print-bulletin { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+`;
+
+function PaySlipSheet({ p, site }) {
+  const rows = [
+    ['Salaire de base', fmtMoney(p.base_salary, p.currency)],
+    ...(p.bonus > 0 ? [[`Primes${p.bonus_label ? ` — ${p.bonus_label}` : ''}`, `+ ${fmtMoney(p.bonus, p.currency)}`]] : []),
+    ...(p.deductions > 0 ? [[`Retenues${p.deductions_label ? ` — ${p.deductions_label}` : ''}`, `- ${fmtMoney(p.deductions, p.currency)}`]] : []),
+    ['Total', fmtMoney(Number(p.base_salary) + Number(p.bonus), p.currency)]
+  ];
+  return (
+    <div className="print-bulletin mx-auto w-full max-w-[720px] overflow-hidden rounded-xl bg-white shadow-lift ring-1 ring-ink-950/10">
+      <div className="bg-brand-700 px-8 py-6 text-white">
+        <p className="font-display text-sm font-bold tracking-widest">{(site.site_name || 'ADI ONG').toUpperCase()}</p>
+        {site.site_tagline && <p className="mt-0.5 text-xs text-white/70">{site.site_tagline}</p>}
+        <div className="mt-3 flex items-end justify-between">
+          <h3 className="font-display text-2xl font-extrabold">BULLETIN DE PAIE</h3>
+          <p className="text-sm font-bold">Période : {monthLabelFr(p.month)}</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-5 px-8 pt-6">
+        <div className="rounded-xl border border-ink-100 p-4">
+          <p className="text-[10px] font-bold tracking-widest text-ink-400">ORGANISATION</p>
+          <p className="mt-1 text-sm font-bold text-ink-900">{site.site_name || '—'}</p>
+          {site.address && <p className="mt-1 text-xs text-ink-600">{site.address}</p>}
+          {site.phone1 && <p className="text-xs text-ink-600">{site.phone1}</p>}
+          {site.email && <p className="text-xs text-ink-600">{site.email}</p>}
+        </div>
+        <div className="rounded-xl border border-ink-100 p-4">
+          <p className="text-[10px] font-bold tracking-widest text-ink-400">EMPLOYÉ</p>
+          <p className="mt-1 text-sm font-bold text-ink-900">{p.full_name}</p>
+          {p.position && <p className="mt-1 text-xs text-ink-600">Fonction : {p.position}</p>}
+          {p.department && <p className="text-xs text-ink-600">Département : {p.department}</p>}
+          {p.hire_date && <p className="text-xs text-ink-600">Embauché le : {fmtDate(p.hire_date)}</p>}
+          {p.email && <p className="text-xs text-ink-600">{p.email}</p>}
+        </div>
+      </div>
+      <div className="px-8 py-6">
+        <div className="divide-y divide-ink-100">
+          {rows.map(([label, val]) => (
+            <div key={label} className="flex items-center justify-between py-2.5 text-sm">
+              <span className="text-ink-700">{label}</span>
+              <span className="font-semibold text-ink-800">{val}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-between rounded-xl bg-brand-700 px-6 py-4 text-white">
+          <p className="text-sm font-bold tracking-wide">NET À PAYER ({p.currency})</p>
+          <p className="font-display text-2xl font-extrabold">{fmtMoney(p.net, p.currency)}</p>
+        </div>
+        <p className="mt-3 text-xs text-ink-400">
+          Statut : {PAY_STATUS[p.status] || p.status} · Émis le {new Date().toLocaleDateString('fr-FR')}
+        </p>
+        <div className="mt-10 flex justify-between text-xs text-ink-400">
+          <div className="w-48 border-t border-ink-300 pt-2 text-center">Signature de l'employeur</div>
+          <div className="w-48 border-t border-ink-300 pt-2 text-center">Signature de l'employé</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaySlipForm({ initial, employees, month, onSaved, onClose }) {
+  const [f, setF] = useState({
+    employee_id: initial.employee_id ?? '',
+    month: initial.month ?? month,
+    base_salary: initial.base_salary ?? '',
+    bonus: initial.bonus ?? 0,
+    bonus_label: initial.bonus_label ?? '',
+    deductions: initial.deductions ?? 0,
+    deductions_label: initial.deductions_label ?? '',
+    status: initial.status ?? 'brouillon'
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const chosen = employees.find((x) => String(x.id) === String(f.employee_id));
+  const pickEmployee = (id) => {
+    const emp = employees.find((x) => String(x.id) === String(id));
+    setF((cur) => ({ ...cur, employee_id: id, base_salary: cur.base_salary === '' || initial.employee_id ? (emp?.current_salary ?? emp?.salary ?? '') : cur.base_salary }));
+  };
+  const net = (Number(f.base_salary) || 0) + (Number(f.bonus) || 0) - (Number(f.deductions) || 0);
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        ...f,
+        employee_id: Number(f.employee_id) || null,
+        base_salary: Number(f.base_salary) || 0,
+        bonus: Math.max(0, Number(f.bonus) || 0),
+        deductions: Math.max(0, Number(f.deductions) || 0)
+      };
+      if (initial.id) await api.grh.payroll.update(initial.id, payload);
+      else await api.grh.payroll.create(payload);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Employé *">
+          <select className="input" value={f.employee_id} onChange={(e) => pickEmployee(e.target.value)} disabled={!!initial.id}>
+            <option value="">— Choisir —</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>{e.full_name}{e.position ? ` — ${e.position}` : ''}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Mois *">
+          <input className="input" type="month" value={f.month || ''} onChange={set('month')} />
+        </Field>
+        <Field label="Salaire de base">
+          <input className="input" type="number" min="0" step="0.01" value={f.base_salary} onChange={set('base_salary')} placeholder={chosen?.current_salary ? `Défaut : ${chosen.current_salary}` : ''} />
+        </Field>
+        <Field label="Statut">
+          <select className="input" value={f.status} onChange={set('status')}>
+            {Object.entries(PAY_STATUS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Primes / avantages">
+          <input className="input" type="number" min="0" step="0.01" value={f.bonus} onChange={set('bonus')} />
+        </Field>
+        <Field label="Détail primes">
+          <input className="input" value={f.bonus_label} onChange={set('bonus_label')} placeholder="Ex. prime de rendement" />
+        </Field>
+        <Field label="Retenues">
+          <input className="input" type="number" min="0" step="0.01" value={f.deductions} onChange={set('deductions')} />
+        </Field>
+        <Field label="Détail retenues">
+          <input className="input" value={f.deductions_label} onChange={set('deductions_label')} placeholder="Ex. avance, mutuelle…" />
+        </Field>
+      </div>
+      <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-bold text-brand-700">
+        Net à payer : {fmtMoney(net, chosen?.salary_currency || 'USD')}
+      </p>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.employee_id || !f.month}>
+          {saving ? 'Enregistrement…' : 'Enregistrer le bulletin'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PayrollTab({ employees, onChanged }) {
+  const { site } = useSite();
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [rows, setRows] = useState([]);
+  const [formModal, setFormModal] = useState(null);
+  const [view, setView] = useState(null);
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const load = useCallback(() => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    api.grh.payroll.list(month).then(setRows).catch((e) => setError(e.message));
+  }, [month]);
+  useEffect(() => { load(); }, [load]);
+
+  const generate = async () => {
+    if (!confirm(`Générer les bulletins (brouillons) de ${monthLabelFr(month)} pour tous les employés actifs ayant un salaire ?`)) return;
+    try {
+      const r = await api.grh.payroll.generate(month);
+      setMsg(`✓ ${r.created} bulletin(s) créé(s), ${r.skipped} déjà existant(s).`);
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const exportCsv = async () => {
+    try {
+      setMsg('');
+      await api.grh.payroll.exportCsv(month);
+      setMsg('✓ Export CSV téléchargé.');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const downloadPdf = async (p) => {
+    try {
+      await api.grh.payroll.downloadPdf(p.id, `bulletin-${p.full_name.replace(/\s+/g, '-').toLowerCase()}-${p.month}.pdf`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const markSent = async (p) => {
+    try {
+      await api.grh.payroll.update(p.id, { status: p.status === 'envoye' ? 'brouillon' : 'envoye' });
+      setMsg(p.status === 'envoye' ? '✓ Repassé en brouillon.' : '✓ Bulletin marqué comme envoyé.');
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const removeRow = async (p) => {
+    if (!confirm(`Supprimer le bulletin de ${p.full_name} (${monthLabelFr(p.month)}) ?`)) return;
+    try {
+      await api.grh.payroll.remove(p.id);
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const totalNet = rows.reduce((acc, r) => acc + (Number(r.net) || 0), 0);
+
+  return (
+    <div className="space-y-6">
+      <style>{PRINT_BULLETIN_CSS}</style>
+      <p className="rounded-2xl border border-accent-200 bg-accent-50 px-5 py-4 text-sm font-semibold text-accent-900">
+        🔒 Module confidentiel : la paie est réservée au super administrateur.
+      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-bold text-ink-500">Mois :</label>
+          <input type="month" className="input !w-44 !py-2.5" value={month} onChange={(e) => setMonth(e.target.value)} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={exportCsv} disabled={rows.length === 0}>
+            ⬇ Export CSV
+          </button>
+          <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={generate}>
+            ⚡ Générer le mois
+          </button>
+          <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setFormModal({ month })}>
+            + Bulletin
+          </button>
+        </div>
+      </div>
+      {msg && <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <tr>
+                <th className="px-6 py-4">Employé</th>
+                <th className="px-6 py-4">Base</th>
+                <th className="px-6 py-4">Primes</th>
+                <th className="px-6 py-4">Retenues</th>
+                <th className="px-6 py-4">Net</th>
+                <th className="px-6 py-4">Statut</th>
+                <th className="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
+                  <td className="px-6 py-4">
+                    <p className="font-semibold text-ink-900">{r.full_name}</p>
+                    <p className="text-xs text-ink-400">{r.position || ''}</p>
+                  </td>
+                  <td className="px-6 py-4 text-ink-600">{fmtMoney(r.base_salary, r.currency)}</td>
+                  <td className="px-6 py-4 text-ink-600">{r.bonus ? `+${fmtMoney(r.bonus, r.currency)}` : '—'}</td>
+                  <td className="px-6 py-4 text-ink-600">{r.deductions ? `−${fmtMoney(r.deductions, r.currency)}` : '—'}</td>
+                  <td className="px-6 py-4 font-bold text-brand-700">{fmtMoney(r.net, r.currency)}</td>
+                  <td className="px-6 py-4">
+                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${r.status === 'envoye' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+                      {PAY_STATUS[r.status] || r.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex justify-end gap-1.5">
+                      <button onClick={() => setView(r)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
+                        Bulletin
+                      </button>
+                      <button onClick={() => downloadPdf(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                        PDF
+                      </button>
+                      <button onClick={() => setFormModal({ ...r })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                        Éditer
+                      </button>
+                      <button onClick={() => removeRow(r)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                        ✕
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {rows.length === 0 && (
+          <p className="py-12 text-center text-ink-400">
+            Aucun bulletin pour {monthLabelFr(month)} — générez le mois ou créez un bulletin.
+          </p>
+        )}
+        {rows.length > 0 && (
+          <div className="flex items-center justify-between border-t border-ink-100 bg-cream/70 px-6 py-4 text-sm">
+            <span className="font-bold text-ink-500">{rows.length} bulletin(s) — {monthLabelFr(month)}</span>
+            <span className="font-display font-bold text-brand-700">Masse nette : {fmtMoney(totalNet)}</span>
+          </div>
+        )}
+      </div>
+
+      <Modal open={!!formModal} onClose={() => setFormModal(null)} title={formModal?.id ? 'Modifier le bulletin' : 'Nouveau bulletin'} wide>
+        {formModal && (
+          <PaySlipForm
+            initial={formModal}
+            employees={employees.filter((e) => e.status === 'actif')}
+            month={month}
+            onSaved={() => { load(); onChanged(); }}
+            onClose={() => setFormModal(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal open={!!view} onClose={() => setView(null)} title={view ? `Bulletin — ${view.full_name} (${monthLabelFr(view.month)})` : ''} wide>
+        {view && (
+          <div className="space-y-4">
+            <PaySlipSheet p={view} site={site} />
+            <div className="no-print flex flex-wrap justify-end gap-2 border-t border-ink-100 pt-4">
+              <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => markSent(view)}>
+                {view.status === 'envoye' ? '↩ Repasser en brouillon' : '✓ Marquer envoyé'}
+              </button>
+              <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadPdf(view)}>
+                ⬇ Télécharger le PDF
+              </button>
+              <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => window.print()}>
+                🖨 Imprimer
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -659,7 +1033,7 @@ export default function GrhAdmin() {
       />
 
       <div className="mb-8 flex flex-wrap gap-2">
-        {TABS.map(([id, label]) => (
+        {TABS.filter(([id]) => id !== 'payroll' || isSuper).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -848,6 +1222,10 @@ export default function GrhAdmin() {
             )}
           </div>
         </div>
+      )}
+
+      {tab === 'payroll' && isSuper && (
+        <PayrollTab employees={employees} onChanged={loadAll} />
       )}
 
       {tab === 'leaves' && (

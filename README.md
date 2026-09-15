@@ -118,6 +118,7 @@ Module **interne** (jamais visible sur le site public) de gestion des ressources
 - **Organigramme** : supérieur hiérarchique par employé, arborescence interactive (clic sur un nom = ouvre le dossier).
 - **Congés** : types (annuel, maladie, maternité, sans solde, formation), circuit de validation (en attente → approuvé/rejeté), **soldes par employé** (jours par an, pris, restants — réglables par défaut dans Paramètres ou individuellement par employé), durée comptée en jours ouvrés, **calendrier mensuel** des absences approuvées.
 - **Mon espace (auto-service)** : chaque employé dont l'email correspond à un dossier voit *Admin → Mon espace* — consultation de son solde, demande de congé (contrôlée par le solde), retrait de ses demandes en attente.
+- **Paie** (super admin uniquement) : grille mensuelle des bulletins (salaire de base, primes, retenues, net), génération d'un mois en un clic pour tous les actifs, bulletin imprimable et **PDF** téléchargeable, statuts brouillon/envoyé, **export CSV** du mois (compatible Excel), et **historique des changements de salaire** dans le dossier employé.
 - **Départements** : création, renommage (inline), suppression protégée (impossible si employés affectés).
 
 **Activation / désactivation** : réservée au **super administrateur** via

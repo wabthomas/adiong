@@ -217,6 +217,32 @@ CREATE TABLE IF NOT EXISTS grh_documents (
   category TEXT NOT NULL DEFAULT 'autre',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS grh_payroll (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  month TEXT NOT NULL,
+  base_salary REAL NOT NULL DEFAULT 0,
+  bonus REAL NOT NULL DEFAULT 0,
+  bonus_label TEXT NOT NULL DEFAULT '',
+  deductions REAL NOT NULL DEFAULT 0,
+  deductions_label TEXT NOT NULL DEFAULT '',
+  net REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  status TEXT NOT NULL DEFAULT 'brouillon',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (employee_id, month)
+);
+
+CREATE TABLE IF NOT EXISTS grh_salary_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  old_salary REAL,
+  new_salary REAL NOT NULL,
+  effective_date TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
 migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAULT 0');

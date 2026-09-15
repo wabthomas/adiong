@@ -1151,6 +1151,10 @@ app.put('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
       b.photo || '', b.notes || '',
       managerId, Math.max(0, Number(b.annual_days) || 0), String(b.job_description || '').slice(0, 4000), ex.id
     );
+    if (req.user.role === 'super_admin' && salary !== ex.salary && (salary != null || ex.salary != null)) {
+      db.prepare('INSERT INTO grh_salary_history (employee_id, old_salary, new_salary) VALUES (?, ?, ?)')
+        .run(ex.id, ex.salary, salary ?? 0);
+    }
     res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(ex.id));
   } catch {
     res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
@@ -1184,6 +1188,9 @@ app.get('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
   if (req.user.role !== 'super_admin') row.salary = null;
   row.documents = db.prepare('SELECT * FROM grh_documents WHERE employee_id = ? ORDER BY created_at DESC').all(row.id);
   row.leaves = db.prepare('SELECT * FROM grh_leaves WHERE employee_id = ? ORDER BY start_date DESC LIMIT 20').all(row.id);
+  row.salary_history = req.user.role === 'super_admin'
+    ? db.prepare('SELECT * FROM grh_salary_history WHERE employee_id = ? ORDER BY id DESC LIMIT 20').all(row.id)
+    : [];
   res.json(row);
 });
 
@@ -1311,6 +1318,201 @@ app.put('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
 app.delete('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
   db.prepare('DELETE FROM grh_leaves WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------- Paie (super admin uniquement : les salaires sont confidentiels) ----------
+const PAY = [authRequired, requireRole('super'), requireModule('grh_enabled', 'GRH')];
+const validMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
+const monthLabelFr = (m) => {
+  const [y, mo] = String(m).split('-');
+  return new Date(Date.UTC(Number(y), Number(mo) - 1, 1)).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+};
+const fmtMoney = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+
+app.get('/api/admin/grh/payroll', ...PAY, (req, res) => {
+  const month = String(req.query.month || '');
+  if (!validMonth(month)) return res.status(400).json({ error: 'Mois invalide (format AAAA-MM)' });
+  res.json(db.prepare(`
+    SELECT p.*, e.full_name, e.position, e.email, e.hire_date, e.salary AS current_salary, d.name AS department
+    FROM grh_payroll p
+    JOIN grh_employees e ON e.id = p.employee_id
+    LEFT JOIN grh_departments d ON d.id = e.department_id
+    WHERE p.month = ?
+    ORDER BY e.full_name
+  `).all(month));
+});
+
+app.post('/api/admin/grh/payroll', ...PAY, (req, res) => {
+  const b = req.body || {};
+  const month = String(b.month || '');
+  if (!validMonth(month)) return res.status(400).json({ error: 'Mois invalide (format AAAA-MM)' });
+  const emp = db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(b.employee_id);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  const base = Number(b.base_salary) || Number(emp.salary) || 0;
+  const bonus = Math.max(0, Number(b.bonus) || 0);
+  const deductions = Math.max(0, Number(b.deductions) || 0);
+  const status = ['brouillon', 'envoye'].includes(b.status) ? b.status : 'brouillon';
+  try {
+    const info = db.prepare(`INSERT INTO grh_payroll
+      (employee_id, month, base_salary, bonus, bonus_label, deductions, deductions_label, net, currency, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      emp.id, month, base, bonus, String(b.bonus_label || '').slice(0, 200),
+      deductions, String(b.deductions_label || '').slice(0, 200),
+      base + bonus - deductions, b.currency || emp.salary_currency || 'USD', status
+    );
+    res.json(db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(info.lastInsertRowid));
+  } catch {
+    res.status(409).json({ error: 'Un bulletin existe déjà pour cet employé ce mois-ci — modifiez-le.' });
+  }
+});
+
+app.put('/api/admin/grh/payroll/:id', ...PAY, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Bulletin introuvable' });
+  const b = { ...ex, ...req.body };
+  if (!validMonth(b.month)) return res.status(400).json({ error: 'Mois invalide (format AAAA-MM)' });
+  const bonus = Math.max(0, Number(b.bonus) || 0);
+  const deductions = Math.max(0, Number(b.deductions) || 0);
+  const base = Number(b.base_salary) || 0;
+  const status = ['brouillon', 'envoye'].includes(b.status) ? b.status : ex.status;
+  try {
+    db.prepare(`UPDATE grh_payroll SET employee_id = ?, month = ?, base_salary = ?, bonus = ?, bonus_label = ?,
+      deductions = ?, deductions_label = ?, net = ?, currency = ?, status = ? WHERE id = ?`).run(
+      b.employee_id, b.month, base, bonus, String(b.bonus_label || '').slice(0, 200),
+      deductions, String(b.deductions_label || '').slice(0, 200), base + bonus - deductions,
+      b.currency || ex.currency, status, ex.id
+    );
+    res.json(db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(ex.id));
+  } catch {
+    res.status(409).json({ error: 'Un bulletin existe déjà pour cet employé ce mois-ci.' });
+  }
+});
+
+app.delete('/api/admin/grh/payroll/:id', ...PAY, (req, res) => {
+  db.prepare('DELETE FROM grh_payroll WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Génère les brouillons du mois pour tous les actifs ayant un salaire
+app.post('/api/admin/grh/payroll/generate', ...PAY, (req, res) => {
+  const month = String(req.body?.month || '');
+  if (!validMonth(month)) return res.status(400).json({ error: 'Mois invalide (format AAAA-MM)' });
+  const emps = db.prepare("SELECT * FROM grh_employees WHERE status = 'actif' AND salary IS NOT NULL AND salary > 0").all();
+  let created = 0, skipped = 0;
+  const ins = db.prepare('INSERT OR IGNORE INTO grh_payroll (employee_id, month, base_salary, net, currency) VALUES (?, ?, ?, ?, ?)');
+  for (const e of emps) {
+    const r = ins.run(e.id, month, Number(e.salary), Number(e.salary), e.salary_currency || 'USD');
+    if (r.changes) created++; else skipped++;
+  }
+  res.json({ created, skipped, total: emps.length });
+});
+
+// Export CSV (séparateur ; + BOM pour Excel)
+app.get('/api/admin/grh/payroll/export', ...PAY, (req, res) => {
+  const month = String(req.query.month || '');
+  if (!validMonth(month)) return res.status(400).json({ error: 'Mois invalide (format AAAA-MM)' });
+  const rows = db.prepare(`
+    SELECT e.full_name, e.position, COALESCE(d.name, '') AS dept, p.month, p.base_salary, p.bonus, p.bonus_label,
+           p.deductions, p.deductions_label, p.net, p.currency, p.status
+    FROM grh_payroll p
+    JOIN grh_employees e ON e.id = p.employee_id
+    LEFT JOIN grh_departments d ON d.id = e.department_id
+    WHERE p.month = ?
+    ORDER BY e.full_name
+  `).all(month);
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = ['Employé;Fonction;Département;Mois;Salaire de base;Primes;Détail primes;Retenues;Détail retenues;Net à payer;Devise;Statut'];
+  rows.forEach((r) => lines.push(
+    [r.full_name, r.position, r.dept, monthLabelFr(r.month), r.base_salary, r.bonus, r.bonus_label,
+     r.deductions, r.deductions_label, r.net, r.currency, r.status === 'envoye' ? 'Envoyé' : 'Brouillon']
+      .map(esc).join(';')
+  ));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="paie-${month}.csv"`);
+  res.send('\uFEFF' + lines.join('\n'));
+});
+
+// Bulletin PDF (pdf-lib)
+app.get('/api/admin/grh/payroll/:id/pdf', ...PAY, async (req, res) => {
+  const p = db.prepare(`
+    SELECT p.*, e.full_name, e.position, e.email, e.phone, d.name AS department, e.hire_date
+    FROM grh_payroll p
+    JOIN grh_employees e ON e.id = p.employee_id
+    LEFT JOIN grh_departments d ON d.id = e.department_id
+    WHERE p.id = ?
+  `).get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Bulletin introuvable' });
+  try {
+    const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.28, 841.89]);
+    const W = 595.28;
+    const [font, fontBold] = await Promise.all([
+      doc.embedFont(StandardFonts.Helvetica),
+      doc.embedFont(StandardFonts.HelveticaBold)
+    ]);
+    const brand = rgb(0.059, 0.227, 0.533);
+    const ink = rgb(0.1, 0.12, 0.18);
+    const gray = rgb(0.45, 0.5, 0.58);
+    const siteName = getSetting('site_name') || 'ADI ONG';
+    const tagline = getSetting('site_tagline') || '';
+
+    page.drawRectangle({ x: 0, y: 841.89 - 88, width: W, height: 88, color: brand });
+    page.drawText(siteName.toUpperCase(), { x: 40, y: 782, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+    if (tagline) page.drawText(tagline, { x: 40, y: 764, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+    page.drawText('BULLETIN DE PAIE', { x: 40, y: 728, size: 22, font: fontBold, color: rgb(1, 1, 1) });
+    page.drawText(`Période : ${monthLabelFr(p.month)}`, { x: 400, y: 728, size: 11, font: fontBold, color: rgb(1, 1, 1) });
+
+    const box = (x, y, w, h) => page.drawRectangle({ x, y, width: w, height: h, borderColor: rgb(0.82, 0.85, 0.9), borderWidth: 1 });
+    box(40, 560, 240, 120);
+    box(315, 560, 240, 120);
+    page.drawText('ORGANISATION', { x: 50, y: 664, size: 8, font: fontBold, color: gray });
+    page.drawText(siteName, { x: 50, y: 648, size: 10, font: fontBold, color: ink });
+    const addr = getSetting('address') || '';
+    const ph = getSetting('phone1') || '';
+    const em = getSetting('email') || '';
+    let ly = 632;
+    if (addr) { page.drawText(addr, { x: 50, y: ly, size: 9, font, color: ink }); ly -= 14; }
+    if (ph) { page.drawText(ph, { x: 50, y: ly, size: 9, font, color: ink }); ly -= 14; }
+    if (em) { page.drawText(em, { x: 50, y: ly, size: 9, font, color: ink }); }
+    page.drawText('EMPLOYÉ', { x: 325, y: 664, size: 8, font: fontBold, color: gray });
+    page.drawText(p.full_name, { x: 325, y: 648, size: 10, font: fontBold, color: ink });
+    ly = 632;
+    if (p.position) { page.drawText(`Fonction : ${p.position}`, { x: 325, y: ly, size: 9, font, color: ink }); ly -= 14; }
+    if (p.department) { page.drawText(`Département : ${p.department}`, { x: 325, y: ly, size: 9, font, color: ink }); ly -= 14; }
+    if (p.hire_date) { page.drawText(`Embauché le : ${p.hire_date}`, { x: 325, y: ly, size: 9, font, color: ink }); ly -= 14; }
+    if (p.email) { page.drawText(p.email, { x: 325, y: ly, size: 9, font, color: ink }); }
+
+    // Tableau des montants
+    const rows = [
+      ['Salaire de base', fmtMoney(p.base_salary)],
+      ...(p.bonus > 0 ? [['Primes' + (p.bonus_label ? ` — ${p.bonus_label}` : ''), `+ ${fmtMoney(p.bonus)}`]] : []),
+      ...(p.deductions > 0 ? [['Retenues' + (p.deductions_label ? ` — ${p.deductions_label}` : ''), `- ${fmtMoney(p.deductions)}`]] : []),
+      ['Total', fmtMoney(p.base_salary + p.bonus)]
+    ];
+    let ry = 540;
+    for (const [label, val] of rows) {
+      page.drawText(label, { x: 40, y: ry, size: 10, font, color: ink });
+      page.drawText(val, { x: 475, y: ry, size: 10, font, color: ink });
+      page.drawLine({ start: { x: 40, y: ry - 8 }, end: { x: 555, y: ry - 8 }, thickness: 0.5, color: rgb(0.85, 0.88, 0.93) });
+      ry -= 30;
+    }
+    page.drawRectangle({ x: 335, y: ry - 6, width: 220, height: 40, color: brand });
+    page.drawText(`NET À PAYER (${p.currency})`, { x: 350, y: ry + 24, size: 10, font: fontBold, color: rgb(1, 1, 1) });
+    page.drawText(fmtMoney(p.net), { x: 350, y: ry + 8, size: 15, font: fontBold, color: rgb(1, 1, 1) });
+
+    page.drawText(`Statut : ${p.status === 'envoye' ? 'Envoyé' : 'Brouillon'}  ·  Émis le ${new Date().toLocaleDateString('fr-FR')}`, { x: 40, y: ry - 30, size: 8, font, color: gray });
+    page.drawText('Signature de l’employeur', { x: 40, y: 90, size: 8, font, color: gray });
+    page.drawText('Signature de l’employé', { x: 400, y: 90, size: 8, font, color: gray });
+    page.drawLine({ start: { x: 40, y: 120 }, end: { x: 240, y: 120 }, thickness: 0.7, color: ink });
+    page.drawLine({ start: { x: 400, y: 120 }, end: { x: 555, y: 120 }, thickness: 0.7, color: ink });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="bulletin-${p.full_name.replace(/\s+/g, '-').toLowerCase()}-${p.month}.pdf"`);
+    res.send(Buffer.from(await doc.save()));
+  } catch (e) {
+    res.status(500).json({ error: 'Impossible de générer le PDF' });
+  }
 });
 
 // ---------- Auto-service employé (compte lié au dossier par email) ----------

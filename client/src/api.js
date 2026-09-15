@@ -197,6 +197,41 @@ export const api = {
       }
     },
     orgchart: () => req('/api/admin/grh/orgchart', { auth: true }),
+    payroll: {
+      list: (month) => req(`/api/admin/grh/payroll?month=${month}`, { auth: true }),
+      create: (b) => req('/api/admin/grh/payroll', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/payroll/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/payroll/${id}`, { method: 'DELETE', auth: true }),
+      generate: (month) => req('/api/admin/grh/payroll/generate', { method: 'POST', body: { month }, auth: true }),
+      downloadPdf: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/grh/payroll/${id}/pdf`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `bulletin-${id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      },
+      exportCsv: async (month) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/grh/payroll/export?month=${month}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Export impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `paie-${month}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    },
     leaves: {
       list: (params = {}) => {
         const q = new URLSearchParams();
