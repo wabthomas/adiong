@@ -230,6 +230,51 @@ export const api = {
         setTimeout(() => URL.revokeObjectURL(url), 4000);
       }
     },
+    evaluations: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        if (params.employee_id) q.set('employee_id', params.employee_id);
+        const s = q.toString();
+        return req(`/api/admin/grh/evaluations${s ? `?${s}` : ''}`, { auth: true });
+      },
+      create: (b) => req('/api/admin/grh/evaluations', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/evaluations/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/evaluations/${id}`, { method: 'DELETE', auth: true })
+    },
+    trainings: {
+      list: () => req('/api/admin/grh/trainings', { auth: true }),
+      create: (b) => req('/api/admin/grh/trainings', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/trainings/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/trainings/${id}`, { method: 'DELETE', auth: true }),
+      addAttendee: (id, employee_id) => req(`/api/admin/grh/trainings/${id}/attendees`, { method: 'POST', body: { employee_id }, auth: true }),
+      updateAttendee: (aid, b) => req(`/api/admin/grh/trainings/attendees/${aid}`, { method: 'PUT', body: b, auth: true }),
+      removeAttendee: (aid) => req(`/api/admin/grh/trainings/attendees/${aid}`, { method: 'DELETE', auth: true })
+    },
+    announcements: {
+      list: () => req('/api/admin/grh/announcements', { auth: true }),
+      create: (b) => req('/api/admin/grh/announcements', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/announcements/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/announcements/${id}`, { method: 'DELETE', auth: true })
+    },
+    certificate: {
+      download: async (employeeId, { type = 'emploi', end_date = '' } = {}, filename) => {
+        const t = getToken();
+        const q = new URLSearchParams();
+        q.set('type', type);
+        if (end_date) q.set('end_date', end_date);
+        const res = await fetch(`/api/admin/grh/employees/${employeeId}/certificate?${q}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `certificat-${employeeId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    },
     payroll: {
       list: (month) => req(`/api/admin/grh/payroll?month=${month}`, { auth: true }),
       create: (b) => req('/api/admin/grh/payroll', { method: 'POST', body: b, auth: true }),
@@ -285,6 +330,7 @@ export const api = {
     employee: {
       get: () => req('/api/me/employee', { auth: true }),
       leaves: () => req('/api/me/employee/leaves', { auth: true }),
+      announcements: () => req('/api/me/employee/announcements', { auth: true }),
       request: (b) => req('/api/me/employee/leaves', { method: 'POST', body: b, auth: true }),
       remove: (id) => req(`/api/me/employee/leaves/${id}`, { method: 'DELETE', auth: true })
     }

@@ -1163,6 +1163,8 @@ app.put('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
 
 app.delete('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
   db.prepare('DELETE FROM grh_leaves WHERE employee_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM grh_evaluations WHERE employee_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM grh_training_attendees WHERE employee_id = ?').run(req.params.id);
   const docs = db.prepare('SELECT * FROM grh_documents WHERE employee_id = ?').all(req.params.id);
   docs.forEach((d) => {
     const full = path.join(empDocsDir, d.file);
@@ -1698,6 +1700,324 @@ app.post('/api/admin/grh/candidates/:id/hire', ...GRH, (req, res) => {
   }
 });
 
+// ---------- Évaluations annuelles ----------
+const EVAL_STATUSES = ['brouillon', 'validee'];
+const parseEval = (r) => {
+  if (!r) return r;
+  try { r.criteria = JSON.parse(r.criteria || '[]'); } catch { r.criteria = []; }
+  return r;
+};
+const cleanCriteria = (input) =>
+  (Array.isArray(input) ? input : [])
+    .map((c) => ({
+      label: String(c?.label || '').trim().slice(0, 120),
+      score: Math.min(5, Math.max(1, Number(c?.score) || 3))
+    }))
+    .filter((c) => c.label);
+
+app.get('/api/admin/grh/evaluations', ...GRH, (req, res) => {
+  const { employee_id } = req.query;
+  let sql = `
+    SELECT ev.*, e.full_name, e.position, u.full_name AS evaluated_by_name
+    FROM grh_evaluations ev
+    JOIN grh_employees e ON e.id = ev.employee_id
+    LEFT JOIN users u ON u.id = ev.created_by
+  `;
+  const params = [];
+  if (employee_id) { sql += ' WHERE ev.employee_id = ?'; params.push(employee_id); }
+  sql += ' ORDER BY ev.period DESC, e.full_name';
+  res.json(db.prepare(sql).all(...params).map(parseEval));
+});
+
+app.post('/api/admin/grh/evaluations', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!b.employee_id) return res.status(400).json({ error: 'Employé requis' });
+  if (!db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(b.employee_id))
+    return res.status(404).json({ error: 'Employé introuvable' });
+  const period = String(b.period || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ error: 'Période requise (format AAAA-MM)' });
+  const criteria = cleanCriteria(b.criteria);
+  if (!criteria.length) return res.status(400).json({ error: 'Au moins un critère d’évaluation requis' });
+  const status = EVAL_STATUSES.includes(b.status) ? b.status : 'brouillon';
+  if (db.prepare('SELECT id FROM grh_evaluations WHERE employee_id = ? AND period = ?').get(b.employee_id, period))
+    return res.status(409).json({ error: 'Une évaluation existe déjà pour cet employé sur cette période — modifiez-la.' });
+  const overall = Math.round((criteria.reduce((a, c) => a + c.score, 0) / criteria.length) * 10) / 10;
+  const info = db.prepare(
+    'INSERT INTO grh_evaluations (employee_id, period, criteria, overall, comments, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(b.employee_id, period, JSON.stringify(criteria), overall, String(b.comments || '').slice(0, 4000), status, req.user.id);
+  res.json(parseEval(db.prepare('SELECT * FROM grh_evaluations WHERE id = ?').get(info.lastInsertRowid)));
+});
+
+app.put('/api/admin/grh/evaluations/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_evaluations WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Évaluation introuvable' });
+  const b = req.body || {};
+  const employeeId = b.employee_id || ex.employee_id;
+  if (!db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(employeeId))
+    return res.status(404).json({ error: 'Employé introuvable' });
+  const period = String(b.period ?? ex.period).slice(0, 7);
+  const criteria = Array.isArray(b.criteria)
+    ? cleanCriteria(b.criteria)
+    : (() => { try { return JSON.parse(ex.criteria || '[]'); } catch { return []; } })();
+  if (!criteria.length) return res.status(400).json({ error: 'Au moins un critère d’évaluation requis' });
+  const status = EVAL_STATUSES.includes(b.status) ? b.status : ex.status;
+  const dup = db.prepare('SELECT id FROM grh_evaluations WHERE employee_id = ? AND period = ? AND id != ?').get(employeeId, period, ex.id);
+  if (dup) return res.status(409).json({ error: 'Une évaluation existe déjà pour cet employé sur cette période.' });
+  const overall = Math.round((criteria.reduce((a, c) => a + c.score, 0) / criteria.length) * 10) / 10;
+  db.prepare('UPDATE grh_evaluations SET employee_id = ?, period = ?, criteria = ?, overall = ?, comments = ?, status = ? WHERE id = ?')
+    .run(employeeId, period, JSON.stringify(criteria), overall, String(b.comments ?? ex.comments ?? '').slice(0, 4000), status, ex.id);
+  res.json(parseEval(db.prepare('SELECT * FROM grh_evaluations WHERE id = ?').get(ex.id)));
+});
+
+app.delete('/api/admin/grh/evaluations/:id', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_evaluations WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- Formations ----------
+const TRAIN_TYPES = ['interne', 'externe'];
+const TRAIN_STATUSES = ['inscrit', 'termine', 'annule'];
+const fetchTraining = (id) => {
+  const t = db.prepare('SELECT * FROM grh_trainings WHERE id = ?').get(id);
+  if (!t) return t;
+  t.attendees = db.prepare(`
+    SELECT ta.id, ta.employee_id, ta.status, ta.completed_at, e.full_name, e.position
+    FROM grh_training_attendees ta JOIN grh_employees e ON e.id = ta.employee_id
+    WHERE ta.training_id = ? ORDER BY e.full_name
+  `).all(id).map((a) => ({ id: a.id, employee_id: a.employee_id, full_name: a.full_name, position: a.position, status: a.status, completed_at: a.completed_at }));
+  return t;
+};
+const enrollAttendees = (trainingId, ids) => {
+  const ins = db.prepare('INSERT OR IGNORE INTO grh_training_attendees (training_id, employee_id) VALUES (?, ?)');
+  for (const eid of Array.isArray(ids) ? ids : []) {
+    if (db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(eid)) ins.run(trainingId, eid);
+  }
+};
+
+app.get('/api/admin/grh/trainings', ...GRH, (req, res) => {
+  const rows = db.prepare("SELECT * FROM grh_trainings ORDER BY (start_date = ''), start_date DESC, id DESC").all();
+  res.json(rows.map((t) => fetchTraining(t.id)));
+});
+
+app.post('/api/admin/grh/trainings', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!String(b.title || '').trim()) return res.status(400).json({ error: 'Intitulé de la formation requis' });
+  const info = db.prepare(`INSERT INTO grh_trainings (title, type, provider, start_date, end_date, cost, cost_currency, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    String(b.title).trim().slice(0, 200),
+    TRAIN_TYPES.includes(b.type) ? b.type : 'externe',
+    String(b.provider || '').trim().slice(0, 200),
+    b.start_date || '',
+    b.end_date || '',
+    b.cost === '' || b.cost == null ? null : Number(b.cost) || null,
+    b.cost_currency || 'USD',
+    String(b.notes || '').slice(0, 2000)
+  );
+  const t = db.prepare('SELECT * FROM grh_trainings WHERE id = ?').get(info.lastInsertRowid);
+  enrollAttendees(t.id, b.employee_ids);
+  res.json(fetchTraining(t.id));
+});
+
+app.put('/api/admin/grh/trainings/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_trainings WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Formation introuvable' });
+  const b = req.body || {};
+  const merged = { ...ex, ...b };
+  db.prepare(`UPDATE grh_trainings SET title = ?, type = ?, provider = ?, start_date = ?, end_date = ?, cost = ?, cost_currency = ?, notes = ? WHERE id = ?`).run(
+    String(merged.title).trim().slice(0, 200),
+    TRAIN_TYPES.includes(merged.type) ? merged.type : ex.type,
+    String(merged.provider || '').trim().slice(0, 200),
+    merged.start_date || '',
+    merged.end_date || '',
+    merged.cost === '' || merged.cost == null ? null : Number(merged.cost) || null,
+    merged.cost_currency || 'USD',
+    String(merged.notes || '').slice(0, 2000),
+    ex.id
+  );
+  if (Array.isArray(b.employee_ids)) {
+    const keep = new Set(b.employee_ids.map(Number));
+    const existing = db.prepare('SELECT employee_id FROM grh_training_attendees WHERE training_id = ?').all(ex.id).map((r) => r.employee_id);
+    for (const eid of existing) if (!keep.has(eid)) {
+      db.prepare('DELETE FROM grh_training_attendees WHERE training_id = ? AND employee_id = ?').run(ex.id, eid);
+    }
+    for (const eid of keep) if (!existing.includes(eid) && db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(eid)) {
+      db.prepare('INSERT INTO grh_training_attendees (training_id, employee_id) VALUES (?, ?)').run(ex.id, eid);
+    }
+  }
+  res.json(fetchTraining(ex.id));
+});
+
+app.delete('/api/admin/grh/trainings/:id', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_training_attendees WHERE training_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM grh_trainings WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/grh/trainings/:id/attendees', ...GRH, (req, res) => {
+  const t = db.prepare('SELECT id FROM grh_trainings WHERE id = ?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Formation introuvable' });
+  const emp = db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(req.body?.employee_id);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  if (db.prepare('SELECT id FROM grh_training_attendees WHERE training_id = ? AND employee_id = ?').get(t.id, emp.id))
+    return res.status(409).json({ error: 'Cet employé est déjà inscrit à cette formation.' });
+  const info = db.prepare('INSERT INTO grh_training_attendees (training_id, employee_id) VALUES (?, ?)').run(t.id, emp.id);
+  res.json(db.prepare('SELECT * FROM grh_training_attendees WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/grh/trainings/attendees/:aid', ...GRH, (req, res) => {
+  const a = db.prepare('SELECT * FROM grh_training_attendees WHERE id = ?').get(req.params.aid);
+  if (!a) return res.status(404).json({ error: 'Inscription introuvable' });
+  const status = TRAIN_STATUSES.includes(req.body?.status) ? req.body.status : a.status;
+  db.prepare('UPDATE grh_training_attendees SET status = ?, completed_at = ? WHERE id = ?')
+    .run(status, status === 'termine' ? (a.completed_at || new Date().toISOString().slice(0, 10)) : null, a.id);
+  res.json(db.prepare('SELECT * FROM grh_training_attendees WHERE id = ?').get(a.id));
+});
+
+app.delete('/api/admin/grh/trainings/attendees/:aid', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_training_attendees WHERE id = ?').run(req.params.aid);
+  res.json({ ok: true });
+});
+
+// ---------- Annonces internes ----------
+app.get('/api/admin/grh/announcements', ...GRH, (req, res) => {
+  res.json(db.prepare(`
+    SELECT a.*, u.full_name AS created_by_name
+    FROM grh_announcements a LEFT JOIN users u ON u.id = a.created_by
+    ORDER BY a.pinned DESC, a.created_at DESC, a.id DESC
+  `).all());
+});
+
+app.post('/api/admin/grh/announcements', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!String(b.title || '').trim() || !String(b.content || '').trim())
+    return res.status(400).json({ error: 'Titre et contenu requis' });
+  const info = db.prepare('INSERT INTO grh_announcements (title, content, pinned, expires_at, created_by) VALUES (?, ?, ?, ?, ?)').run(
+    String(b.title).trim().slice(0, 200),
+    String(b.content).slice(0, 8000),
+    b.pinned ? 1 : 0,
+    String(b.expires_at || '').slice(0, 10),
+    req.user.id
+  );
+  res.json(db.prepare('SELECT * FROM grh_announcements WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/grh/announcements/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_announcements WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Annonce introuvable' });
+  const b = { ...ex, ...req.body };
+  if (!String(b.title).trim() || !String(b.content).trim())
+    return res.status(400).json({ error: 'Titre et contenu requis' });
+  db.prepare('UPDATE grh_announcements SET title = ?, content = ?, pinned = ?, expires_at = ? WHERE id = ?').run(
+    String(b.title).trim().slice(0, 200),
+    String(b.content).slice(0, 8000),
+    b.pinned ? 1 : 0,
+    String(b.expires_at || '').slice(0, 10),
+    ex.id
+  );
+  res.json(db.prepare('SELECT * FROM grh_announcements WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/grh/announcements/:id', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_announcements WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- Certificats PDF (attestation d'emploi / certificat de travail) ----------
+const CERT_CONTRACTS = {
+  permanent: 'contrat permanent (CDI)',
+  cdd: 'contrat à durée déterminée (CDD)',
+  vacataire: 'contrat vacataire',
+  benevole: 'engagement bénévole',
+  stagiaire: 'contrat de stage'
+};
+const frDateLong = (iso) => {
+  const d = new Date(String(iso || '').slice(0, 10) + 'T00:00:00Z');
+  if (isNaN(d)) return String(iso || '');
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+};
+
+app.get('/api/admin/grh/employees/:id/certificate', ...GRH, async (req, res) => {
+  const type = String(req.query.type || 'emploi') === 'travail' ? 'travail' : 'emploi';
+  const emp = db.prepare(`
+    SELECT e.*, d.name AS department
+    FROM grh_employees e LEFT JOIN grh_departments d ON d.id = e.department_id
+    WHERE e.id = ?
+  `).get(req.params.id);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  const today = new Date().toISOString().slice(0, 10);
+  const endDate = type === 'travail' ? (String(req.query.end_date || '').slice(0, 10) || emp.leave_date || today) : '';
+  try {
+    const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.28, 841.89]);
+    const W = 595.28;
+    const [font, fontBold] = await Promise.all([
+      doc.embedFont(StandardFonts.Helvetica),
+      doc.embedFont(StandardFonts.HelveticaBold)
+    ]);
+    const brand = rgb(0.059, 0.227, 0.533);
+    const ink = rgb(0.1, 0.12, 0.18);
+    const gray = rgb(0.45, 0.5, 0.58);
+    const siteName = getSetting('site_name') || 'ADI ONG';
+    const tagline = getSetting('site_tagline') || '';
+
+    page.drawRectangle({ x: 0, y: 841.89 - 88, width: W, height: 88, color: brand });
+    page.drawText(siteName.toUpperCase(), { x: 40, y: 782, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+    if (tagline) page.drawText(tagline, { x: 40, y: 764, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+
+    const title = type === 'travail' ? 'CERTIFICAT DE TRAVAIL' : "ATTESTATION D'EMPLOI";
+    const issued = `Délivré le ${frDateLong(today)}`;
+    page.drawText(title, { x: (W - fontBold.widthOfTextAtSize(title, 20)) / 2, y: 700, size: 20, font: fontBold, color: ink });
+    page.drawText(issued, { x: W - 40 - font.widthOfTextAtSize(issued, 10), y: 676, size: 10, font, color: gray });
+
+    const contract = CERT_CONTRACTS[emp.contract_type] || 'un contrat';
+    const position = emp.position ? `, occupant le poste de ${emp.position}` : '';
+    const dept = emp.department ? ` au sein du département ${emp.department}` : '';
+    const hired = emp.hire_date ? frDateLong(emp.hire_date) : 'date non renseignée';
+    const p1 = type === 'travail'
+      ? `Nous soussignés, ${siteName}, attestons par la présente que ${emp.full_name} a été notre salarié(e) du ${hired} au ${frDateLong(endDate)}, dans le cadre d'un ${contract}${position}${dept}.`
+      : `Nous soussignés, ${siteName}, attestons par la présente que ${emp.full_name} est notre salarié(e) depuis le ${hired}, dans le cadre d'un ${contract}${position}${dept}.`;
+    const p2 = type === 'travail'
+      ? "Pendant toute cette période, le ou la collaborateur(trice) a accompli ses fonctions avec sérieux et diligence. Le présent certificat est délivré à l'intéressé(e) pour servir et valoir ce que de droit."
+      : 'La présente attestation est délivrée pour servir et valoir ce que de droit.';
+
+    const wrap = (text) => {
+      const words = String(text).split(/\s+/);
+      const lines = [];
+      let line = '';
+      for (const w of words) {
+        const test = line ? `${line} ${w}` : w;
+        if (font.widthOfTextAtSize(test, 11) > 475 && line) { lines.push(line); line = w; }
+        else line = test;
+      }
+      if (line) lines.push(line);
+      return lines;
+    };
+    let y = 640;
+    for (const para of [p1, p2]) {
+      for (const line of wrap(para)) {
+        page.drawText(line, { x: 60, y, size: 11, font, color: ink });
+        y -= 16;
+      }
+      y -= 14;
+    }
+
+    page.drawText(`Fait le ${frDateLong(today)}`, { x: 60, y: 168, size: 10, font, color: ink });
+    page.drawText('La direction', { x: 395, y: 178, size: 10, font: fontBold, color: ink });
+    page.drawText(siteName, { x: 395, y: 146, size: 9, font, color: gray });
+    page.drawLine({ start: { x: 395, y: 164 }, end: { x: 555, y: 164 }, thickness: 0.7, color: ink });
+
+    const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  ·  ');
+    if (footer) page.drawText(footer, { x: 60, y: 60, size: 8, font, color: gray });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${type}-${emp.full_name.replace(/\s+/g, '-').toLowerCase()}.pdf"`);
+    res.send(Buffer.from(await doc.save()));
+  } catch (e) {
+    res.status(500).json({ error: 'Impossible de générer le PDF' });
+  }
+});
+
 // ---------- Auto-service employé (compte lié au dossier par email) ----------
 const LEAVE_TYPES_OK = ['conge', 'maladie', 'maternite', 'sans_solde', 'formation'];
 const selfEmployee = (req) => {
@@ -1717,6 +2037,15 @@ app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), s
 });
 app.get('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
   res.json(db.prepare('SELECT * FROM grh_leaves WHERE employee_id = ? ORDER BY start_date DESC').all(req.employee.id));
+});
+app.get('/api/me/employee/announcements', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  res.json(db.prepare(`
+    SELECT id, title, content, pinned, expires_at, created_at
+    FROM grh_announcements
+    WHERE expires_at = '' OR expires_at >= ?
+    ORDER BY pinned DESC, created_at DESC, id DESC
+  `).all(today));
 });
 const myLeaveLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `myleave:${req.user?.id || req.ip}`, message: 'Trop de demandes de congé. Réessayez plus tard.' });
 app.post('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, myLeaveLimiter, (req, res) => {

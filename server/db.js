@@ -273,6 +273,51 @@ CREATE TABLE IF NOT EXISTS grh_candidates (
   hired_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS grh_evaluations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  period TEXT NOT NULL,
+  criteria TEXT NOT NULL DEFAULT '[]',
+  overall REAL NOT NULL DEFAULT 0,
+  comments TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'brouillon',
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_trainings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'externe',
+  provider TEXT NOT NULL DEFAULT '',
+  start_date TEXT NOT NULL DEFAULT '',
+  end_date TEXT NOT NULL DEFAULT '',
+  cost REAL,
+  cost_currency TEXT NOT NULL DEFAULT 'USD',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_training_attendees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  training_id INTEGER NOT NULL,
+  employee_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'inscrit',
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (training_id, employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS grh_announcements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  pinned INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL DEFAULT '',
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
 migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAULT 0');

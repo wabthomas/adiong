@@ -10,6 +10,9 @@ const TABS = [
   ['leaves', 'Congés'],
   ['payroll', 'Paie'],
   ['recruit', 'Recrutement'],
+  ['evaluations', 'Évaluations'],
+  ['trainings', 'Formations'],
+  ['announcements', 'Annonces'],
   ['departments', 'Départements']
 ];
 
@@ -53,6 +56,15 @@ const DOC_CATEGORIES = {
   autre: 'Autre'
 };
 const PAY_STATUS = { brouillon: 'Brouillon', envoye: 'Envoyé' };
+const EVAL_STATUS = { brouillon: 'Brouillon', validee: 'Validée' };
+const TRAIN_TYPES = { interne: 'Interne', externe: 'Externe' };
+const TRAIN_STATUS = { inscrit: 'Inscrit', termine: 'Terminé', annule: 'Annulé' };
+const EVAL_DEFAULTS = [
+  { label: 'Qualité du travail', score: 3 },
+  { label: 'Autonomie et responsabilité', score: 3 },
+  { label: 'Travail en équipe', score: 3 },
+  { label: 'Respect des délais', score: 3 }
+];
 const fmtMoney = (n, cur = 'USD') =>
   `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0)} ${cur}`;
 const monthLabelFr = (m) => {
@@ -62,7 +74,7 @@ const monthLabelFr = (m) => {
 const emptyLeave = { employee_id: null, type: 'conge', start_date: '', end_date: '', reason: '', status: 'en_attente' };
 
 const fmtDate = (d) =>
-  d ? new Date(d + (d.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 function StatCard({ icon, label, value, sub }) {
   return (
@@ -294,6 +306,29 @@ function EmployeeFileModal({ employee, isSuper, onChanged, onClose }) {
   const [error, setError] = useState('');
   const [upload, setUpload] = useState({ name: '', category: 'autre', file: null });
   const [uploading, setUploading] = useState(false);
+  const [cert, setCert] = useState({ type: 'emploi', end_date: '' });
+  const [certBusy, setCertBusy] = useState(false);
+
+  const downloadCert = async () => {
+    if (cert.type === 'travail' && !cert.end_date) {
+      alert('Indiquez la date de fin de contrat pour le certificat de travail.');
+      return;
+    }
+    setCertBusy(true);
+    setError('');
+    try {
+      const slug = ((data && data.full_name) || employee.full_name || 'employe').replace(/\s+/g, '-').toLowerCase();
+      await api.grh.certificate.download(
+        employee.id,
+        { type: cert.type, end_date: cert.end_date },
+        `${cert.type === 'travail' ? 'certificat' : 'attestation'}-${slug}.pdf`
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCertBusy(false);
+    }
+  };
 
   const load = useCallback(() => {
     api.grh.employees.get(employee.id)
@@ -443,6 +478,26 @@ function EmployeeFileModal({ employee, isSuper, onChanged, onClose }) {
         {(d.documents || []).length === 0 && (
           <p className="mt-3 text-center text-sm text-ink-400">Aucune pièce dans ce dossier pour l'instant.</p>
         )}
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Certificats PDF</p>
+        <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-dashed border-ink-200 bg-cream/50 p-4">
+          <Field label="Type de certificat">
+            <select className="input !py-2.5 text-sm" value={cert.type} onChange={(e) => setCert({ ...cert, type: e.target.value })}>
+              <option value="emploi">Attestation d'emploi (en poste)</option>
+              <option value="travail">Certificat de travail (après départ)</option>
+            </select>
+          </Field>
+          {cert.type === 'travail' && (
+            <Field label="Date de fin *">
+              <input className="input !py-2.5 text-sm" type="date" value={cert.end_date} onChange={(e) => setCert({ ...cert, end_date: e.target.value })} />
+            </Field>
+          )}
+          <button className="btn-primary shrink-0 !px-5 !py-2.5 text-sm" onClick={downloadCert} disabled={certBusy}>
+            {certBusy ? 'Génération…' : '⬇ Télécharger le PDF'}
+          </button>
+        </div>
       </div>
 
       {isSuper && (d.salary_history || []).length > 0 && (
@@ -1309,6 +1364,632 @@ function RecruitTab({ departments, onChanged }) {
   );
 }
 
+function EvaluationForm({ initial, employees, onSaved, onClose }) {
+  const [f, setF] = useState({
+    employee_id: initial.employee_id ?? '',
+    period: initial.period ?? new Date().toISOString().slice(0, 7),
+    criteria: initial.criteria?.length ? initial.criteria.map((c) => ({ ...c })) : EVAL_DEFAULTS.map((c) => ({ ...c })),
+    comments: initial.comments ?? '',
+    status: initial.status ?? 'brouillon'
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const setCrit = (i, key, value) =>
+    setF((cur) => ({ ...cur, criteria: cur.criteria.map((c, j) => (j === i ? { ...c, [key]: value } : c)) }));
+  const addCrit = () => setF((cur) => ({ ...cur, criteria: [...cur.criteria, { label: '', score: 3 }] }));
+  const rmCrit = (i) => setF((cur) => ({ ...cur, criteria: cur.criteria.filter((_, j) => j !== i) }));
+  const avg = f.criteria.length
+    ? (f.criteria.reduce((a, c) => a + (Number(c.score) || 0), 0) / f.criteria.length).toFixed(1)
+    : '—';
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        employee_id: Number(f.employee_id) || null,
+        period: f.period,
+        criteria: f.criteria.filter((c) => c.label.trim()).map((c) => ({ label: c.label.trim(), score: Number(c.score) || 3 })),
+        comments: f.comments,
+        status: f.status
+      };
+      if (initial.id) await api.grh.evaluations.update(initial.id, payload);
+      else await api.grh.evaluations.create(payload);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Employé *">
+          <select className="input" value={f.employee_id} onChange={set('employee_id')} disabled={!!initial.id}>
+            <option value="">— Choisir —</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>{e.full_name}{e.position ? ` — ${e.position}` : ''}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Période (mois) *">
+          <input className="input" type="month" value={f.period} onChange={set('period')} />
+        </Field>
+        <Field label="Statut">
+          <select className="input" value={f.status} onChange={set('status')}>
+            {Object.entries(EVAL_STATUS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Critères (note sur 5)</p>
+        <div className="space-y-2">
+          {f.criteria.map((c, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                className="input flex-1 !py-2.5 text-sm"
+                placeholder="Critère (ex. Qualité du travail)"
+                value={c.label}
+                onChange={(e) => setCrit(i, 'label', e.target.value)}
+              />
+              <select className="input !w-24 !py-2.5 text-sm font-bold" value={c.score} onChange={(e) => setCrit(i, 'score', e.target.value)}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={n}>{n}/5</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => rmCrit(i)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Retirer">
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <button type="button" onClick={addCrit} className="text-sm font-bold text-brand-700 hover:text-brand-800">+ Ajouter un critère</button>
+          <p className="text-sm font-bold text-ink-500">Moyenne : <span className="text-brand-700">{avg}/5</span></p>
+        </div>
+      </div>
+
+      <Field label="Commentaires / points à améliorer">
+        <textarea className="input" rows={4} value={f.comments} onChange={set('comments')} placeholder="Forces observées, axes de progression, objectifs pour la période suivante…" />
+      </Field>
+
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.employee_id || !f.criteria.some((c) => c.label.trim())}>
+          {saving ? 'Enregistrement…' : 'Enregistrer l’évaluation'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EvaluationTab({ employees }) {
+  const [rows, setRows] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [filterEmp, setFilterEmp] = useState('');
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const load = useCallback(() => {
+    api.grh.evaluations.list().then(setRows).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const validate = async (r) => {
+    try {
+      await api.grh.evaluations.update(r.id, { status: 'validee' });
+      setMsg(`✓ Évaluation de ${r.full_name} validée.`);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const remove = async (r) => {
+    if (!confirm(`Supprimer l'évaluation de ${r.full_name} (${monthLabelFr(r.period)}) ?`)) return;
+    try {
+      await api.grh.evaluations.remove(r.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const visible = rows.filter((r) => !filterEmp || String(r.employee_id) === String(filterEmp));
+  const scoreColor = (n) => (n >= 4 ? 'text-emerald-600' : n >= 3 ? 'text-brand-700' : 'text-red-600');
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-ink-500">
+          Bilan de l'équipe : critères personnalisables notés sur 5, commentaires et validation.
+        </p>
+        <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setModal({})}>+ Nouvelle évaluation</button>
+      </div>
+      {msg && <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-cream/70 px-6 py-4">
+          <h3 className="font-display text-lg font-bold text-ink-900">Évaluations ({visible.length})</h3>
+          <select className="input !w-56 !py-2.5 text-sm" value={filterEmp} onChange={(e) => setFilterEmp(e.target.value)}>
+            <option value="">Tous les employés</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>{e.full_name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <tr>
+                <th className="px-6 py-3.5">Employé</th>
+                <th className="px-6 py-3.5">Période</th>
+                <th className="px-6 py-3.5">Moyenne</th>
+                <th className="px-6 py-3.5">Critères</th>
+                <th className="px-6 py-3.5">Commentaires</th>
+                <th className="px-6 py-3.5">Statut</th>
+                <th className="px-6 py-3.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
+                  <td className="px-6 py-4">
+                    <p className="font-semibold text-ink-900">{r.full_name}</p>
+                    <p className="text-xs text-ink-400">{r.position || ''}</p>
+                  </td>
+                  <td className="px-6 py-4 font-bold text-ink-700">{monthLabelFr(r.period)}</td>
+                  <td className="px-6 py-4">
+                    <span className={`font-display text-lg font-extrabold ${scoreColor(r.overall)}`}>{Number(r.overall).toFixed(1)}</span>
+                    <span className="text-xs font-bold text-ink-300">/5</span>
+                  </td>
+                  <td className="max-w-[240px] px-6 py-4 text-xs text-ink-500">
+                    {(r.criteria || []).map((c) => `${c.label} (${c.score})`).join(' · ')}
+                  </td>
+                  <td className="max-w-[220px] truncate px-6 py-4 text-xs text-ink-400" title={r.comments}>{r.comments || '—'}</td>
+                  <td className="px-6 py-4">
+                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${r.status === 'validee' ? 'bg-emerald-100 text-emerald-700' : 'bg-ink-100 text-ink-500'}`}>
+                      {EVAL_STATUS[r.status] || r.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex justify-end gap-1.5">
+                      {r.status === 'brouillon' && (
+                        <button onClick={() => validate(r)} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
+                          ✓ Valider
+                        </button>
+                      )}
+                      <button onClick={() => setModal({ ...r })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                        Éditer
+                      </button>
+                      <button onClick={() => remove(r)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                        ✕
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {visible.length === 0 && <p className="py-12 text-center text-ink-400">Aucune évaluation — créez la première pour un employé.</p>}
+      </div>
+
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? `Modifier — ${modal.full_name || ''} (${monthLabelFr(modal.period)})` : 'Nouvelle évaluation'} wide>
+        {modal && (
+          <EvaluationForm
+            initial={modal}
+            employees={employees.filter((e) => e.status === 'actif')}
+            onSaved={() => { load(); setMsg(''); }}
+            onClose={() => setModal(null)}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function TrainingForm({ initial, employees, onSaved, onClose }) {
+  const [f, setF] = useState({
+    title: initial.title ?? '',
+    type: initial.type ?? 'externe',
+    provider: initial.provider ?? '',
+    start_date: initial.start_date ?? '',
+    end_date: initial.end_date ?? '',
+    cost: initial.cost ?? '',
+    cost_currency: initial.cost_currency ?? 'USD',
+    notes: initial.notes ?? '',
+    employee_ids: initial.attendees ? initial.attendees.map((a) => a.employee_id) : []
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const toggleEmp = (id) =>
+    setF((cur) => ({
+      ...cur,
+      employee_ids: cur.employee_ids.includes(Number(id))
+        ? cur.employee_ids.filter((x) => x !== Number(id))
+        : [...cur.employee_ids, Number(id)]
+    }));
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = { ...f, cost: f.cost === '' || f.cost == null ? null : Number(f.cost) || null };
+      if (initial.id) await api.grh.trainings.update(initial.id, payload);
+      else await api.grh.trainings.create(payload);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Intitulé *">
+          <input className="input" value={f.title} onChange={set('title')} placeholder="Ex. Formation premiers secours" />
+        </Field>
+        <Field label="Type">
+          <select className="input" value={f.type} onChange={set('type')}>
+            {Object.entries(TRAIN_TYPES).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Organisme">
+          <input className="input" value={f.provider} onChange={set('provider')} placeholder="Ex. Croissant-Rouge, atelier interne…" />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Début">
+            <input className="input" type="date" value={f.start_date} onChange={set('start_date')} />
+          </Field>
+          <Field label="Fin">
+            <input className="input" type="date" value={f.end_date} onChange={set('end_date')} />
+          </Field>
+        </div>
+        <Field label="Coût">
+          <input className="input" type="number" min="0" step="0.01" value={f.cost} onChange={set('cost')} placeholder="Optionnel" />
+        </Field>
+        <Field label="Devise">
+          <select className="input" value={f.cost_currency} onChange={set('cost_currency')}>
+            {['USD', 'EUR', 'CDF'].map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Participants ({f.employee_ids.length})</p>
+        <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-2xl border border-ink-100 p-3 sm:grid-cols-2">
+          {employees.map((e) => (
+            <label key={e.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-cream">
+              <input type="checkbox" className="h-4 w-4 accent-[#0f3a88]" checked={f.employee_ids.includes(e.id)} onChange={() => toggleEmp(e.id)} />
+              <span className="truncate text-ink-700">{e.full_name}</span>
+            </label>
+          ))}
+        </div>
+        {employees.length === 0 && <p className="mt-2 text-sm text-ink-400">Aucun employé actif — ajoutez d'abord l'équipe.</p>}
+      </div>
+
+      <Field label="Notes">
+        <textarea className="input" rows={3} value={f.notes} onChange={set('notes')} placeholder="Objectifs de la formation, logistique…" />
+      </Field>
+
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.title.trim()}>
+          {saving ? 'Enregistrement…' : 'Enregistrer la formation'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TrainingTab({ employees }) {
+  const [rows, setRows] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [addEmp, setAddEmp] = useState({});
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    api.grh.trainings.list().then(setRows).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const setAttendeeStatus = async (a, status) => {
+    try {
+      await api.grh.trainings.updateAttendee(a.id, { status });
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const removeAttendee = async (a) => {
+    if (!confirm(`Retirer ${a.full_name} de cette formation ?`)) return;
+    try {
+      await api.grh.trainings.removeAttendee(a.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const addAttendee = async (t, employeeId) => {
+    if (!employeeId) return;
+    try {
+      await api.grh.trainings.addAttendee(t.id, Number(employeeId));
+      setAddEmp((cur) => ({ ...cur, [t.id]: '' }));
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const remove = async (t) => {
+    if (!confirm(`Supprimer la formation « ${t.title} » ?`)) return;
+    try {
+      await api.grh.trainings.remove(t.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-ink-500">
+          Formations et montée en compétences : planifiez, inscrivez les participants et suivez la progression.
+        </p>
+        <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setModal({})}>+ Nouvelle formation</button>
+      </div>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {rows.map((t) => (
+          <div key={t.id} className="card flex flex-col p-5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-display font-bold text-ink-900">{t.title}</p>
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${t.type === 'interne' ? 'bg-brand-100 text-brand-700' : 'bg-accent-100 text-accent-800'}`}>
+                {TRAIN_TYPES[t.type] || t.type}
+              </span>
+            </div>
+            <div className="mt-2 space-y-1 text-xs text-ink-400">
+              {t.provider && <p>🏛 {t.provider}</p>}
+              {(t.start_date || t.end_date) && (
+                <p>📅 {t.start_date ? fmtDate(t.start_date) : ''}{t.start_date && t.end_date ? ' → ' : ''}{t.end_date ? fmtDate(t.end_date) : ''}</p>
+              )}
+              {t.cost != null && <p>💰 {fmtMoney(t.cost, t.cost_currency)}</p>}
+              {t.notes && <p className="truncate" title={t.notes}>{t.notes}</p>}
+            </div>
+
+            <div className="mt-4 flex-1">
+              <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Participants ({t.attendees.length})</p>
+              <ul className="space-y-1.5">
+                {t.attendees.map((a) => (
+                  <li key={a.id} className="flex items-center gap-2 rounded-xl bg-cream px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-ink-800">{a.full_name}</p>
+                      <p className="truncate text-[11px] text-ink-400">{a.position || ''}</p>
+                    </div>
+                    <select
+                      className="input !w-28 !py-1.5 text-xs font-bold"
+                      value={a.status}
+                      onChange={(e) => setAttendeeStatus(a, e.target.value)}
+                    >
+                      {Object.entries(TRAIN_STATUS).map(([v, l]) => (
+                        <option key={v} value={v}>{l}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => removeAttendee(a)} className="rounded-lg bg-red-50 px-2 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Retirer">
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {t.attendees.length === 0 && (
+                <p className="rounded-xl border border-dashed border-ink-200 px-3 py-3 text-center text-xs text-ink-400">Aucun participant inscrit.</p>
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
+              <select
+                className="input !w-48 !py-2 text-xs"
+                value={addEmp[t.id] ?? ''}
+                onChange={(e) => setAddEmp((cur) => ({ ...cur, [t.id]: e.target.value }))}
+              >
+                <option value="">+ Participant…</option>
+                {employees.filter((e) => !t.attendees.some((a) => a.employee_id === e.id)).map((e) => (
+                  <option key={e.id} value={e.id}>{e.full_name}</option>
+                ))}
+              </select>
+              <button
+                className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100 disabled:opacity-40"
+                disabled={!addEmp[t.id]}
+                onClick={() => addAttendee(t, addEmp[t.id])}
+              >
+                Inscrire
+              </button>
+              <div className="ml-auto flex gap-1.5">
+                <button onClick={() => setModal({ ...t })} className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                  Modifier
+                </button>
+                <button onClick={() => remove(t)} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100">
+                  Supprimer
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {rows.length === 0 && (
+        <p className="rounded-2xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
+          Aucune formation enregistrée — planifiez la première.
+        </p>
+      )}
+
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Modifier la formation' : 'Nouvelle formation'} wide>
+        {modal && (
+          <TrainingForm
+            initial={modal}
+            employees={employees.filter((e) => e.status === 'actif')}
+            onSaved={load}
+            onClose={() => setModal(null)}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function AnnouncementForm({ initial, onSaved, onClose }) {
+  const [f, setF] = useState({
+    title: initial.title ?? '',
+    content: initial.content ?? '',
+    pinned: initial.pinned ?? 0,
+    expires_at: initial.expires_at ?? ''
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = { ...f, pinned: f.pinned ? 1 : 0 };
+      if (initial.id) await api.grh.announcements.update(initial.id, payload);
+      else await api.grh.announcements.create(payload);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <Field label="Titre *">
+        <input className="input" value={f.title} onChange={set('title')} placeholder="Ex. Journée portes ouvertes" />
+      </Field>
+      <Field label="Contenu *">
+        <textarea className="input" rows={6} value={f.content} onChange={set('content')} placeholder="Le message affiché dans « Mon espace » de chaque employé…" />
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Date d'expiration (optionnel)">
+          <input className="input" type="date" value={f.expires_at} onChange={set('expires_at')} />
+        </Field>
+        <label className="mt-7 flex cursor-pointer items-center gap-3 rounded-xl border border-ink-100 px-4 py-3">
+          <input type="checkbox" className="h-4 w-4 accent-[#0f3a88]" checked={!!f.pinned} onChange={(e) => setF({ ...f, pinned: e.target.checked ? 1 : 0 })} />
+          <span className="text-sm font-semibold text-ink-700">📌 Épingler en tête de liste</span>
+        </label>
+      </div>
+
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.title.trim() || !f.content.trim()}>
+          {saving ? 'Enregistrement…' : 'Publier l’annonce'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AnnouncementTab() {
+  const [rows, setRows] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    api.grh.announcements.list().then(setRows).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const togglePin = async (a) => {
+    try {
+      await api.grh.announcements.update(a.id, { pinned: a.pinned ? 0 : 1 });
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const remove = async (a) => {
+    if (!confirm(`Supprimer l'annonce « ${a.title} » ?`)) return;
+    try {
+      await api.grh.announcements.remove(a.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-ink-500">
+          Messages internes visibles par chaque employé dans « Mon espace ». Les annonces épinglées restent en tête de liste.
+        </p>
+        <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setModal({})}>+ Nouvelle annonce</button>
+      </div>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <div className="space-y-4">
+        {rows.map((a) => (
+          <div key={a.id} className={`card p-5 ${a.pinned ? 'ring-2 ring-brand-200' : ''}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-display font-bold text-ink-900">
+                  {a.pinned ? '📌 ' : ''}{a.title}
+                </p>
+                <p className="mt-1 text-xs text-ink-400">
+                  {fmtDate(a.created_at)}{a.expires_at ? ` · expire le ${fmtDate(a.expires_at)}` : ' · sans expiration'}
+                  {a.created_by_name ? ` · par ${a.created_by_name}` : ''}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-1.5">
+                <button onClick={() => togglePin(a)} className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                  {a.pinned ? 'Désépingler' : 'Épingler'}
+                </button>
+                <button onClick={() => setModal({ ...a })} className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                  Éditer
+                </button>
+                <button onClick={() => remove(a)} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                  ✕
+                </button>
+              </div>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-600">{a.content}</p>
+          </div>
+        ))}
+      </div>
+      {rows.length === 0 && (
+        <p className="rounded-2xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
+          Aucune annonce interne — publiez la première.
+        </p>
+      )}
+
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Modifier l’annonce' : 'Nouvelle annonce interne'} wide>
+        {modal && (
+          <AnnouncementForm initial={modal} onSaved={load} onClose={() => setModal(null)} />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 function OrgNode({ node, level = 0, onOpenFile }) {
   return (
     <li className="relative">
@@ -1707,6 +2388,18 @@ export default function GrhAdmin() {
 
       {tab === 'recruit' && (
         <RecruitTab departments={departments} onChanged={loadAll} />
+      )}
+
+      {tab === 'evaluations' && (
+        <EvaluationTab employees={employees} />
+      )}
+
+      {tab === 'trainings' && (
+        <TrainingTab employees={employees} />
+      )}
+
+      {tab === 'announcements' && (
+        <AnnouncementTab />
       )}
 
       {tab === 'leaves' && (

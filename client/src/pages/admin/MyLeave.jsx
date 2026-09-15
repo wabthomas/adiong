@@ -20,23 +20,25 @@ const LEAVE_STATUS_STYLES = {
   rejette: 'bg-red-100 text-red-700'
 };
 const fmtDate = (d) =>
-  d ? new Date(d + (d.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 export default function MyLeave() {
   const me = getSavedUser();
   const [employee, setEmployee] = useState(null);
   const [notLinked, setNotLinked] = useState(false);
   const [leaves, setLeaves] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
   const [sending, setSending] = useState(false);
   const [form, setForm] = useState({ type: 'conge', start_date: '', end_date: '', reason: '' });
 
   const load = useCallback(() => {
-    Promise.all([api.me.employee.get(), api.me.employee.leaves()])
-      .then(([emp, le]) => {
+    Promise.all([api.me.employee.get(), api.me.employee.leaves(), api.me.employee.announcements()])
+      .then(([emp, le, an]) => {
         setEmployee(emp);
         setLeaves(le);
+        setAnnouncements(an);
         setNotLinked(false);
       })
       .catch((e) => {
@@ -75,7 +77,7 @@ export default function MyLeave() {
 
   return (
     <div>
-      <PageTitle title="Mon espace" subtitle="Vos congés et votre solde — lié à votre compte par votre adresse email." />
+      <PageTitle title="Mon espace" subtitle="Vos congés, votre solde et les annonces de l'équipe — lié à votre compte par votre adresse email." />
 
       {notLinked ? (
         <div className="mx-auto max-w-xl rounded-3xl border border-dashed border-ink-200 bg-white p-10 text-center">
@@ -142,6 +144,7 @@ export default function MyLeave() {
             </div>
           </div>
 
+          <div className="space-y-6">
           <div className="card overflow-hidden">
             <div className="border-b border-ink-100 bg-cream/70 px-6 py-4">
               <h3 className="font-display text-lg font-bold text-ink-900">Mes demandes</h3>
@@ -168,6 +171,28 @@ export default function MyLeave() {
               ))}
             </ul>
             {leaves.length === 0 && <p className="px-6 py-10 text-center text-sm text-ink-400">Aucune demande pour l'instant.</p>}
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="border-b border-ink-100 bg-cream/70 px-6 py-4">
+              <h3 className="font-display text-lg font-bold text-ink-900">📢 Annonces internes</h3>
+            </div>
+            <ul>
+              {announcements.map((a) => (
+                <li key={a.id} className="border-b border-ink-50 px-6 py-4 last:border-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-bold text-ink-800">{a.pinned ? '📌 ' : ''}{a.title}</p>
+                    <span className="shrink-0 text-[11px] text-ink-400">{fmtDate(a.created_at)}</span>
+                  </div>
+                  <p className="mt-1.5 text-xs leading-relaxed whitespace-pre-wrap text-ink-500">{a.content}</p>
+                  {a.expires_at && <p className="mt-1.5 text-[11px] font-semibold text-ink-400">Expire le {fmtDate(a.expires_at)}</p>}
+                </li>
+              ))}
+            </ul>
+            {announcements.length === 0 && (
+              <p className="px-6 py-10 text-center text-sm text-ink-400">Aucune annonce pour le moment.</p>
+            )}
+          </div>
           </div>
         </div>
       ) : null}

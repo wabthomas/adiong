@@ -117,9 +117,13 @@ Module **interne** (jamais visible sur le site public) de gestion des ressources
 - **Dossier employé** : pièces et documents privés (contrat, pièce d'identité, diplôme, certificat médical…) — upload, téléchargement, suppression ; stockés hors du site public, accessibles uniquement aux rôles RH.
 - **Organigramme** : supérieur hiérarchique par employé, arborescence interactive (clic sur un nom = ouvre le dossier).
 - **Congés** : types (annuel, maladie, maternité, sans solde, formation), circuit de validation (en attente → approuvé/rejeté), **soldes par employé** (jours par an, pris, restants — réglables par défaut dans Paramètres ou individuellement par employé), durée comptée en jours ouvrés, **calendrier mensuel** des absences approuvées.
-- **Mon espace (auto-service)** : chaque employé dont l'email correspond à un dossier voit *Admin → Mon espace* — consultation de son solde, demande de congé (contrôlée par le solde), retrait de ses demandes en attente.
+- **Mon espace (auto-service)** : chaque employé dont l'email correspond à un dossier voit *Admin → Mon espace* — consultation de son solde, demande de congé (contrôlée par le solde), retrait de ses demandes en attente, et **annonces internes** de l'équipe (épinglées en tête).
 - **Paie** (super admin uniquement) : grille mensuelle des bulletins (salaire de base, primes, retenues, net), génération d'un mois en un clic pour tous les actifs, bulletin imprimable et **PDF** téléchargeable, statuts brouillon/envoyé, **export CSV** du mois (compatible Excel), et **historique des changements de salaire** dans le dossier employé.
 - **Recrutement** : offres d'emploi (intitulé, département, contrat, lieu, fourchette salariale, date limite, publiée/masquée) et **pipeline de candidats** (reçu → entretien → retenu/refusé/retiré) avec CV privé téléchargeable, notes et date d'entretien. Le bouton **« Embaucher »** convertit le candidat en employé en un clic (dossier créé avec le poste et le contrat de l'offre).
+- **Évaluations** : bilan par employé et par période (mois), **critères personnalisables notés sur 5** (moyenne calculée automatiquement), commentaires, statuts brouillon/validée, filtres par employé.
+- **Formations** : catalogue de formations (interne/externe, organisme, dates, coût) avec **participants** (inscription, statut inscrit/terminé/annulé, date de fin), ajout de participants à la volée.
+- **Annonces internes** : messages de l'équipe (épinglage, date d'expiration, auteur) — **visibles par chaque employé dans « Mon espace »**.
+- **Certificats PDF** : depuis le dossier employé, génération d'une **attestation d'emploi** (en poste) ou d'un **certificat de travail** (après départ, avec date de fin) — PDF à l'en-tête de l'organisation, prêt à signer.
 - **Départements** : création, renommage (inline), suppression protégée (impossible si employés affectés).
 
 **Activation / désactivation** : réservée au **super administrateur** via
