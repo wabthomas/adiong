@@ -190,6 +190,19 @@ export default function SettingsAdmin() {
     }
   };
 
+  const togglePos = async (value) => {
+    setModMsg('');
+    try {
+      const m = await api.modules.update({ pos_enabled: value });
+      setModules(m);
+      setModMsg(value
+        ? '✓ Point de vente activé — visible par les administrateurs dans le menu de gauche.'
+        : '✓ Point de vente désactivé — le menu est masqué et l’API POS fermée.');
+    } catch (e) {
+      setModMsg(`✗ ${e.message}`);
+    }
+  };
+
   if (!s) return <PageTitle title="Paramètres" />;
 
   const set = (k) => (e) => setS({ ...s, [k]: e.target.value });
@@ -570,6 +583,38 @@ export default function SettingsAdmin() {
               <span
                 className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition-all ${
                   modules?.grh_enabled ? 'left-8' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="card flex flex-wrap items-center justify-between gap-6 p-7">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="font-display text-lg font-bold text-ink-900">Point de vente (POS) + stock</h3>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${modules?.pos_enabled ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+                  {modules?.pos_enabled ? 'Activé' : 'Désactivé'}
+                </span>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Caisse (panier, paiement, ticket imprimable et PDF), ventes avec retours, catalogue produits,
+                mouvements de stock et statistiques. Visible dans le menu par les rôles <strong>super admin</strong>
+                et <strong>administrateur</strong>. La désactivation masque le menu et ferme l'API POS (les données restent conservées).
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!modules?.pos_enabled}
+              disabled={!modules}
+              onClick={() => togglePos(!modules?.pos_enabled)}
+              className={`relative h-9 w-16 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                modules?.pos_enabled ? 'bg-brand-600' : 'bg-ink-200'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition-all ${
+                  modules?.pos_enabled ? 'left-8' : 'left-1'
                 }`}
               />
             </button>

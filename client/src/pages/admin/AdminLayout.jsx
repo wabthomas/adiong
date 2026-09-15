@@ -4,6 +4,7 @@ import { api, getToken, setToken, getSavedUser, setSavedUser } from '../../api.j
 
 const ALL_ROLES = ['super_admin', 'admin', 'editor', 'viewer'];
 const HR_ROLES = ['super_admin', 'admin'];
+const POS_ROLES = ['super_admin', 'admin'];
 
 const items = [
   { to: '/admin', label: 'Tableau de bord', roles: ALL_ROLES, icon: 'M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z', end: true },
@@ -14,6 +15,7 @@ const items = [
   { to: '/admin/dons', label: 'Dons', roles: ALL_ROLES, icon: 'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z' },
   { to: '/admin/messages', label: 'Messages', icon: 'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75' },
   { to: '/admin/grh', label: 'GRH (Ressources humaines)', roles: HR_ROLES, grh: true, icon: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0ZM7.5 14.25h9a3.375 3.375 0 0 1 0 6.75h-9a3.375 3.375 0 0 1 0-6.75Zm0 3.75a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm3.75 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm.75 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z' },
+  { to: '/admin/pos', label: 'Point de vente (POS)', roles: POS_ROLES, pos: true, icon: 'M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 0 0-16.536-1.84M7.5 14.25 5.106 5.272M6 20.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm12.75 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z' },
   { to: '/admin/medias', label: 'Médiathèque', roles: ['super_admin', 'admin', 'editor'], icon: 'M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z' },
   { to: '/admin/mon-espace', label: 'Mon espace (congés)', roles: ALL_ROLES, grh: true, icon: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-9-6h.008v.008H12v-.008ZM12 15h.008v.008H12V15Zm0 2.25h.008v.008H12v-.008ZM9.75 15h.008v.008H9.75V15Zm0 2.25h.008v.008H9.75v-.008ZM7.5 15h.008v.008H7.5V15Zm0 2.25h.008v.008H7.5v-.008Zm6.75-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H16.5v-.008Zm0 2.25h.008v.008H16.5V15Z' },
   { to: '/admin/profil', label: 'Mon profil', roles: ALL_ROLES, icon: 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z' },
@@ -46,6 +48,7 @@ export default function AdminLayout() {
   const [authed] = useState(!!getToken());
   const [savedUser, setMe] = useState(getSavedUser);
   const [grhEnabled, setGrhEnabled] = useState(false);
+  const [posEnabled, setPosEnabled] = useState(false);
   const menuRef = useRef(null);
   const role = savedUser?.role || 'admin';
   const page = currentPage(pathname);
@@ -63,8 +66,13 @@ export default function AdminLayout() {
   }, []);
 
   useEffect(() => {
-    if (HR_ROLES.includes(role)) {
-      api.modules.get().then((m) => setGrhEnabled(!!m.grh_enabled)).catch(() => {});
+    if (HR_ROLES.includes(role) || POS_ROLES.includes(role)) {
+      api.modules.get()
+        .then((m) => {
+          setGrhEnabled(!!m.grh_enabled);
+          setPosEnabled(!!m.pos_enabled);
+        })
+        .catch(() => {});
     }
   }, [role]);
 
@@ -83,7 +91,8 @@ export default function AdminLayout() {
 
   const visibleItems = items
     .filter((it) => (it.roles || ALL_ROLES).includes(role))
-    .filter((it) => !it.grh || grhEnabled);
+    .filter((it) => !it.grh || grhEnabled)
+    .filter((it) => !it.pos || posEnabled);
 
   if (!authed) return null;
 

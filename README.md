@@ -131,9 +131,33 @@ Module **interne** (jamais visible sur le site public) de gestion des ressources
 (les données sont conservées). Le menu GRH s'affiche pour les rôles super admin et administrateur.
 
 **Rôles** : `super_admin` (tout + activation des modules + salaires) > `admin` (contenu,
-paramètres, utilisateurs, GRH) > `editor` (contenu) > `viewer` (consultation).
+paramètres, utilisateurs, GRH, point de vente) > `editor` (contenu) > `viewer` (consultation).
 Le compte initial `admin@adiong.org` est super admin. Seul un super admin peut créer/donner le rôle
 super admin ; il doit toujours rester au moins un compte privilégié (super admin ou admin).
+
+## Module Point de vente (POS) + stock
+
+Module **interne** (jamais visible sur le site public) pour vendre des produits (boutique,
+merchandising, produits des ateliers…) et gérer le stock :
+
+- **Caisse** : grille de produits (recherche, filtres par catégorie, stock affiché, rupture bloquée),
+  panier avec quantités, client, **réduction**, choix du paiement (**Espèces, Mobile Money, Carte,
+  Virement, Autre**), montant reçu et **monnaie rendue**, puis encaissement.
+- **Ticket** : à chaque vente, ticket imprimable (imprimante standard) ou **PDF A5** à l'en-tête de
+  l'organisation, avec numéro séquentiel (POS-00001…), lignes, totaux et mode de paiement.
+- **Ventes** : historique filtrable (période, paiement, recherche), détail par vente, **retours
+  partiels ou totaux** (le stock retourné est réapprovisionné automatiquement, motif tracé) et
+  **annulation** d'une vente (suppression + réapprovisionnement du stock non retourné).
+- **Stock** : catalogue produits (nom, référence, catégorie, prix de vente, coût d'achat, image,
+  actif/inactif), **seuils d'alerte** « stock bas / rupture », catégories (création, renommage,
+  suppression protégée), **mouvements** (entrée, sortie, ajustement) et historique complet tracé
+  (chaque vente, retour, annulation et mouvement laisse une piste horodatée avec l'auteur).
+- **Statistiques** : ventes et chiffre d'affaires du jour, répartition par mode de paiement,
+  graphique des 7 derniers jours, meilleures ventes sur 30 jours, valeur du stock et alertes.
+
+**Activation / désactivation** : comme le module GRH, réservée au **super administrateur**
+(*Admin → Paramètres → Modules*). La désactivation masque le menu et ferme l'API POS
+(les données sont conservées). Visible pour les rôles super admin et administrateur.
 
 ## Sécurité
 

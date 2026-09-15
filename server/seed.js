@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS = {
   logo: '/uploads/seed/logo.png',
   favicon: '/uploads/seed/favicon.png',
   grh_enabled: '0',
+  pos_enabled: '0',
   address: '38 Av. Baraka, Rue Dr. Maganga, Q. Himbi, Commune de Goma, Nord-Kivu, RDC',
   phone1: '+243 976 483 612',
   phone2: '+243 811 401 636',

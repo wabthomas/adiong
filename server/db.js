@@ -318,6 +318,81 @@ CREATE TABLE IF NOT EXISTS grh_announcements (
   created_by INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS stock_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  reference TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  category_id INTEGER,
+  price REAL NOT NULL DEFAULT 0,
+  cost REAL,
+  stock INTEGER NOT NULL DEFAULT 0,
+  min_stock INTEGER NOT NULL DEFAULT 0,
+  image TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER NOT NULL,
+  type TEXT NOT NULL DEFAULT 'entree',
+  qty INTEGER NOT NULL DEFAULT 0,
+  new_stock INTEGER,
+  reason TEXT NOT NULL DEFAULT '',
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pos_sales (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  number TEXT NOT NULL DEFAULT '',
+  customer_name TEXT NOT NULL DEFAULT '',
+  subtotal REAL NOT NULL DEFAULT 0,
+  discount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  payment_method TEXT NOT NULL DEFAULT 'especes',
+  paid_amount REAL NOT NULL DEFAULT 0,
+  cashier_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'vendue',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pos_sale_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sale_id INTEGER NOT NULL,
+  product_id INTEGER,
+  product_name TEXT NOT NULL,
+  price REAL NOT NULL DEFAULT 0,
+  qty INTEGER NOT NULL DEFAULT 1,
+  returned_qty INTEGER NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS pos_returns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sale_id INTEGER NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  total REAL NOT NULL DEFAULT 0,
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pos_return_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  return_id INTEGER NOT NULL,
+  sale_item_id INTEGER NOT NULL,
+  product_id INTEGER,
+  qty INTEGER NOT NULL DEFAULT 1
+);
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
 migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAULT 0');

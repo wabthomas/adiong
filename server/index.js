@@ -977,14 +977,20 @@ app.delete('/api/admin/users/:id', authRequired, requireRole('admin'), (req, res
 app.get('/api/admin/modules', authRequired, (req, res) => {
   res.json({
     grh_enabled: getSetting('grh_enabled') === '1',
+    pos_enabled: getSetting('pos_enabled') === '1',
     is_super: req.user.role === 'super_admin'
   });
 });
 
 app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => {
-  const { grh_enabled } = req.body || {};
+  const { grh_enabled, pos_enabled } = req.body || {};
   if (typeof grh_enabled === 'boolean') setSetting('grh_enabled', grh_enabled ? '1' : '0');
-  res.json({ grh_enabled: getSetting('grh_enabled') === '1', is_super: true });
+  if (typeof pos_enabled === 'boolean') setSetting('pos_enabled', pos_enabled ? '1' : '0');
+  res.json({
+    grh_enabled: getSetting('grh_enabled') === '1',
+    pos_enabled: getSetting('pos_enabled') === '1',
+    is_super: true
+  });
 });
 
 // ---------- GRH (rôles admin+super, module activable) ----------
@@ -2152,6 +2158,491 @@ app.post('/api/admin/invites', authRequired, requireRole('admin'), (req, res) =>
 app.delete('/api/admin/invites/:id', authRequired, requireRole('admin'), (req, res) => {
   db.prepare('DELETE FROM invites WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------- Point de vente + stock (rôles admin+super, module activable) ----------
+const POS = [authRequired, requireRole('admin'), requireModule('pos_enabled', 'Point de vente')];
+const PAYMENT_METHODS = ['especes', 'mobile', 'carte', 'virement', 'autre'];
+const STOCK_MOVEMENT_TYPES = ['entree', 'sortie', 'ajustement'];
+const money2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const runTx = (fn) => {
+  db.exec('BEGIN');
+  try {
+    const out = fn();
+    db.exec('COMMIT');
+    return out;
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ }
+    throw e;
+  }
+};
+const saleStatusOf = (totalItems, returnedItems) =>
+  totalItems > 0 && returnedItems >= totalItems ? 'retournee' : returnedItems > 0 ? 'partielle' : 'vendue';
+const fetchSale = (id) => {
+  const s = db.prepare(`
+    SELECT s.*, u.full_name AS cashier_name
+    FROM pos_sales s LEFT JOIN users u ON u.id = s.cashier_id
+    WHERE s.id = ?
+  `).get(id);
+  if (!s) return s;
+  s.items = db.prepare('SELECT * FROM pos_sale_items WHERE sale_id = ? ORDER BY id').all(id);
+  s.returns = db.prepare(`
+    SELECT r.*, u.full_name AS created_by_name
+    FROM pos_returns r LEFT JOIN users u ON u.id = r.created_by
+    WHERE r.sale_id = ? ORDER BY r.created_at DESC, r.id DESC
+  `).all(id);
+  s.returns.forEach((r) => { r.items = db.prepare('SELECT * FROM pos_return_items WHERE return_id = ?').all(r.id); });
+  const totalItems = s.items.reduce((a, i) => a + i.qty, 0);
+  const returnedItems = s.items.reduce((a, i) => a + i.returned_qty, 0);
+  s.status = saleStatusOf(totalItems, returnedItems);
+  return s;
+};
+
+// Catégories
+app.get('/api/admin/pos/categories', ...POS, (req, res) => {
+  res.json(db.prepare(`
+    SELECT c.*, (SELECT COUNT(*) FROM stock_products p WHERE p.category_id = c.id) AS products
+    FROM stock_categories c ORDER BY c.name
+  `).all());
+});
+
+app.post('/api/admin/pos/categories', ...POS, (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
+  try {
+    const info = db.prepare('INSERT INTO stock_categories (name) VALUES (?)').run(name);
+    res.json(db.prepare('SELECT * FROM stock_categories WHERE id = ?').get(info.lastInsertRowid));
+  } catch {
+    res.status(409).json({ error: 'Cette catégorie existe déjà' });
+  }
+});
+
+app.put('/api/admin/pos/categories/:id', ...POS, (req, res) => {
+  const ex = db.prepare('SELECT * FROM stock_categories WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
+  try {
+    db.prepare('UPDATE stock_categories SET name = ? WHERE id = ?').run(name, ex.id);
+    res.json(db.prepare('SELECT * FROM stock_categories WHERE id = ?').get(ex.id));
+  } catch {
+    res.status(409).json({ error: 'Cette catégorie existe déjà' });
+  }
+});
+
+app.delete('/api/admin/pos/categories/:id', ...POS, (req, res) => {
+  const used = db.prepare('SELECT COUNT(*) n FROM stock_products WHERE category_id = ?').get(req.params.id).n;
+  if (used > 0) return res.status(409).json({ error: `Impossible : ${used} produit(s) rattaché(s) à cette catégorie.` });
+  db.prepare('DELETE FROM stock_categories WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Produits
+app.get('/api/admin/pos/products', ...POS, (req, res) => {
+  const { search, category_id, active } = req.query;
+  let sql = `
+    SELECT p.*, c.name AS category
+    FROM stock_products p LEFT JOIN stock_categories c ON c.id = p.category_id
+  `;
+  const where = [];
+  const params = [];
+  if (search) { where.push('(p.name LIKE ? OR p.reference LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+  if (category_id) { where.push('p.category_id = ?'); params.push(category_id); }
+  if (active === '1') where.push('p.active = 1');
+  if (active === '0') where.push('p.active = 0');
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY p.name';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/admin/pos/products', ...POS, (req, res) => {
+  const b = req.body || {};
+  if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nom du produit requis' });
+  const price = Math.max(0, Number(b.price) || 0);
+  const stock = Math.max(0, Math.trunc(Number(b.stock) || 0));
+  const cost = b.cost === '' || b.cost == null ? null : Math.max(0, Number(b.cost) || null);
+  const info = runTx(() => {
+    const r = db.prepare(`INSERT INTO stock_products
+      (name, reference, description, category_id, price, cost, stock, min_stock, image, active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      String(b.name).trim().slice(0, 200),
+      String(b.reference || '').trim().slice(0, 40),
+      String(b.description || '').slice(0, 2000),
+      b.category_id || null,
+      price,
+      cost,
+      stock,
+      Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
+      b.image || '',
+      b.active === false || b.active === 0 || b.active === '0' ? 0 : 1
+    );
+    if (stock > 0) {
+      db.prepare('INSERT INTO stock_movements (product_id, type, qty, reason, created_by) VALUES (?, ?, ?, ?, ?)')
+        .run(r.lastInsertRowid, 'entree', stock, 'Stock initial', req.user.id);
+    }
+    return r.lastInsertRowid;
+  });
+  res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(info));
+});
+
+app.put('/api/admin/pos/products/:id', ...POS, (req, res) => {
+  const ex = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Produit introuvable' });
+  const b = { ...ex, ...req.body };
+  const nextStock = Math.max(0, Math.trunc(Number(b.stock) || 0));
+  const cost = b.cost === '' || b.cost == null ? null : Math.max(0, Number(b.cost) || null);
+  runTx(() => {
+    db.prepare(`UPDATE stock_products SET
+      name = ?, reference = ?, description = ?, category_id = ?, price = ?, cost = ?, stock = ?, min_stock = ?, image = ?, active = ?
+      WHERE id = ?`).run(
+      String(b.name).trim().slice(0, 200),
+      String(b.reference || '').trim().slice(0, 40),
+      String(b.description || '').slice(0, 2000),
+      b.category_id || null,
+      Math.max(0, Number(b.price) || 0),
+      cost,
+      nextStock,
+      Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
+      b.image || '',
+      b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
+      ex.id
+    );
+    if (nextStock !== ex.stock) {
+      db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(ex.id, 'ajustement', Math.abs(nextStock - ex.stock), nextStock, 'Mise à jour du stock depuis la fiche produit', req.user.id);
+    }
+  });
+  res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(ex.id));
+});
+
+app.get('/api/admin/pos/products/:id', ...POS, (req, res) => {
+  const p = db.prepare(`
+    SELECT p.*, c.name AS category
+    FROM stock_products p LEFT JOIN stock_categories c ON c.id = p.category_id
+    WHERE p.id = ?
+  `).get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Produit introuvable' });
+  p.movements = db.prepare(`
+    SELECT m.*, u.full_name AS created_by_name
+    FROM stock_movements m LEFT JOIN users u ON u.id = m.created_by
+    WHERE m.product_id = ? ORDER BY m.created_at DESC, m.id DESC LIMIT 30
+  `).all(p.id);
+  res.json(p);
+});
+
+app.delete('/api/admin/pos/products/:id', ...POS, (req, res) => {
+  const used = db.prepare('SELECT COUNT(*) n FROM pos_sale_items WHERE product_id = ?').get(req.params.id).n;
+  if (used > 0) return res.status(409).json({ error: 'Impossible : ce produit apparaît dans des ventes. Désactivez-le plutôt.' });
+  db.prepare('DELETE FROM stock_movements WHERE product_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM stock_products WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Mouvements de stock
+app.get('/api/admin/pos/movements', ...POS, (req, res) => {
+  const { product_id, type } = req.query;
+  let sql = `
+    SELECT m.*, p.name AS product_name, u.full_name AS created_by_name
+    FROM stock_movements m
+    JOIN stock_products p ON p.id = m.product_id
+    LEFT JOIN users u ON u.id = m.created_by
+  `;
+  const where = [];
+  const params = [];
+  if (product_id) { where.push('m.product_id = ?'); params.push(product_id); }
+  if (type) { where.push('m.type = ?'); params.push(type); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY m.created_at DESC, m.id DESC LIMIT 200';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/admin/pos/products/:id/movements', ...POS, (req, res) => {
+  const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Produit introuvable' });
+  const b = req.body || {};
+  const type = STOCK_MOVEMENT_TYPES.includes(b.type) ? b.type : 'entree';
+  const reason = String(b.reason || '').slice(0, 300);
+  let qty = 0;
+  let newStock = null;
+  if (type === 'entree' || type === 'sortie') {
+    qty = Math.trunc(Number(b.qty) || 0);
+    if (qty <= 0) return res.status(400).json({ error: 'Quantité positive requise' });
+    if (type === 'sortie' && qty > p.stock)
+      return res.status(400).json({ error: `Stock insuffisant : ${p.stock} unité(s) disponible(s).` });
+  } else {
+    newStock = Math.trunc(Number(b.new_stock));
+    if (Number.isNaN(newStock) || newStock < 0)
+      return res.status(400).json({ error: 'Nouveau stock requis (0 ou plus)' });
+  }
+  const nextStock = type === 'entree' ? p.stock + qty : type === 'sortie' ? p.stock - qty : newStock;
+  runTx(() => {
+    db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(nextStock, p.id);
+    db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(p.id, type, type === 'ajustement' ? Math.abs(newStock - p.stock) : qty, type === 'ajustement' ? newStock : null, reason, req.user.id);
+  });
+  res.json({ ok: true, stock: nextStock });
+});
+
+// Ventes
+app.post('/api/admin/pos/sales', ...POS, (req, res) => {
+  const b = req.body || {};
+  const items = (Array.isArray(b.items) ? b.items : [])
+    .map((i) => ({ product_id: Number(i?.product_id) || 0, qty: Math.trunc(Number(i?.qty) || 0) }))
+    .filter((i) => i.product_id > 0 && i.qty > 0);
+  if (!items.length) return res.status(400).json({ error: 'Panier vide' });
+  const payment = PAYMENT_METHODS.includes(b.payment_method) ? b.payment_method : 'especes';
+  const discount = Math.max(0, Number(b.discount) || 0);
+  const paid = Math.max(0, Number(b.paid_amount) || 0);
+
+  const lines = [];
+  const need = new Map();
+  for (const it of items) {
+    const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
+    if (!p || !p.active) return res.status(404).json({ error: 'Un produit du panier est introuvable ou inactif.' });
+    lines.push({ p, qty: it.qty });
+    need.set(p.id, (need.get(p.id) || 0) + it.qty);
+  }
+  for (const [pid, n] of need) {
+    const p = db.prepare('SELECT name, stock FROM stock_products WHERE id = ?').get(pid);
+    if (n > p.stock)
+      return res.status(409).json({ error: `Stock insuffisant pour « ${p.name} » : ${p.stock} disponible(s), ${n} demandé(s).` });
+  }
+  let subtotal = 0;
+  for (const { p, qty } of lines) subtotal = money2(subtotal + p.price * qty);
+  if (discount > subtotal) return res.status(400).json({ error: 'La réduction ne peut pas dépasser le sous-total.' });
+  const total = money2(subtotal - discount);
+
+  const sid = runTx(() => {
+    const info = db.prepare(`INSERT INTO pos_sales
+      (number, customer_name, subtotal, discount, total, payment_method, paid_amount, cashier_id, notes)
+      VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      String(b.customer_name || '').trim().slice(0, 120),
+      subtotal, money2(discount), total, payment,
+      payment === 'especes' ? Math.max(paid, total) : total,
+      req.user.id,
+      String(b.notes || '').slice(0, 500)
+    );
+    const id = info.lastInsertRowid;
+    const number = `POS-${String(id).padStart(5, '0')}`;
+    const insItem = db.prepare('INSERT INTO pos_sale_items (sale_id, product_id, product_name, price, qty, total) VALUES (?, ?, ?, ?, ?, ?)');
+    const decStock = db.prepare('UPDATE stock_products SET stock = stock - ? WHERE id = ?');
+    const insMove = db.prepare('INSERT INTO stock_movements (product_id, type, qty, reason, created_by) VALUES (?, ?, ?, ?, ?)');
+    for (const { p, qty } of lines) {
+      insItem.run(id, p.id, p.name, p.price, qty, money2(p.price * qty));
+      decStock.run(qty, p.id);
+      insMove.run(p.id, 'sortie', qty, `Vente ${number}`, req.user.id);
+    }
+    db.prepare('UPDATE pos_sales SET number = ? WHERE id = ?').run(number, id);
+    return id;
+  });
+  res.json(fetchSale(sid));
+});
+
+app.get('/api/admin/pos/sales', ...POS, (req, res) => {
+  const { from, to, payment, q } = req.query;
+  let sql = `
+    SELECT s.*, u.full_name AS cashier_name,
+      (SELECT COALESCE(SUM(qty), 0) FROM pos_sale_items WHERE sale_id = s.id) AS total_items,
+      (SELECT COALESCE(SUM(returned_qty), 0) FROM pos_sale_items WHERE sale_id = s.id) AS returned_items,
+      (SELECT COUNT(*) FROM pos_sale_items WHERE sale_id = s.id) AS items_count
+    FROM pos_sales s LEFT JOIN users u ON u.id = s.cashier_id
+  `;
+  const where = [];
+  const params = [];
+  if (from) { where.push('date(s.created_at) >= date(?)'); params.push(String(from).slice(0, 10)); }
+  if (to) { where.push('date(s.created_at) <= date(?)'); params.push(String(to).slice(0, 10)); }
+  if (payment) { where.push('s.payment_method = ?'); params.push(payment); }
+  if (q) { where.push('(s.number LIKE ? OR s.customer_name LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY s.created_at DESC, s.id DESC LIMIT 200';
+  const rows = db.prepare(sql).all(...params);
+  rows.forEach((r) => { r.status = saleStatusOf(r.total_items, r.returned_items); });
+  res.json(rows);
+});
+
+app.get('/api/admin/pos/sales/:id', ...POS, (req, res) => {
+  const s = fetchSale(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Vente introuvable' });
+  res.json(s);
+});
+
+// Retours (totaux ou partiels) — réapprovisionne le stock
+app.post('/api/admin/pos/sales/:id/return', ...POS, (req, res) => {
+  const s = fetchSale(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Vente introuvable' });
+  if (s.status === 'retournee') return res.status(409).json({ error: 'Cette vente est déjà intégralement retournée.' });
+  const b = req.body || {};
+  const reqs = (Array.isArray(b.items) ? b.items : [])
+    .map((i) => ({ item_id: Number(i?.item_id) || 0, qty: Math.trunc(Number(i?.qty) || 0) }))
+    .filter((i) => i.item_id > 0 && i.qty > 0);
+  if (!reqs.length) return res.status(400).json({ error: 'Aucun article à retourner' });
+  const byItem = new Map(s.items.map((i) => [i.id, i]));
+  const perItem = new Map();
+  for (const r of reqs) {
+    const item = byItem.get(r.item_id);
+    if (!item) return res.status(404).json({ error: 'Ligne de vente introuvable' });
+    perItem.set(r.item_id, (perItem.get(r.item_id) || 0) + r.qty);
+  }
+  let total = 0;
+  for (const [item_id, qty] of perItem) {
+    const item = byItem.get(item_id);
+    const remaining = item.qty - item.returned_qty;
+    if (qty > remaining)
+      return res.status(400).json({ error: `Retour excessif pour « ${item.product_name} » : ${remaining} unité(s) retournable(s).` });
+    total = money2(total + item.price * qty);
+  }
+  runTx(() => {
+    const info = db.prepare('INSERT INTO pos_returns (sale_id, reason, total, created_by) VALUES (?, ?, ?, ?)')
+      .run(s.id, String(b.reason || '').slice(0, 300), total, req.user.id);
+    const rid = info.lastInsertRowid;
+    const insRi = db.prepare('INSERT INTO pos_return_items (return_id, sale_item_id, product_id, qty) VALUES (?, ?, ?, ?)');
+    const updItem = db.prepare('UPDATE pos_sale_items SET returned_qty = returned_qty + ? WHERE id = ?');
+    const updStock = db.prepare('UPDATE stock_products SET stock = stock + ? WHERE id = ?');
+    const insMove = db.prepare('INSERT INTO stock_movements (product_id, type, qty, reason, created_by) VALUES (?, ?, ?, ?, ?)');
+    for (const [item_id, qty] of perItem) {
+      const item = byItem.get(item_id);
+      insRi.run(rid, item.id, item.product_id, qty);
+      updItem.run(qty, item.id);
+      if (item.product_id) {
+        updStock.run(qty, item.product_id);
+        insMove.run(item.product_id, 'entree', qty, `Retour ${s.number}`, req.user.id);
+      }
+    }
+  });
+  res.json(fetchSale(s.id));
+});
+
+// Annulation (void) : supprime la vente et réapprovisionne le stock non retourné
+app.delete('/api/admin/pos/sales/:id', ...POS, (req, res) => {
+  const s = fetchSale(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Vente introuvable' });
+  runTx(() => {
+    const updStock = db.prepare('UPDATE stock_products SET stock = stock + ? WHERE id = ?');
+    const insMove = db.prepare('INSERT INTO stock_movements (product_id, type, qty, reason, created_by) VALUES (?, ?, ?, ?, ?)');
+    for (const it of s.items) {
+      const toRestock = it.qty - it.returned_qty;
+      if (toRestock > 0 && it.product_id) {
+        updStock.run(toRestock, it.product_id);
+        insMove.run(it.product_id, 'entree', toRestock, `Annulation ${s.number}`, req.user.id);
+      }
+    }
+    const retIds = s.returns.map((r) => r.id);
+    if (retIds.length) {
+      const ph = retIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM pos_return_items WHERE return_id IN (${ph})`).run(...retIds);
+      db.prepare(`DELETE FROM pos_returns WHERE id IN (${ph})`).run(...retIds);
+    }
+    db.prepare('DELETE FROM pos_sale_items WHERE sale_id = ?').run(s.id);
+    db.prepare('DELETE FROM pos_sales WHERE id = ?').run(s.id);
+  });
+  res.json({ ok: true });
+});
+
+// Ticket PDF (A5)
+app.get('/api/admin/pos/sales/:id/pdf', ...POS, async (req, res) => {
+  const s = fetchSale(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Vente introuvable' });
+  try {
+    const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([420.5, 595.3]);
+    const W = 420.5;
+    const [font, fontBold] = await Promise.all([
+      doc.embedFont(StandardFonts.Helvetica),
+      doc.embedFont(StandardFonts.HelveticaBold)
+    ]);
+    const brand = rgb(0.059, 0.227, 0.533);
+    const ink = rgb(0.1, 0.12, 0.18);
+    const gray = rgb(0.45, 0.5, 0.58);
+    const siteName = getSetting('site_name') || 'ADI ONG';
+    const tagline = getSetting('site_tagline') || '';
+    const fmtM = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+
+    page.drawRectangle({ x: 0, y: 595.3 - 70, width: W, height: 70, color: brand });
+    page.drawText(siteName.toUpperCase(), { x: 30, y: 548, size: 15, font: fontBold, color: rgb(1, 1, 1) });
+    if (tagline) page.drawText(String(tagline).slice(0, 72), { x: 30, y: 532, size: 7.5, font, color: rgb(0.85, 0.89, 0.95) });
+
+    let y = 506;
+    const row = (label, val, bold = false, size = 9.5) => {
+      page.drawText(label, { x: 30, y, size, font: bold ? fontBold : font, color: bold ? ink : gray });
+      page.drawText(val, { x: W - 30 - font.widthOfTextAtSize(val, size), y, size, font: bold ? fontBold : font, color: ink });
+      y -= 15;
+    };
+    row('Ticket', s.number || '—', true);
+    const dt = new Date(String(s.created_at).replace(' ', 'T') + 'Z');
+    if (!isNaN(dt)) {
+      row('Date', `${dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' })} ${dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}`);
+    }
+    if (s.cashier_name) row('Caissier', s.cashier_name);
+    if (s.customer_name) row('Client', s.customer_name);
+    y -= 6;
+    page.drawLine({ start: { x: 30, y }, end: { x: W - 30, y }, thickness: 0.7, color: rgb(0.8, 0.83, 0.88) });
+    y -= 16;
+    for (const it of s.items) {
+      page.drawText(`${it.qty} × ${it.product_name}`.slice(0, 48), { x: 30, y, size: 9, font, color: ink });
+      const val = fmtM(it.total);
+      page.drawText(val, { x: W - 30 - font.widthOfTextAtSize(val, 9), y, size: 9, font, color: ink });
+      y -= 13;
+      if (it.returned_qty > 0) {
+        page.drawText(`dont ${it.returned_qty} retourné(s)`, { x: 30, y, size: 7.5, font, color: gray });
+        y -= 12;
+      }
+    }
+    if (y < 150) y = 150;
+    y -= 4;
+    page.drawLine({ start: { x: 30, y }, end: { x: W - 30, y }, thickness: 0.7, color: rgb(0.8, 0.83, 0.88) });
+    y -= 16;
+    row('Sous-total', fmtM(s.subtotal));
+    if (s.discount > 0) row('Réduction', `-${fmtM(s.discount)}`);
+    row('TOTAL', `${fmtM(s.total)} USD`, true, 12);
+    y -= 3;
+    const PM = { especes: 'Espèces', mobile: 'Mobile Money', carte: 'Carte bancaire', virement: 'Virement', autre: 'Autre' };
+    row('Paiement', PM[s.payment_method] || s.payment_method);
+    if (s.payment_method === 'especes' && s.paid_amount > s.total) row('Monnaie rendue', fmtM(s.paid_amount - s.total));
+    if (s.status !== 'vendue') row('Retours', s.status === 'retournee' ? 'Vente intégralement retournée' : 'Retour partiel effectué');
+
+    page.drawText('Merci de votre confiance !', { x: (W - fontBold.widthOfTextAtSize('Merci de votre confiance !', 10)) / 2, y: 56, size: 10, font: fontBold, color: ink });
+    const footer = [getSetting('address'), getSetting('phone1')].filter(Boolean).join('  ·  ');
+    if (footer) page.drawText(footer.slice(0, 90), { x: (W - font.widthOfTextAtSize(footer.slice(0, 90), 7)) / 2, y: 42, size: 7, font, color: gray });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${s.number || `ticket-${s.id}`}.pdf"`);
+    res.send(Buffer.from(await doc.save()));
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le PDF' });
+  }
+});
+
+// Statistiques
+app.get('/api/admin/pos/stats', ...POS, (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const t = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(total), 0) total FROM pos_sales WHERE date(created_at) = ?').get(today);
+  const byPayment = db.prepare(
+    'SELECT payment_method, COUNT(*) n, COALESCE(SUM(total), 0) total FROM pos_sales WHERE date(created_at) = ? GROUP BY payment_method'
+  ).all(today);
+  const last7 = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    const r = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(total), 0) total FROM pos_sales WHERE date(created_at) = ?').get(d);
+    last7.push({ date: d, n: r.n, total: r.total });
+  }
+  const topProducts = db.prepare(`
+    SELECT COALESCE(p.name, i.product_name) AS name, COALESCE(SUM(i.qty), 0) AS qty, COALESCE(SUM(i.total), 0) AS total
+    FROM pos_sale_items i
+    JOIN pos_sales s ON s.id = i.sale_id
+    LEFT JOIN stock_products p ON p.id = i.product_id
+    WHERE date(s.created_at) >= date('now', '-30 days')
+    GROUP BY i.product_id ORDER BY qty DESC LIMIT 5
+  `).all();
+  const lowStock = db.prepare(`
+    SELECT id, name, stock, min_stock FROM stock_products
+    WHERE active = 1 AND stock <= min_stock
+    ORDER BY stock ASC, name LIMIT 15
+  `).all();
+  const stockValue = db.prepare('SELECT COALESCE(SUM(stock * COALESCE(cost, price)), 0) v FROM stock_products WHERE active = 1').get().v;
+  const products = db.prepare('SELECT COUNT(*) n FROM stock_products WHERE active = 1').get().n;
+  const outOfStock = db.prepare('SELECT COUNT(*) n FROM stock_products WHERE active = 1 AND stock = 0').get().n;
+  res.json({ today: { n: t.n, total: t.total }, byPayment, last7, topProducts, lowStock, stockValue, products, outOfStock });
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

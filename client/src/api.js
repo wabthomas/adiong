@@ -324,6 +324,65 @@ export const api = {
       remove: (id) => req(`/api/admin/grh/leaves/${id}`, { method: 'DELETE', auth: true })
     }
   },
+  pos: {
+    categories: {
+      list: () => req('/api/admin/pos/categories', { auth: true }),
+      create: (b) => req('/api/admin/pos/categories', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/pos/categories/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/pos/categories/${id}`, { method: 'DELETE', auth: true })
+    },
+    products: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        if (params.search) q.set('search', params.search);
+        if (params.category_id) q.set('category_id', params.category_id);
+        if (params.active != null) q.set('active', params.active);
+        const s = q.toString();
+        return req(`/api/admin/pos/products${s ? `?${s}` : ''}`, { auth: true });
+      },
+      create: (b) => req('/api/admin/pos/products', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/pos/products/${id}`, { method: 'PUT', body: b, auth: true }),
+      get: (id) => req(`/api/admin/pos/products/${id}`, { auth: true }),
+      remove: (id) => req(`/api/admin/pos/products/${id}`, { method: 'DELETE', auth: true }),
+      movement: (id, b) => req(`/api/admin/pos/products/${id}/movements`, { method: 'POST', body: b, auth: true })
+    },
+    movements: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        if (params.product_id) q.set('product_id', params.product_id);
+        if (params.type) q.set('type', params.type);
+        const s = q.toString();
+        return req(`/api/admin/pos/movements${s ? `?${s}` : ''}`, { auth: true });
+      }
+    },
+    sales: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        for (const k of ['from', 'to', 'payment', 'q']) if (params[k]) q.set(k, params[k]);
+        const s = q.toString();
+        return req(`/api/admin/pos/sales${s ? `?${s}` : ''}`, { auth: true });
+      },
+      get: (id) => req(`/api/admin/pos/sales/${id}`, { auth: true }),
+      create: (b) => req('/api/admin/pos/sales', { method: 'POST', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/pos/sales/${id}`, { method: 'DELETE', auth: true }),
+      returnSale: (id, b) => req(`/api/admin/pos/sales/${id}/return`, { method: 'POST', body: b, auth: true }),
+      downloadPdf: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/pos/sales/${id}/pdf`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `ticket-${id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    },
+    stats: () => req('/api/admin/pos/stats', { auth: true })
+  },
   me: {
     get: () => req('/api/auth/me', { auth: true }),
     update: (b) => req('/api/auth/me', { method: 'PUT', body: b, auth: true }),
