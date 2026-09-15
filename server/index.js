@@ -1,10 +1,12 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import nodemailer from 'nodemailer';
 import multer from 'multer';
 import Jimp from 'jimp';
 import { fileURLToPath } from 'node:url';
@@ -33,8 +35,68 @@ ensureSettings();
 seedIfEmpty();
 
 const app = express();
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+// Limitation de débit (fenêtre glissante simple, en mémoire)
+const buckets = new Map();
+const rateLimit = ({ windowMs, max, key = (req) => req.ip, message = 'Trop de requêtes — réessayez plus tard.' }) =>
+  (req, res, next) => {
+    const k = key(req);
+    const now = Date.now();
+    let b = buckets.get(k);
+    if (!b || now > b.reset) {
+      b = { count: 0, reset: now + windowMs };
+      buckets.set(k, b);
+    }
+    b.count += 1;
+    if (b.count > max) {
+      res.set('Retry-After', Math.ceil((b.reset - now) / 1000));
+      return res.status(429).json({ error: message });
+    }
+    next();
+  };
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, b] of buckets) if (now > b.reset) buckets.delete(k);
+}, 60_000).unref();
+
+const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, key: (req) => `${req.ip}:${String(req.body?.email || '').toLowerCase()}`, message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' });
+const contactLimiter = rateLimit({ windowMs: 60 * 60_000, max: 5, message: 'Trop de messages envoyés depuis votre connexion. Réessayez dans une heure.' });
+const donateLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, message: 'Trop de dons enregistrés depuis votre connexion. Réessayez dans une heure.' });
+
+// Envoi d'emails (SMTP). Sans configuration, le message est seulement journalisé
+// pour ne jamais faire échouer la requête.
+// Env : SMTP_HOST, SMTP_PORT (587), SMTP_SECURE (true/false), SMTP_USER, SMTP_PASS,
+//       MAIL_FROM, MAIL_TO (destinataire des notifications, défaut = email du site).
+let transporter = null;
+if (process.env.SMTP_HOST) {
+  transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: process.env.SMTP_USER
+      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || '' }
+      : undefined
+  });
+}
+const notifyEmail = (subject, html) => {
+  const to = process.env.MAIL_TO || getSetting('email') || '';
+  if (!transporter || !to) {
+    console.log(`[mail] (non configuré) ${subject}\n${String(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}\n`);
+    return Promise.resolve();
+  }
+  return transporter
+    .sendMail({
+      from: process.env.MAIL_FROM || process.env.SMTP_USER || 'notifications@adiong.org',
+      to,
+      subject,
+      html
+    })
+    .then(() => console.log(`[mail] envoyé : ${subject}`))
+    .catch((e) => console.error(`[mail] échec : ${e.message}`));
+};
 
 const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 const setSetting = (key, value) =>
@@ -128,7 +190,7 @@ const upload = multer({
 });
 app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', loginLimiter, (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
@@ -268,21 +330,37 @@ ${items}
   res.send(body);
 });
 
-app.post('/api/contact', (req, res) => {
+app.post('/api/contact', contactLimiter, (req, res) => {
   const { name, email, subject, message } = req.body || {};
   if (!name || !email || !message) return res.status(400).json({ error: 'Nom, email et message sont requis' });
   db.prepare('INSERT INTO messages (name, email, subject, message) VALUES (?, ?, ?, ?)').run(name, email, subject || '', message);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  notifyEmail(
+    `Nouveau message de ${name}${subject ? ` — ${subject}` : ''}`,
+    `<p><strong>${esc(name)}</strong> &lt;${esc(email)}&gt; a envoyé un message${subject ? ` : <strong>${esc(subject)}</strong>` : ''}.</p>
+     <blockquote style="border-left:3px solid #0e7c66;margin:12px 0;padding:4px 14px;color:#333">${esc(message)}</blockquote>
+     <p style="color:#888;font-size:12px">Répondre à : ${esc(email)}</p>`
+  );
   res.json({ ok: true });
 });
 
-app.post('/api/donate', (req, res) => {
+app.post('/api/donate', donateLimiter, (req, res) => {
   const { name, email, amount, message, campaignId } = req.body || {};
   if (!name || !amount || Number(amount) <= 0) return res.status(400).json({ error: 'Nom et montant sont requis' });
   db.prepare('INSERT INTO donations (campaign_id, donor_name, donor_email, amount, message) VALUES (?, ?, ?, ?, ?)')
     .run(campaignId || null, name, email || '', Number(amount), message || '');
+  let campaignTitle = '';
   if (campaignId) {
     db.prepare('UPDATE campaigns SET collected_amount = collected_amount + ? WHERE id = ?').run(Number(amount), Number(campaignId));
+    campaignTitle = db.prepare('SELECT title FROM campaigns WHERE id = ?').get(campaignId)?.title || '';
   }
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  notifyEmail(
+    `Nouveau don de ${name} — ${Number(amount).toLocaleString('fr-FR')} $${campaignTitle ? ` (${campaignTitle})` : ''}`,
+    `<p><strong>${esc(name)}</strong>${email ? ` &lt;${esc(email)}&gt;` : ''} a fait un don de <strong>${Number(amount).toLocaleString('fr-FR')} $</strong>
+     ${campaignTitle ? `pour la collecte <strong>${esc(campaignTitle)}</strong>` : 'de soutien'}.${message ? `<br/><em>« ${esc(message)} »</em>` : ''}</p>
+     <p style="color:#888;font-size:12px">Merci de l'enregistrer dans l'espace admin → Dons.</p>`
+  );
   res.json({ ok: true });
 });
 

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import Navbar from './components/Navbar.jsx';
@@ -14,17 +14,28 @@ import CampaignDetail from './pages/CampaignDetail.jsx';
 import Donate from './pages/Donate.jsx';
 import Contact from './pages/Contact.jsx';
 import NotFound from './pages/NotFound.jsx';
-import AdminLogin from './pages/admin/AdminLogin.jsx';
-import AdminLayout from './pages/admin/AdminLayout.jsx';
-import Dashboard from './pages/admin/Dashboard.jsx';
-import ArticlesAdmin from './pages/admin/ArticlesAdmin.jsx';
-import CausesAdmin from './pages/admin/CausesAdmin.jsx';
-import CampaignsAdmin from './pages/admin/CampaignsAdmin.jsx';
-import DonationsAdmin from './pages/admin/DonationsAdmin.jsx';
-import MessagesAdmin from './pages/admin/MessagesAdmin.jsx';
-import MediaAdmin from './pages/admin/MediaAdmin.jsx';
-import UsersAdmin from './pages/admin/UsersAdmin.jsx';
-import SettingsAdmin from './pages/admin/SettingsAdmin.jsx';
+const AdminLogin = lazy(() => import('./pages/admin/AdminLogin.jsx'));
+const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
+const Dashboard = lazy(() => import('./pages/admin/Dashboard.jsx'));
+const ArticlesAdmin = lazy(() => import('./pages/admin/ArticlesAdmin.jsx'));
+const CausesAdmin = lazy(() => import('./pages/admin/CausesAdmin.jsx'));
+const CampaignsAdmin = lazy(() => import('./pages/admin/CampaignsAdmin.jsx'));
+const DonationsAdmin = lazy(() => import('./pages/admin/DonationsAdmin.jsx'));
+const MessagesAdmin = lazy(() => import('./pages/admin/MessagesAdmin.jsx'));
+const MediaAdmin = lazy(() => import('./pages/admin/MediaAdmin.jsx'));
+const UsersAdmin = lazy(() => import('./pages/admin/UsersAdmin.jsx'));
+const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
+
+function AdminFallback() {
+  return (
+    <div className="grid min-h-screen place-items-center bg-cream">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-brand-200 border-t-brand-600" />
+        <p className="text-sm font-semibold text-ink-400">Chargement de l'espace admin…</p>
+      </div>
+    </div>
+  );
+}
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -66,8 +77,8 @@ export default function App() {
     <>
       <ScrollToTop />
       <Routes>
-        <Route path="/admin/login" element={<AdminLogin />} />
-        <Route path="/admin" element={<AdminLayout />}>
+        <Route path="/admin/login" element={<Suspense fallback={<AdminFallback />}><AdminLogin /></Suspense>} />
+        <Route path="/admin" element={<Suspense fallback={<AdminFallback />}><AdminLayout /></Suspense>}>
           <Route index element={<Dashboard />} />
           <Route path="articles" element={<ArticlesAdmin />} />
           <Route path="causes" element={<CausesAdmin />} />

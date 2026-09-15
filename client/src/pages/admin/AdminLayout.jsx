@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { getToken, setToken, getSavedUser } from '../../api.js';
 
@@ -117,7 +117,18 @@ export default function AdminLayout() {
         )}
 
         <main className="min-w-0 flex-1 px-5 py-8 sm:px-8 lg:px-10">
-          <Outlet />
+          <Suspense
+            fallback={
+              <div className="grid min-h-[40vh] place-items-center">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+                  <p className="text-sm font-semibold text-ink-400">Chargement…</p>
+                </div>
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

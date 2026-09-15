@@ -86,6 +86,39 @@ La page d'un article est repensée pour la lecture et la diffusion :
 - **Breadcrumbs** (Accueil / Actualités / catégorie).
 - **SEO** : title, meta description, canonical, Open Graph & Twitter Card (image de partage), `noindex` optionnel.
 
+## Page Actualités
+
+- **Recherche** plein texte (titre, extrait, contenu) + filtre par catégorie (les deux se combinent).
+- **Pagination** (6 articles par page) avec indicateur du nombre de résultats.
+
+## Performance
+
+- **Admin en lazy loading** : toutes les pages de l'espace admin (et TipTap) sont chargées à la demande.
+  Le visiteur du site public ne télécharge plus l'éditeur ni l'interface admin — le bundle principal est
+  passé de ~860 Ko à ~380 Ko (minifié), ~118 Ko en gzip.
+
+## Sécurité
+
+- **En-têtes de sécurité** (helmet) : `X-Content-Type-Options`, `X-Frame-Options`, HSTS, `Referrer-Policy`…
+- **Limitation de débit** (anti brute-force / anti spam) :
+  - connexion admin : 10 tentatives / 15 min par couple IP+email,
+  - formulaire de contact : 5 messages / heure par IP,
+  - dons : 10 envois / heure par IP.
+
+## Notifications par email (SMTP)
+
+Un nouveau **message de contact** ou un nouveau **don** déclenche un email à l'équipe.
+Sans configuration SMTP, le message est simplement journalisé (rien n'échoue).
+
+```bash
+SMTP_HOST=smtp.ovh.com SMTP_PORT=587 SMTP_SECURE=false \
+SMTP_USER=notifications@adiong.org SMTP_PASS="…mot-de-passe-app…" \
+MAIL_TO=equipe@adiong.org \
+npm start
+```
+
+Env facultatives : `MAIL_FROM` (expéditeur). `MAIL_TO` est par défaut l'email du site (paramètres).
+
 ## Structure
 
 ```
