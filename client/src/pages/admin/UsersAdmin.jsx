@@ -3,12 +3,15 @@ import { api, getSavedUser } from '../../api.js';
 import { PageTitle, Modal, Field, DeleteButton } from './AdminUI.jsx';
 
 const ROLE_STYLES = {
+  super_admin: 'bg-brand-900 text-white',
   admin: 'bg-brand-100 text-brand-700',
   editor: 'bg-accent-100 text-accent-800',
   viewer: 'bg-ink-100 text-ink-600'
 };
+const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
 const ROLE_DESCRIPTIONS = {
-  admin: 'Accès complet : contenu, paramètres, utilisateurs',
+  super_admin: "Tout, y compris l'activation des modules (GRH) et la gestion des super admins",
+  admin: 'Accès complet : contenu, paramètres, utilisateurs, GRH (si activée)',
   editor: 'Gère les articles, causes, campagnes et la médiathèque',
   viewer: 'Consultation seule (tableau de bord)'
 };
@@ -68,7 +71,7 @@ export default function UsersAdmin() {
         }
       />
 
-      <div className="grid gap-5 md:grid-cols-3">
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {Object.entries(ROLE_DESCRIPTIONS).map(([role, desc]) => (
           <div key={role} className="card p-5">
             <span className={`inline-block rounded-full px-3 py-1 text-xs font-bold ${ROLE_STYLES[role]}`}>
@@ -125,6 +128,7 @@ export default function UsersAdmin() {
                       className={`rounded-full px-3 py-1.5 text-xs font-bold outline-none disabled:opacity-60 ${ROLE_STYLES[u.role]}`}
                       title={u.role === 'admin' && u.id === users.find((x) => x.role === 'admin')?.id ? 'Dernier administrateur : modifiable en dernier' : ''}
                     >
+                      <option value="super_admin">Super admin</option>
                       <option value="admin">Administrateur</option>
                       <option value="editor">Éditeur</option>
                       <option value="viewer">Consultation</option>
@@ -190,7 +194,7 @@ export default function UsersAdmin() {
                     }`}
                   >
                     <span className={`mt-0.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${ROLE_STYLES[role]}`}>
-                      {{ admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' }[role]}
+                      {ROLE_LABELS[role]}
                     </span>
                     <span className="text-sm leading-snug text-ink-600">{desc}</span>
                   </button>

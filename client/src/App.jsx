@@ -25,6 +25,7 @@ const MessagesAdmin = lazy(() => import('./pages/admin/MessagesAdmin.jsx'));
 const MediaAdmin = lazy(() => import('./pages/admin/MediaAdmin.jsx'));
 const UsersAdmin = lazy(() => import('./pages/admin/UsersAdmin.jsx'));
 const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
+const GrhAdmin = lazy(() => import('./pages/admin/GrhAdmin.jsx'));
 
 function AdminFallback() {
   return (
@@ -87,6 +88,7 @@ export default function App() {
           <Route path="messages" element={<MessagesAdmin />} />
           <Route path="medias" element={<MediaAdmin />} />
           <Route path="utilisateurs" element={<UsersAdmin />} />
+          <Route path="grh" element={<GrhAdmin />} />
           <Route path="parametres" element={<SettingsAdmin />} />
         </Route>
         <Route path="/*" element={<Shell />} />

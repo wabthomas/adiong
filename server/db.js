@@ -105,6 +105,41 @@ CREATE TABLE IF NOT EXISTS media (
   alt TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS grh_departments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_employees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  full_name TEXT NOT NULL,
+  email TEXT UNIQUE,
+  phone TEXT NOT NULL DEFAULT '',
+  position TEXT NOT NULL DEFAULT '',
+  department_id INTEGER,
+  contract_type TEXT NOT NULL DEFAULT 'permanent',
+  hire_date TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'actif',
+  leave_date TEXT NOT NULL DEFAULT '',
+  salary REAL,
+  salary_currency TEXT NOT NULL DEFAULT 'USD',
+  photo TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_leaves (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  type TEXT NOT NULL DEFAULT 'conge',
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'en_attente',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 const migrate = (sql) => { try { db.exec(sql); } catch {  } };
@@ -114,5 +149,6 @@ migrate("ALTER TABLE articles ADD COLUMN seo_description TEXT NOT NULL DEFAULT '
 migrate("ALTER TABLE articles ADD COLUMN seo_image TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE articles ADD COLUMN seo_noindex INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE media ADD COLUMN alt TEXT NOT NULL DEFAULT ''");
+try { db.prepare("UPDATE users SET role = 'super_admin' WHERE email = 'admin@adiong.org' AND role = 'admin'").run(); } catch { /* déjà fait */ }
 
 export default db;

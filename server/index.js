@@ -151,13 +151,21 @@ const authRequired = (req, res, next) => {
 };
 
 const ROLES = {
-  admin: ['admin'],
-  content: ['admin', 'editor'],
-  any: ['admin', 'editor', 'viewer']
+  super: ['super_admin'],
+  admin: ['super_admin', 'admin'],
+  content: ['super_admin', 'admin', 'editor'],
+  hr: ['super_admin', 'admin'],
+  any: ['super_admin', 'admin', 'editor', 'viewer']
 };
 const requireRole = (group) => (req, res, next) => {
   if (!ROLES[group].includes(req.user?.role))
     return res.status(403).json({ error: 'Accès refusé : rôle insuffisant' });
+  next();
+};
+// Garde d'un module optionnel (activé/désactivé par le super admin)
+const requireModule = (name, label) => (req, res, next) => {
+  if (getSetting(name) !== '1')
+    return res.status(403).json({ error: `Module ${label} désactivé par le super administrateur.` });
   next();
 };
 
@@ -477,8 +485,10 @@ app.get('/api/admin/settings', authRequired, requireRole('admin'), (req, res) =>
   s.method = JSON.parse(JSON.stringify(s.method));
   res.json(s);
 });
+const SETTING_KEYS = new Set([...STRING_SETTINGS, ...Object.keys(JSON_SETTINGS)]);
 app.put('/api/admin/settings', authRequired, requireRole('admin'), (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) {
+    if (!SETTING_KEYS.has(k)) continue;
     const value = typeof v === 'string' ? v : JSON.stringify(v);
     setSetting(k, value);
   }
@@ -595,13 +605,14 @@ app.delete('/api/admin/media/:id', authRequired, requireRole('content'), (req, r
   res.json({ ok: true });
 });
 
-const ROLE_LABELS = { admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
+const ROLE_LABELS = { super_admin: 'Super administrateur', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
+const PRIVILEGED = ['super_admin', 'admin'];
 
 function guardLastAdmin(id, role) {
-  const currentAdmins = db.prepare("SELECT COUNT(*) n FROM users WHERE role = 'admin'").get().n;
+  const currentPriv = db.prepare('SELECT COUNT(*) n FROM users WHERE role IN (?, ?)').get('super_admin', 'admin').n;
   const target = db.prepare('SELECT role FROM users WHERE id = ?').get(id);
-  if (target?.role === 'admin' && role !== 'admin' && currentAdmins <= 1)
-    return 'Impossible : il doit rester au moins un administrateur';
+  if (PRIVILEGED.includes(target?.role) && !PRIVILEGED.includes(role) && currentPriv <= 1)
+    return 'Impossible : il doit rester au moins un compte administrateur/super administrateur';
   return null;
 }
 
@@ -614,7 +625,9 @@ app.post('/api/admin/users', authRequired, requireRole('admin'), (req, res) => {
   const { email, password, full_name, role } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
   if (password.length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum' });
-  if (!['admin', 'editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+  if (!['super_admin', 'admin', 'editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+  if (role === 'super_admin' && req.user.role !== 'super_admin')
+    return res.status(403).json({ error: 'Seul un super administrateur peut créer un super administrateur' });
   const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
   if (exists) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
   const info = db.prepare('INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, ?)')
@@ -627,7 +640,9 @@ app.put('/api/admin/users/:id', authRequired, requireRole('admin'), (req, res) =
   const { full_name, role, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
-  if (role && !['admin', 'editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+  if (role && !['super_admin', 'admin', 'editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+  if (role === 'super_admin' && req.user.role !== 'super_admin')
+    return res.status(403).json({ error: 'Seul un super administrateur peut accorder ce rôle' });
   const err = guardLastAdmin(user.id, role || user.role);
   if (err) return res.status(409).json({ error: err });
   if (full_name) db.prepare('UPDATE users SET full_name = ? WHERE id = ?').run(full_name, user.id);
@@ -647,6 +662,197 @@ app.delete('/api/admin/users/:id', authRequired, requireRole('admin'), (req, res
   const err = guardLastAdmin(user.id, 'viewer');
   if (err) return res.status(409).json({ error: err });
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+  res.json({ ok: true });
+});
+
+// ---------- Modules (super admin) ----------
+app.get('/api/admin/modules', authRequired, (req, res) => {
+  res.json({
+    grh_enabled: getSetting('grh_enabled') === '1',
+    is_super: req.user.role === 'super_admin'
+  });
+});
+
+app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => {
+  const { grh_enabled } = req.body || {};
+  if (typeof grh_enabled === 'boolean') setSetting('grh_enabled', grh_enabled ? '1' : '0');
+  res.json({ grh_enabled: getSetting('grh_enabled') === '1', is_super: true });
+});
+
+// ---------- GRH (rôles admin+super, module activable) ----------
+const GRH = [authRequired, requireRole('hr'), requireModule('grh_enabled', 'GRH')];
+
+app.get('/api/admin/grh/overview', ...GRH, (req, res) => {
+  const active = db.prepare("SELECT COUNT(*) n FROM grh_employees WHERE status = 'actif'").get().n;
+  const total = db.prepare('SELECT COUNT(*) n FROM grh_employees').get().n;
+  const leavesPending = db.prepare("SELECT COUNT(*) n FROM grh_leaves WHERE status = 'en_attente'").get().n;
+  const today = new Date().toISOString().slice(0, 10);
+  const leavesOngoing = db.prepare(
+    "SELECT COUNT(*) n FROM grh_leaves WHERE status = 'approuve' AND start_date <= ? AND (end_date = '' OR end_date >= ?)"
+  ).get(today, today).n;
+  const byDept = db.prepare(`
+    SELECT COALESCE(d.name, 'Non affecté') AS name, COUNT(e.id) AS n
+    FROM grh_employees e LEFT JOIN grh_departments d ON d.id = e.department_id
+    WHERE e.status = 'actif' GROUP BY d.name ORDER BY n DESC
+  `).all();
+  const recentHires = db.prepare(
+    "SELECT full_name, position, hire_date FROM grh_employees WHERE status = 'actif' AND hire_date != '' ORDER BY hire_date DESC LIMIT 5"
+  ).all();
+  const upcomingLeaves = db.prepare(`
+    SELECT l.type, l.start_date, l.end_date, e.full_name
+    FROM grh_leaves l JOIN grh_employees e ON e.id = l.employee_id
+    WHERE l.status = 'approuve' AND l.start_date >= ? ORDER BY l.start_date LIMIT 5
+  `).all(today);
+  res.json({ active, total, leavesPending, leavesOngoing, byDept, recentHires, upcomingLeaves });
+});
+
+// Départements
+app.get('/api/admin/grh/departments', ...GRH, (req, res) => {
+  res.json(
+    db.prepare(`
+      SELECT d.*, COUNT(e.id) AS employees
+      FROM grh_departments d LEFT JOIN grh_employees e ON e.department_id = d.id AND e.status = 'actif'
+      GROUP BY d.id ORDER BY d.name
+    `).all()
+  );
+});
+
+app.post('/api/admin/grh/departments', ...GRH, (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom du département requis' });
+  try {
+    const info = db.prepare('INSERT INTO grh_departments (name) VALUES (?)').run(name);
+    res.json(db.prepare('SELECT * FROM grh_departments WHERE id = ?').get(info.lastInsertRowid));
+  } catch {
+    res.status(409).json({ error: 'Ce département existe déjà' });
+  }
+});
+
+app.put('/api/admin/grh/departments/:id', ...GRH, (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom du département requis' });
+  try {
+    db.prepare('UPDATE grh_departments SET name = ? WHERE id = ?').run(name, req.params.id);
+    res.json(db.prepare('SELECT * FROM grh_departments WHERE id = ?').get(req.params.id));
+  } catch {
+    res.status(409).json({ error: 'Ce département existe déjà' });
+  }
+});
+
+app.delete('/api/admin/grh/departments/:id', ...GRH, (req, res) => {
+  const used = db.prepare('SELECT COUNT(*) n FROM grh_employees WHERE department_id = ?').get(req.params.id).n;
+  if (used > 0) return res.status(409).json({ error: `Impossible : ${used} employé(s) affecté(s) à ce département.` });
+  db.prepare('DELETE FROM grh_departments WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Employés
+app.get('/api/admin/grh/employees', ...GRH, (req, res) => {
+  const { q, department, status } = req.query;
+  let sql = `
+    SELECT e.*, d.name AS department
+    FROM grh_employees e LEFT JOIN grh_departments d ON d.id = e.department_id
+  `;
+  const where = [];
+  const params = [];
+  if (q) {
+    where.push('(e.full_name LIKE ? OR e.email LIKE ? OR e.position LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (department) { where.push('e.department_id = ?'); params.push(department); }
+  if (status) { where.push('e.status = ?'); params.push(status); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY e.full_name';
+  const rows = db.prepare(sql).all(...params);
+  if (req.user.role !== 'super_admin') rows.forEach((r) => { r.salary = null; });
+  res.json(rows);
+});
+
+app.post('/api/admin/grh/employees', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!String(b.full_name || '').trim()) return res.status(400).json({ error: 'Nom de l\'employé requis' });
+  const salary = req.user.role === 'super_admin' ? (b.salary === '' || b.salary == null ? null : Number(b.salary) || null) : null;
+  try {
+    const info = db.prepare(`INSERT INTO grh_employees
+      (full_name, email, phone, position, department_id, contract_type, hire_date, status, leave_date, salary, salary_currency, photo, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      String(b.full_name).trim(), b.email || null, b.phone || '', b.position || '',
+      b.department_id || null, b.contract_type || 'permanent', b.hire_date || '',
+      b.status || 'actif', b.leave_date || '', salary, b.salary_currency || 'USD',
+      b.photo || '', b.notes || ''
+    );
+    res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(info.lastInsertRowid));
+  } catch {
+    res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
+  }
+});
+
+app.put('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Employé introuvable' });
+  const b = { ...ex, ...req.body };
+  const salary = req.user.role === 'super_admin' ? (b.salary === '' || b.salary == null ? null : Number(b.salary) || null) : ex.salary;
+  try {
+    db.prepare(`UPDATE grh_employees SET
+      full_name = ?, email = ?, phone = ?, position = ?, department_id = ?, contract_type = ?,
+      hire_date = ?, status = ?, leave_date = ?, salary = ?, salary_currency = ?, photo = ?, notes = ?
+      WHERE id = ?`).run(
+      String(b.full_name).trim(), b.email || null, b.phone || '', b.position || '',
+      b.department_id || null, b.contract_type || 'permanent', b.hire_date || '',
+      b.status || 'actif', b.leave_date || '', salary, b.salary_currency || 'USD',
+      b.photo || '', b.notes || '', ex.id
+    );
+    res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(ex.id));
+  } catch {
+    res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
+  }
+});
+
+app.delete('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_leaves WHERE employee_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM grh_employees WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Congés
+app.get('/api/admin/grh/leaves', ...GRH, (req, res) => {
+  const { status, employee_id } = req.query;
+  let sql = `
+    SELECT l.*, e.full_name AS employee_name, e.position AS employee_position
+    FROM grh_leaves l JOIN grh_employees e ON e.id = l.employee_id
+  `;
+  const where = [];
+  const params = [];
+  if (status) { where.push('l.status = ?'); params.push(status); }
+  if (employee_id) { where.push('l.employee_id = ?'); params.push(employee_id); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY l.start_date DESC';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/admin/grh/leaves', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!b.employee_id || !b.start_date) return res.status(400).json({ error: 'Employé et date de début requis' });
+  if (!db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(b.employee_id))
+    return res.status(404).json({ error: 'Employé introuvable' });
+  const info = db.prepare(
+    'INSERT INTO grh_leaves (employee_id, type, start_date, end_date, reason, status) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(b.employee_id, b.type || 'conge', b.start_date, b.end_date || '', b.reason || '', b.status || 'en_attente');
+  res.json(db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Congé introuvable' });
+  const b = { ...ex, ...req.body };
+  db.prepare(
+    'UPDATE grh_leaves SET employee_id = ?, type = ?, start_date = ?, end_date = ?, reason = ?, status = ? WHERE id = ?'
+  ).run(b.employee_id, b.type, b.start_date, b.end_date || '', b.reason || '', b.status, ex.id);
+  res.json(db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_leaves WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '../../api.js';
+import { api, getSavedUser } from '../../api.js';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
@@ -9,7 +9,8 @@ const TABS = [
   ['pages', 'En-têtes de pages'],
   ['apropos', 'À propos'],
   ['dons', 'Don & collectes'],
-  ['compteurs', 'Compteurs & valeurs']
+  ['compteurs', 'Compteurs & valeurs'],
+  ['modules', 'Modules (super admin)']
 ];
 
 function FlatListEditor({ items, onChange, placeholder = 'Texte…', numeric = false }) {
@@ -140,10 +141,32 @@ export default function SettingsAdmin() {
   const [pwOpen, setPwOpen] = useState(false);
   const [pw, setPw] = useState({ current: '', next: '', confirm: '' });
   const [pwMsg, setPwMsg] = useState(null);
+  const [modules, setModules] = useState(null);
+  const [modMsg, setModMsg] = useState('');
+
+  const isSuper = getSavedUser()?.role === 'super_admin';
+  const visibleTabs = isSuper ? TABS : TABS.filter(([id]) => id !== 'modules');
 
   useEffect(() => {
     api.adminSettings.get().then(setS).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (isSuper) api.modules.get().then(setModules).catch(() => {});
+  }, [isSuper]);
+
+  const toggleGrh = async (value) => {
+    setModMsg('');
+    try {
+      const m = await api.modules.update({ grh_enabled: value });
+      setModules(m);
+      setModMsg(value
+        ? '✓ Module GRH activé — visible par les administrateurs dans le menu de gauche.'
+        : '✓ Module GRH désactivé — le menu est masqué et l’API GRH fermée.');
+    } catch (e) {
+      setModMsg(`✗ ${e.message}`);
+    }
+  };
 
   if (!s) return <PageTitle title="Paramètres" />;
 
@@ -201,7 +224,7 @@ export default function SettingsAdmin() {
 
       {}
       <div className="mb-8 flex flex-wrap gap-2">
-        {TABS.map(([id, label]) => (
+        {visibleTabs.map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -490,6 +513,56 @@ export default function SettingsAdmin() {
             <h3 className="font-display text-lg font-bold text-ink-900">Méthode de travail (page À propos)</h3>
             <ItemListEditor items={s.method || []} onChange={(v) => setS({ ...s, method: v })} />
           </div>
+        </div>
+      )}
+
+      {tab === 'modules' && isSuper && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-accent-200 bg-accent-50 p-5">
+            <p className="text-sm font-semibold text-accent-900">
+              ⚙️ Zone réservée au super administrateur : l'activation des modules n'affecte que l'espace
+              d'administration (jamais le site public).
+            </p>
+          </div>
+
+          <div className="card flex flex-wrap items-center justify-between gap-6 p-7">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="font-display text-lg font-bold text-ink-900">Gestion RH (GRH)</h3>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${modules?.grh_enabled ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+                  {modules?.grh_enabled ? 'Activé' : 'Désactivé'}
+                </span>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Module complet de gestion des ressources humaines : équipe (fiches employés, salaires visibles
+                uniquement par le super admin), départements et congés avec circuit de validation.
+                Visible dans le menu par les rôles <strong>super admin</strong> et <strong>administrateur</strong>.
+                La désactivation masque le menu et ferme l'API GRH (les données restent conservées).
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!modules?.grh_enabled}
+              disabled={!modules}
+              onClick={() => toggleGrh(!modules?.grh_enabled)}
+              className={`relative h-9 w-16 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                modules?.grh_enabled ? 'bg-brand-600' : 'bg-ink-200'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition-all ${
+                  modules?.grh_enabled ? 'left-8' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {modMsg && (
+            <p className={`rounded-xl px-4 py-3 text-sm font-semibold ${modMsg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
+              {modMsg}
+            </p>
+          )}
         </div>
       )}
 

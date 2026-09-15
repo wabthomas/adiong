@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS = {
   site_tagline: "Soutenir l'inclusion des personnes handicapées dans tous les secteurs de la vie",
   logo: '',
   favicon: '',
+  grh_enabled: '0',
   address: '38 Av. Baraka, Rue Dr. Maganga, Q. Himbi, Commune de Goma, Nord-Kivu, RDC',
   phone1: '+243 976 483 612',
   phone2: '+243 811 401 636',
@@ -157,10 +158,11 @@ export function seedIfEmpty() {
   const now = new Date().toISOString();
 
   const hash = bcrypt.hashSync('AdiOng2026!', 10);
-  db.prepare('INSERT INTO users (email, password_hash, full_name) VALUES (?, ?, ?)').run(
+  db.prepare('INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, ?)').run(
     'admin@adiong.org',
     hash,
-    'Administrateur ADI'
+    'Administrateur ADI',
+    'super_admin'
   );
 
   const causes = [

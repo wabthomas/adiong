@@ -102,6 +102,44 @@ export const api = {
     update: (id, b) => req(`/api/admin/users/${id}`, { method: 'PUT', body: b, auth: true }),
     remove: (id) => req(`/api/admin/users/${id}`, { method: 'DELETE', auth: true })
   },
+  modules: {
+    get: () => req('/api/admin/modules', { auth: true }),
+    update: (b) => req('/api/admin/modules', { method: 'PUT', body: b, auth: true })
+  },
+  grh: {
+    overview: () => req('/api/admin/grh/overview', { auth: true }),
+    departments: {
+      list: () => req('/api/admin/grh/departments', { auth: true }),
+      create: (b) => req('/api/admin/grh/departments', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/departments/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/departments/${id}`, { method: 'DELETE', auth: true })
+    },
+    employees: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        if (params.q) q.set('q', params.q);
+        if (params.department) q.set('department', params.department);
+        if (params.status) q.set('status', params.status);
+        const s = q.toString();
+        return req(`/api/admin/grh/employees${s ? `?${s}` : ''}`, { auth: true });
+      },
+      create: (b) => req('/api/admin/grh/employees', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/employees/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/employees/${id}`, { method: 'DELETE', auth: true })
+    },
+    leaves: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        if (params.status) q.set('status', params.status);
+        if (params.employee_id) q.set('employee_id', params.employee_id);
+        const s = q.toString();
+        return req(`/api/admin/grh/leaves${s ? `?${s}` : ''}`, { auth: true });
+      },
+      create: (b) => req('/api/admin/grh/leaves', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/leaves/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/leaves/${id}`, { method: 'DELETE', auth: true })
+    }
+  },
   async upload(file) {
     const fd = new FormData();
     fd.append('image', file);

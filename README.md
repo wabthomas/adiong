@@ -43,8 +43,10 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
     si l'original est déjà plus léger, il est conservé. Suppression bloquée si l'image est encore utilisée.
     Accessible aussi depuis tout champ image (« Bibliothèque ») et depuis l'éditeur d'articles.
   - **Utilisateurs & rôles** : création/édition/suppression de comptes. Rôles :
-    `admin` (tout), `editor` (articles, causes, campagnes, médiathèque), `viewer` (consultation).
-    Garde-fous : impossible de supprimer/rétrograder le dernier admin ou de supprimer son propre compte.
+    `super_admin` (tout + modules + salaires), `admin` (tout sauf modules/salaires),
+    `editor` (articles, causes, campagnes, médiathèque), `viewer` (consultation).
+    Garde-fous : impossible de supprimer/rétrograder le dernier compte privilégié, ni de supprimer son
+    propre compte ; seul un super admin peut donner le rôle super admin.
     Le menu s'adapte au rôle et le rôle est re-vérifié côté API à chaque requête.
   - **Paramètres** : **100 % du contenu du site est éditable** — 7 onglets :
     - *Identité & contact* : nom, slogan, adresse, téléphones, email, réseaux sociaux, copyright
@@ -96,6 +98,24 @@ La page d'un article est repensée pour la lecture et la diffusion :
 - **Admin en lazy loading** : toutes les pages de l'espace admin (et TipTap) sont chargées à la demande.
   Le visiteur du site public ne télécharge plus l'éditeur ni l'interface admin — le bundle principal est
   passé de ~860 Ko à ~380 Ko (minifié), ~118 Ko en gzip.
+
+## Module GRH (ressources humaines)
+
+Module **interne** (jamais visible sur le site public) de gestion des ressources humaines :
+
+- **Vue d'ensemble** : effectif, répartition par département, dernières embauches, congés en cours/à venir, congés en attente.
+- **Équipe** : fiches employés (fonction, département, type de contrat, date d'embauche, statut actif/inactif + date de départ, photo depuis la médiathèque, notes), recherche et filtres. **Le salaire n'est visible que par le super admin.**
+- **Congés** : demande (annuel, maladie, maternité, sans solde, formation) avec circuit de validation (en attente → approuvé/rejeté).
+- **Départements** : création, renommage (inline), suppression protégée (impossible si employés affectés).
+
+**Activation / désactivation** : réservée au **super administrateur** via
+*Admin → Paramètres → Modules (super admin)*. La désactivation masque le menu et ferme l'API GRH
+(les données sont conservées). Le menu GRH s'affiche pour les rôles super admin et administrateur.
+
+**Rôles** : `super_admin` (tout + activation des modules + salaires) > `admin` (contenu,
+paramètres, utilisateurs, GRH) > `editor` (contenu) > `viewer` (consultation).
+Le compte initial `admin@adiong.org` est super admin. Seul un super admin peut créer/donner le rôle
+super admin ; il doit toujours rester au moins un compte privilégié (super admin ou admin).
 
 ## Sécurité
 
