@@ -141,6 +141,7 @@ const setSetting = (key, value) =>
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
 const STRING_SETTINGS = [
+  'grh_annual_leave_days',
   'site_name','site_tagline','logo','favicon','address','phone1','phone2','email','whatsapp','facebook','twitter',
   'instagram','pinterest','video_url','copyright',
   'seo_title','seo_description','seo_keywords','og_image','twitter_handle',
@@ -989,6 +990,40 @@ app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => 
 // ---------- GRH (rôles admin+super, module activable) ----------
 const GRH = [authRequired, requireRole('hr'), requireModule('grh_enabled', 'GRH')];
 
+// Comptage des jours ouvrés (lun–ven, bornes incluses)
+const businessDays = (startISO, endISO) => {
+  if (!startISO) return 0;
+  const s = new Date(String(startISO).slice(0, 10) + 'T00:00:00Z');
+  const e = endISO ? new Date(String(endISO).slice(0, 10) + 'T00:00:00Z') : s;
+  if (isNaN(s) || isNaN(e) || e < s) return 0;
+  let n = 0;
+  for (let d = new Date(s); d <= e; d.setUTCDate(d.getUTCDate() + 1)) {
+    const w = d.getUTCDay();
+    if (w !== 0 && w !== 6) n += 1;
+  }
+  return n;
+};
+const globalAnnualDays = () => Number(getSetting('grh_annual_leave_days') || 22) || 22;
+const leaveBalance = (employeeId) => {
+  const emp = db.prepare('SELECT annual_days FROM grh_employees WHERE id = ?').get(employeeId);
+  if (!emp) return { annual: 0, used: 0, remaining: 0 };
+  const annual = Number(emp.annual_days) || globalAnnualDays();
+  const year = String(new Date().getUTCFullYear());
+  const used = db.prepare(
+    "SELECT COALESCE(SUM(days), 0) s FROM grh_leaves WHERE employee_id = ? AND status = 'approuve' AND type = 'conge' AND strftime('%Y', start_date) = ?"
+  ).get(employeeId, year).s;
+  return { annual, used, remaining: annual - used };
+};
+const annualLeaveAllowed = (employeeId, days, excludeLeaveId = null) => {
+  const bal = leaveBalance(employeeId);
+  let used = bal.used;
+  if (excludeLeaveId) {
+    const self = db.prepare("SELECT days FROM grh_leaves WHERE id = ? AND type = 'conge' AND status = 'approuve'").get(excludeLeaveId);
+    if (self) used = Math.max(0, used - self.days);
+  }
+  return used + days <= bal.annual;
+};
+
 app.get('/api/admin/grh/overview', ...GRH, (req, res) => {
   const active = db.prepare("SELECT COUNT(*) n FROM grh_employees WHERE status = 'actif'").get().n;
   const total = db.prepare('SELECT COUNT(*) n FROM grh_employees').get().n;
@@ -1057,8 +1092,10 @@ app.delete('/api/admin/grh/departments/:id', ...GRH, (req, res) => {
 app.get('/api/admin/grh/employees', ...GRH, (req, res) => {
   const { q, department, status } = req.query;
   let sql = `
-    SELECT e.*, d.name AS department
-    FROM grh_employees e LEFT JOIN grh_departments d ON d.id = e.department_id
+    SELECT e.*, d.name AS department, m.full_name AS manager_name
+    FROM grh_employees e
+    LEFT JOIN grh_departments d ON d.id = e.department_id
+    LEFT JOIN grh_employees m ON m.id = e.manager_id
   `;
   const where = [];
   const params = [];
@@ -1071,6 +1108,7 @@ app.get('/api/admin/grh/employees', ...GRH, (req, res) => {
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
   sql += ' ORDER BY e.full_name';
   const rows = db.prepare(sql).all(...params);
+  rows.forEach((r) => { r.balance = leaveBalance(r.id); });
   if (req.user.role !== 'super_admin') rows.forEach((r) => { r.salary = null; });
   res.json(rows);
 });
@@ -1081,12 +1119,13 @@ app.post('/api/admin/grh/employees', ...GRH, (req, res) => {
   const salary = req.user.role === 'super_admin' ? (b.salary === '' || b.salary == null ? null : Number(b.salary) || null) : null;
   try {
     const info = db.prepare(`INSERT INTO grh_employees
-      (full_name, email, phone, position, department_id, contract_type, hire_date, status, leave_date, salary, salary_currency, photo, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (full_name, email, phone, position, department_id, contract_type, hire_date, status, leave_date, salary, salary_currency, photo, notes, manager_id, annual_days, job_description)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       String(b.full_name).trim(), b.email || null, b.phone || '', b.position || '',
       b.department_id || null, b.contract_type || 'permanent', b.hire_date || '',
       b.status || 'actif', b.leave_date || '', salary, b.salary_currency || 'USD',
-      b.photo || '', b.notes || ''
+      b.photo || '', b.notes || '',
+      b.manager_id || null, Math.max(0, Number(b.annual_days) || 0), String(b.job_description || '').slice(0, 4000)
     );
     res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(info.lastInsertRowid));
   } catch {
@@ -1099,15 +1138,18 @@ app.put('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
   if (!ex) return res.status(404).json({ error: 'Employé introuvable' });
   const b = { ...ex, ...req.body };
   const salary = req.user.role === 'super_admin' ? (b.salary === '' || b.salary == null ? null : Number(b.salary) || null) : ex.salary;
+  const managerId = Number(b.manager_id) === ex.id ? null : (b.manager_id || null);
   try {
     db.prepare(`UPDATE grh_employees SET
       full_name = ?, email = ?, phone = ?, position = ?, department_id = ?, contract_type = ?,
-      hire_date = ?, status = ?, leave_date = ?, salary = ?, salary_currency = ?, photo = ?, notes = ?
+      hire_date = ?, status = ?, leave_date = ?, salary = ?, salary_currency = ?, photo = ?, notes = ?,
+      manager_id = ?, annual_days = ?, job_description = ?
       WHERE id = ?`).run(
       String(b.full_name).trim(), b.email || null, b.phone || '', b.position || '',
       b.department_id || null, b.contract_type || 'permanent', b.hire_date || '',
       b.status || 'actif', b.leave_date || '', salary, b.salary_currency || 'USD',
-      b.photo || '', b.notes || '', ex.id
+      b.photo || '', b.notes || '',
+      managerId, Math.max(0, Number(b.annual_days) || 0), String(b.job_description || '').slice(0, 4000), ex.id
     );
     res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(ex.id));
   } catch {
@@ -1117,13 +1159,106 @@ app.put('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
 
 app.delete('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
   db.prepare('DELETE FROM grh_leaves WHERE employee_id = ?').run(req.params.id);
+  const docs = db.prepare('SELECT * FROM grh_documents WHERE employee_id = ?').all(req.params.id);
+  docs.forEach((d) => {
+    const full = path.join(empDocsDir, d.file);
+    if (fs.existsSync(full)) fs.unlink(full, () => {});
+  });
+  db.prepare('DELETE FROM grh_documents WHERE employee_id = ?').run(req.params.id);
+  db.prepare('UPDATE grh_employees SET manager_id = NULL WHERE manager_id = ?').run(req.params.id);
   db.prepare('DELETE FROM grh_employees WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
+// Détail employé : fiche + solde + documents + congés
+app.get('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
+  const row = db.prepare(`
+    SELECT e.*, d.name AS department, m.full_name AS manager_name
+    FROM grh_employees e
+    LEFT JOIN grh_departments d ON d.id = e.department_id
+    LEFT JOIN grh_employees m ON m.id = e.manager_id
+    WHERE e.id = ?
+  `).get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Employé introuvable' });
+  row.balance = leaveBalance(row.id);
+  if (req.user.role !== 'super_admin') row.salary = null;
+  row.documents = db.prepare('SELECT * FROM grh_documents WHERE employee_id = ? ORDER BY created_at DESC').all(row.id);
+  row.leaves = db.prepare('SELECT * FROM grh_leaves WHERE employee_id = ? ORDER BY start_date DESC LIMIT 20').all(row.id);
+  res.json(row);
+});
+
+// Documents du dossier (privés : accès HR uniquement, jamais servis publiquement)
+const empDocsDir = path.join(__dirname, 'data', 'employee-docs');
+if (!fs.existsSync(empDocsDir)) fs.mkdirSync(empDocsDir, { recursive: true });
+const docsUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, empDocsDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase().slice(0, 8) || '.bin';
+      cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const ok = isAllowedUpload(file) ||
+      mime === 'application/msword' ||
+      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (ok) cb(null, true);
+    else cb(new Error('Format non supporté (image, PDF, Word)'));
+  }
+});
+app.post('/api/admin/grh/employees/:id/documents', ...GRH, docsUpload.single('file'), (req, res) => {
+  const emp = db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(req.params.id);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
+  const info = db.prepare('INSERT INTO grh_documents (employee_id, name, file, category) VALUES (?, ?, ?, ?)').run(
+    emp.id,
+    String(req.body?.name || req.file.originalname || 'Document').slice(0, 200),
+    req.file.filename,
+    String(req.body?.category || 'autre').slice(0, 40)
+  );
+  res.json(db.prepare('SELECT * FROM grh_documents WHERE id = ?').get(info.lastInsertRowid));
+});
+app.get('/api/admin/grh/documents/:id', ...GRH, (req, res) => {
+  const doc = db.prepare('SELECT * FROM grh_documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Document introuvable' });
+  const full = path.join(empDocsDir, doc.file);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Fichier manquant' });
+  res.download(full, doc.name);
+});
+app.delete('/api/admin/grh/documents/:id', ...GRH, (req, res) => {
+  const doc = db.prepare('SELECT * FROM grh_documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Document introuvable' });
+  const full = path.join(empDocsDir, doc.file);
+  if (fs.existsSync(full)) fs.unlink(full, () => {});
+  db.prepare('DELETE FROM grh_documents WHERE id = ?').run(doc.id);
+  res.json({ ok: true });
+});
+
+// Organigramme (arborescence par supérieur hiérarchique)
+app.get('/api/admin/grh/orgchart', ...GRH, (req, res) => {
+  const rows = db.prepare(`
+    SELECT e.id, e.full_name, e.position, e.photo, e.status, e.department_id, e.manager_id, d.name AS department
+    FROM grh_employees e LEFT JOIN grh_departments d ON d.id = e.department_id
+  `).all();
+  const byId = new Map(rows.map((r) => [r.id, { ...r, children: [] }]));
+  const roots = [];
+  for (const r of rows) {
+    const node = byId.get(r.id);
+    const parent = r.manager_id ? byId.get(r.manager_id) : null;
+    if (parent && parent.id !== r.id) parent.children.push(node);
+    else roots.push(node);
+  }
+  const order = (list) => list.sort((a, b) => a.full_name.localeCompare(b.full_name, 'fr'));
+  const walk = (list) => { order(list); list.forEach((n) => walk(n.children)); };
+  walk(roots);
+  res.json(roots);
+});
+
 // Congés
 app.get('/api/admin/grh/leaves', ...GRH, (req, res) => {
-  const { status, employee_id } = req.query;
+  const { status, employee_id, month } = req.query;
   let sql = `
     SELECT l.*, e.full_name AS employee_name, e.position AS employee_position
     FROM grh_leaves l JOIN grh_employees e ON e.id = l.employee_id
@@ -1132,6 +1267,10 @@ app.get('/api/admin/grh/leaves', ...GRH, (req, res) => {
   const params = [];
   if (status) { where.push('l.status = ?'); params.push(status); }
   if (employee_id) { where.push('l.employee_id = ?'); params.push(employee_id); }
+  if (month) {
+    where.push('l.start_date <= ? AND (l.end_date = \'\' OR l.end_date >= ?)');
+    params.push(`${month}-31`, `${month}-01`);
+  }
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
   sql += ' ORDER BY l.start_date DESC';
   res.json(db.prepare(sql).all(...params));
@@ -1142,9 +1281,15 @@ app.post('/api/admin/grh/leaves', ...GRH, (req, res) => {
   if (!b.employee_id || !b.start_date) return res.status(400).json({ error: 'Employé et date de début requis' });
   if (!db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(b.employee_id))
     return res.status(404).json({ error: 'Employé introuvable' });
+  const type = ['conge', 'maladie', 'maternite', 'sans_solde', 'formation'].includes(b.type) ? b.type : 'conge';
+  const status = ['en_attente', 'approuve', 'rejette'].includes(b.status) ? b.status : 'en_attente';
+  const days = businessDays(b.start_date, b.end_date || b.start_date);
+  if (!days) return res.status(400).json({ error: 'Dates de congé invalides' });
+  if (type === 'conge' && status === 'approuve' && !annualLeaveAllowed(b.employee_id, days))
+    return res.status(400).json({ error: 'Solde de congés annuel insuffisant pour cette demande.' });
   const info = db.prepare(
-    'INSERT INTO grh_leaves (employee_id, type, start_date, end_date, reason, status) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(b.employee_id, b.type || 'conge', b.start_date, b.end_date || '', b.reason || '', b.status || 'en_attente');
+    'INSERT INTO grh_leaves (employee_id, type, start_date, end_date, reason, status, days) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(b.employee_id, type, b.start_date, b.end_date || '', String(b.reason || '').slice(0, 500), status, days);
   res.json(db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(info.lastInsertRowid));
 });
 
@@ -1152,14 +1297,64 @@ app.put('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
   const ex = db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(req.params.id);
   if (!ex) return res.status(404).json({ error: 'Congé introuvable' });
   const b = { ...ex, ...req.body };
+  b.type = ['conge', 'maladie', 'maternite', 'sans_solde', 'formation'].includes(b.type) ? b.type : ex.type;
+  b.status = ['en_attente', 'approuve', 'rejette'].includes(b.status) ? b.status : ex.status;
+  const days = businessDays(b.start_date, b.end_date || b.start_date) || ex.days || 1;
+  if (b.type === 'conge' && b.status === 'approuve' && !annualLeaveAllowed(b.employee_id, days, ex.id))
+    return res.status(400).json({ error: 'Solde de congés annuel insuffisant pour cette demande.' });
   db.prepare(
-    'UPDATE grh_leaves SET employee_id = ?, type = ?, start_date = ?, end_date = ?, reason = ?, status = ? WHERE id = ?'
-  ).run(b.employee_id, b.type, b.start_date, b.end_date || '', b.reason || '', b.status, ex.id);
+    'UPDATE grh_leaves SET employee_id = ?, type = ?, start_date = ?, end_date = ?, reason = ?, status = ?, days = ? WHERE id = ?'
+  ).run(b.employee_id, b.type, b.start_date, b.end_date || '', String(b.reason || '').slice(0, 500), b.status, days, ex.id);
   res.json(db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(ex.id));
 });
 
 app.delete('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
   db.prepare('DELETE FROM grh_leaves WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- Auto-service employé (compte lié au dossier par email) ----------
+const LEAVE_TYPES_OK = ['conge', 'maladie', 'maternite', 'sans_solde', 'formation'];
+const selfEmployee = (req) => {
+  const em = String(req.user.email || '').toLowerCase();
+  return db.prepare('SELECT * FROM grh_employees WHERE email IS NOT NULL AND lower(email) = ?').get(em) || null;
+};
+const selfEmployeeGuard = (req, res, next) => {
+  const emp = selfEmployee(req);
+  if (!emp) return res.status(404).json({ error: 'Aucun dossier employé n’est lié à votre adresse email.' });
+  req.employee = emp;
+  next();
+};
+app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const emp = req.employee;
+  const dept = emp.department_id ? db.prepare('SELECT name FROM grh_departments WHERE id = ?').get(emp.department_id)?.name : '';
+  res.json({ ...emp, salary: null, salary_currency: null, department: dept, balance: leaveBalance(emp.id) });
+});
+app.get('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  res.json(db.prepare('SELECT * FROM grh_leaves WHERE employee_id = ? ORDER BY start_date DESC').all(req.employee.id));
+});
+const myLeaveLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `myleave:${req.user?.id || req.ip}`, message: 'Trop de demandes de congé. Réessayez plus tard.' });
+app.post('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, myLeaveLimiter, (req, res) => {
+  const b = req.body || {};
+  if (!b.start_date) return res.status(400).json({ error: 'Date de début requise' });
+  const type = LEAVE_TYPES_OK.includes(b.type) ? b.type : 'conge';
+  const days = businessDays(b.start_date, b.end_date || b.start_date);
+  if (!days) return res.status(400).json({ error: 'Dates invalides (la fin doit être après le début)' });
+  if (type === 'conge') {
+    const bal = leaveBalance(req.employee.id);
+    if (bal.used + days > bal.annual)
+      return res.status(400).json({ error: `Solde insuffisant : ${bal.remaining} jour(s) restant(s) cette année.` });
+  }
+  const info = db.prepare(
+    'INSERT INTO grh_leaves (employee_id, type, start_date, end_date, reason, status, days) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(req.employee.id, type, b.start_date, b.end_date || '', String(b.reason || '').slice(0, 500), 'en_attente', days);
+  res.json(db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(info.lastInsertRowid));
+});
+app.delete('/api/me/employee/leaves/:id', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const leave = db.prepare('SELECT * FROM grh_leaves WHERE id = ? AND employee_id = ?').get(req.params.id, req.employee.id);
+  if (!leave) return res.status(404).json({ error: 'Demande introuvable' });
+  if (leave.status !== 'en_attente') return res.status(409).json({ error: 'Seule une demande en attente peut être retirée.' });
+  db.prepare('DELETE FROM grh_leaves WHERE id = ?').run(leave.id);
   res.json({ ok: true });
 });
 

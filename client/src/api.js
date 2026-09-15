@@ -71,10 +71,6 @@ export const api = {
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
   logout: () => req('/api/auth/logout', { method: 'POST', body: {}, auth: true }),
-  me: {
-    get: () => req('/api/auth/me', { auth: true }),
-    update: (b) => req('/api/auth/me', { method: 'PUT', body: b, auth: true })
-  },
   member: (code) => req(`/api/public/member/${encodeURIComponent(code)}`),
   password: (body) => req('/api/auth/password', { method: 'POST', body, auth: true }),
   dashboard: () => req('/api/admin/dashboard', { auth: true }),
@@ -175,19 +171,54 @@ export const api = {
       },
       create: (b) => req('/api/admin/grh/employees', { method: 'POST', body: b, auth: true }),
       update: (id, b) => req(`/api/admin/grh/employees/${id}`, { method: 'PUT', body: b, auth: true }),
-      remove: (id) => req(`/api/admin/grh/employees/${id}`, { method: 'DELETE', auth: true })
+      remove: (id) => req(`/api/admin/grh/employees/${id}`, { method: 'DELETE', auth: true }),
+      get: (id) => req(`/api/admin/grh/employees/${id}`, { auth: true }),
+      uploadDocument: (id, file, name, category) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        if (name) fd.append('name', name);
+        fd.append('category', category || 'autre');
+        return req(`/api/admin/grh/employees/${id}/documents`, { method: 'POST', body: fd, auth: true });
+      },
+      removeDocument: (id) => req(`/api/admin/grh/documents/${id}`, { method: 'DELETE', auth: true }),
+      downloadDocument: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/grh/documents/${id}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `document-${id}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
     },
+    orgchart: () => req('/api/admin/grh/orgchart', { auth: true }),
     leaves: {
       list: (params = {}) => {
         const q = new URLSearchParams();
         if (params.status) q.set('status', params.status);
         if (params.employee_id) q.set('employee_id', params.employee_id);
+        if (params.month) q.set('month', params.month);
         const s = q.toString();
         return req(`/api/admin/grh/leaves${s ? `?${s}` : ''}`, { auth: true });
       },
       create: (b) => req('/api/admin/grh/leaves', { method: 'POST', body: b, auth: true }),
       update: (id, b) => req(`/api/admin/grh/leaves/${id}`, { method: 'PUT', body: b, auth: true }),
       remove: (id) => req(`/api/admin/grh/leaves/${id}`, { method: 'DELETE', auth: true })
+    }
+  },
+  me: {
+    get: () => req('/api/auth/me', { auth: true }),
+    update: (b) => req('/api/auth/me', { method: 'PUT', body: b, auth: true }),
+    employee: {
+      get: () => req('/api/me/employee', { auth: true }),
+      leaves: () => req('/api/me/employee/leaves', { auth: true }),
+      request: (b) => req('/api/me/employee/leaves', { method: 'POST', body: b, auth: true }),
+      remove: (id) => req(`/api/me/employee/leaves/${id}`, { method: 'DELETE', auth: true })
     }
   },
   async upload(file) {

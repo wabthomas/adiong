@@ -30,6 +30,7 @@ const UsersAdmin = lazy(() => import('./pages/admin/UsersAdmin.jsx'));
 const ProfileAdmin = lazy(() => import('./pages/admin/ProfileAdmin.jsx'));
 const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
 const GrhAdmin = lazy(() => import('./pages/admin/GrhAdmin.jsx'));
+const MyLeave = lazy(() => import('./pages/admin/MyLeave.jsx'));
 const PartnersAdmin = lazy(() => import('./pages/admin/PartnersAdmin.jsx'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage.jsx'));
 
@@ -99,6 +100,7 @@ export default function App() {
           <Route path="medias" element={<MediaAdmin />} />
           <Route path="utilisateurs" element={<UsersAdmin />} />
           <Route path="profil" element={<ProfileAdmin />} />
+          <Route path="mon-espace" element={<MyLeave />} />
           <Route path="grh" element={<GrhAdmin />} />
           <Route path="partenaires" element={<PartnersAdmin />} />
           <Route path="parametres" element={<SettingsAdmin />} />

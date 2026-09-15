@@ -113,8 +113,11 @@ La page d'un article est repensée pour la lecture et la diffusion :
 Module **interne** (jamais visible sur le site public) de gestion des ressources humaines :
 
 - **Vue d'ensemble** : effectif, répartition par département, dernières embauches, congés en cours/à venir, congés en attente.
-- **Équipe** : fiches employés (fonction, département, type de contrat, date d'embauche, statut actif/inactif + date de départ, photo depuis la médiathèque, notes), recherche et filtres. **Le salaire n'est visible que par le super admin.**
-- **Congés** : demande (annuel, maladie, maternité, sans solde, formation) avec circuit de validation (en attente → approuvé/rejeté).
+- **Équipe** : fiches employés (fonction, département, type de contrat, date d'embauche, statut actif/inactif + date de départ, photo depuis la médiathèque, notes, fiche de poste), recherche et filtres. **Le salaire n'est visible que par le super admin.**
+- **Dossier employé** : pièces et documents privés (contrat, pièce d'identité, diplôme, certificat médical…) — upload, téléchargement, suppression ; stockés hors du site public, accessibles uniquement aux rôles RH.
+- **Organigramme** : supérieur hiérarchique par employé, arborescence interactive (clic sur un nom = ouvre le dossier).
+- **Congés** : types (annuel, maladie, maternité, sans solde, formation), circuit de validation (en attente → approuvé/rejeté), **soldes par employé** (jours par an, pris, restants — réglables par défaut dans Paramètres ou individuellement par employé), durée comptée en jours ouvrés, **calendrier mensuel** des absences approuvées.
+- **Mon espace (auto-service)** : chaque employé dont l'email correspond à un dossier voit *Admin → Mon espace* — consultation de son solde, demande de congé (contrôlée par le solde), retrait de ses demandes en attente.
 - **Départements** : création, renommage (inline), suppression protégée (impossible si employés affectés).
 
 **Activation / désactivation** : réservée au **super administrateur** via

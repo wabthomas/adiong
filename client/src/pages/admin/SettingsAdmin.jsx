@@ -575,6 +575,31 @@ export default function SettingsAdmin() {
             </button>
           </div>
 
+          <div className="card flex flex-wrap items-center justify-between gap-6 p-7">
+            <div className="min-w-0 flex-1">
+              <h3 className="font-display text-lg font-bold text-ink-900">Congés — jours par an (valeur par défaut)</h3>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Solde de congé annuel attribué à chaque employé. Il peut être ajusté individuellement dans la
+                fiche de chaque employé (champ « Jours de congé / an »). Les week-ends ne comptent pas dans la
+                durée des congés.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                className="input !w-24 text-center"
+                type="number"
+                min="0"
+                max="60"
+                value={s.grh_annual_leave_days ?? ''}
+                placeholder="22"
+                onChange={set('grh_annual_leave_days')}
+              />
+              <button type="button" className="btn-primary shrink-0 !px-5 !py-2.5 text-sm" onClick={save} disabled={saving}>
+                Enregistrer
+              </button>
+            </div>
+          </div>
+
           {modMsg && (
             <p className={`rounded-xl px-4 py-3 text-sm font-semibold ${modMsg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
               {modMsg}

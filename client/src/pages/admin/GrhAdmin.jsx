@@ -5,6 +5,7 @@ import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 const TABS = [
   ['overview', 'Vue d’ensemble'],
   ['employees', 'Équipe'],
+  ['orgchart', 'Organigramme'],
   ['leaves', 'Congés'],
   ['departments', 'Départements']
 ];
@@ -37,7 +38,16 @@ const LEAVE_STATUS_STYLES = {
 const emptyEmployee = {
   full_name: '', email: '', phone: '', position: '', department_id: null,
   contract_type: 'permanent', hire_date: '', status: 'actif', leave_date: '',
-  salary: '', salary_currency: 'USD', photo: '', notes: ''
+  salary: '', salary_currency: 'USD', photo: '', notes: '',
+  manager_id: null, annual_days: '', job_description: ''
+};
+
+const DOC_CATEGORIES = {
+  contrat: 'Contrat',
+  identite: 'Pièce d’identité',
+  diplome: 'Diplôme / CV',
+  medicale: 'Certificat médical',
+  autre: 'Autre'
 };
 const emptyLeave = { employee_id: null, type: 'conge', start_date: '', end_date: '', reason: '', status: 'en_attente' };
 
@@ -57,7 +67,7 @@ function StatCard({ icon, label, value, sub }) {
   );
 }
 
-function EmployeeForm({ initial, departments, isSuper, onSaved, onClose }) {
+function EmployeeForm({ initial, departments, employees = [], isSuper, onSaved, onClose }) {
   const [f, setF] = useState({ ...initial, salary: initial.salary ?? '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -67,7 +77,13 @@ function EmployeeForm({ initial, departments, isSuper, onSaved, onClose }) {
     setSaving(true);
     setError('');
     try {
-      const payload = { ...f, department_id: f.department_id || null, salary: isSuper ? f.salary : undefined };
+      const payload = {
+        ...f,
+        department_id: f.department_id || null,
+        manager_id: f.manager_id ? Number(f.manager_id) : null,
+        annual_days: f.annual_days === '' || f.annual_days == null ? 0 : Number(f.annual_days) || 0,
+        salary: isSuper ? f.salary : undefined
+      };
       if (initial.id) await api.grh.employees.update(initial.id, payload);
       else await api.grh.employees.create(payload);
       onSaved();
@@ -118,6 +134,25 @@ function EmployeeForm({ initial, departments, isSuper, onSaved, onClose }) {
             <option value="inactif">Inactif (départ)</option>
           </select>
         </Field>
+        <Field label="Supérieur hiérarchique">
+          <select className="input" value={f.manager_id ?? ''} onChange={set('manager_id')}>
+            <option value="">— Aucun —</option>
+            {employees.filter((x) => x.id !== initial.id).map((x) => (
+              <option key={x.id} value={x.id}>{x.full_name}{x.position ? ` — ${x.position}` : ''}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Jours de congé / an (0 = défaut)">
+          <input
+            className="input"
+            type="number"
+            min="0"
+            step="1"
+            value={f.annual_days ?? ''}
+            onChange={set('annual_days')}
+            placeholder="Ex. 22"
+          />
+        </Field>
         {f.status === 'inactif' && (
           <Field label="Date de départ">
             <input className="input" type="date" value={f.leave_date || ''} onChange={set('leave_date')} />
@@ -150,6 +185,9 @@ function EmployeeForm({ initial, departments, isSuper, onSaved, onClose }) {
       </Field>
       <Field label="Notes internes">
         <textarea className="input" rows={3} value={f.notes || ''} onChange={set('notes')} placeholder="Formations, observations…" />
+      </Field>
+      <Field label="Fiche de poste">
+        <textarea className="input" rows={4} value={f.job_description || ''} onChange={set('job_description')} placeholder="Missions, responsabilités, compétences attendues…" />
       </Field>
 
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
@@ -216,6 +254,17 @@ function LeaveForm({ initial, employees, onSaved, onClose }) {
           <input className="input" type="date" value={f.end_date || ''} onChange={set('end_date')} />
         </Field>
       </div>
+      {f.type === 'conge' && (() => {
+        const emp = employees.find((x) => String(x.id) === String(f.employee_id));
+        if (!emp?.balance) return null;
+        return (
+          <p className={`rounded-xl px-4 py-3 text-sm font-semibold ${
+            emp.balance.remaining <= 0 ? 'bg-red-50 text-red-700' : 'bg-brand-50 text-brand-700'
+          }`}>
+            Solde de {emp.full_name} : <strong>{emp.balance.remaining} jour(s) restant(s)</strong> sur {emp.balance.annual} cette année.
+          </p>
+        );
+      })()}
       <Field label="Motif">
         <textarea className="input" rows={3} value={f.reason || ''} onChange={set('reason')} placeholder="Ex. Congé annuel, certificat médical…" />
       </Field>
@@ -227,6 +276,225 @@ function LeaveForm({ initial, employees, onSaved, onClose }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function EmployeeFileModal({ employee, isSuper, onChanged, onClose }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [upload, setUpload] = useState({ name: '', category: 'autre', file: null });
+  const [uploading, setUploading] = useState(false);
+
+  const load = useCallback(() => {
+    api.grh.employees.get(employee.id)
+      .then(setData)
+      .catch((e) => setError(e.message));
+  }, [employee.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const doUpload = async () => {
+    if (!upload.file) return;
+    setUploading(true);
+    setError('');
+    try {
+      await api.grh.employees.uploadDocument(employee.id, upload.file, upload.name, upload.category);
+      setUpload({ name: '', category: 'autre', file: null });
+      load();
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+  const doDownload = async (doc) => {
+    try {
+      await api.grh.employees.downloadDocument(doc.id, doc.name);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const doRemoveDoc = async (doc) => {
+    if (!confirm(`Supprimer « ${doc.name} » du dossier ?`)) return;
+    try {
+      await api.grh.employees.removeDocument(doc.id);
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  if (error && !data) return <p className="text-sm font-semibold text-red-700">{error}</p>;
+  const d = data || {};
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        {d.photo ? (
+          <img src={d.photo} alt={d.full_name} className="h-20 w-20 rounded-2xl object-cover ring-1 ring-ink-100" />
+        ) : (
+          <span className="grid h-20 w-20 place-items-center rounded-2xl bg-brand-100 font-display text-2xl font-bold text-brand-700">
+            {(d.full_name || '?').slice(0, 2).toUpperCase()}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <h3 className="font-display text-xl font-bold text-ink-900">{d.full_name}</h3>
+          <p className="text-sm text-ink-500">{d.position || 'Fonction non renseignée'}</p>
+          <p className="mt-1 text-xs text-ink-400">
+            {d.department || 'Non affecté'}
+            {d.manager_name ? ` · Supérieur : ${d.manager_name}` : ''}
+          </p>
+        </div>
+        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${d.status === 'actif' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+          {d.status === 'actif' ? 'Actif' : 'Inactif'}
+        </span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl bg-brand-50 p-4 text-center">
+          <p className="font-display text-2xl font-bold text-brand-700">{d.balance?.annual ?? '—'}</p>
+          <p className="text-xs font-bold tracking-wide text-brand-600/70 uppercase">Jours / an</p>
+        </div>
+        <div className="rounded-2xl bg-ink-100/70 p-4 text-center">
+          <p className="font-display text-2xl font-bold text-ink-700">{d.balance?.used ?? '—'}</p>
+          <p className="text-xs font-bold tracking-wide text-ink-400 uppercase">Pris cette année</p>
+        </div>
+        <div className={`rounded-2xl p-4 text-center ${d.balance && d.balance.remaining < 0 ? 'bg-red-50' : 'bg-emerald-50'}`}>
+          <p className={`font-display text-2xl font-bold ${d.balance && d.balance.remaining < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+            {d.balance?.remaining ?? '—'}
+          </p>
+          <p className={`text-xs font-bold tracking-wide uppercase ${d.balance && d.balance.remaining < 0 ? 'text-red-400' : 'text-emerald-500'}`}>Restants</p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 text-sm sm:grid-cols-2">
+        <p className="text-ink-600">📧 {d.email || '—'}</p>
+        <p className="text-ink-600">📞 {d.phone || '—'}</p>
+        <p className="text-ink-600">📄 {CONTRACTS[d.contract_type] || d.contract_type || '—'}</p>
+        <p className="text-ink-600">📅 Embauché : {fmtDate(d.hire_date)}</p>
+        {isSuper && d.salary != null && (
+          <p className="font-bold text-accent-800 sm:col-span-2">💰 {Number(d.salary).toLocaleString('fr-FR')} {d.salary_currency}/mois</p>
+        )}
+      </div>
+
+      {d.job_description && (
+        <div>
+          <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Fiche de poste</p>
+          <p className="rounded-xl bg-cream p-4 text-sm leading-relaxed whitespace-pre-wrap text-ink-700">{d.job_description}</p>
+        </div>
+      )}
+
+      <div>
+        <p className="mb-3 text-xs font-bold tracking-wide text-ink-400 uppercase">Pièces et documents</p>
+        <div className="rounded-2xl border border-dashed border-ink-200 bg-cream/50 p-4">
+          <div className="flex flex-wrap gap-2">
+            <label className="input flex-1 cursor-pointer !py-2.5 text-sm text-ink-500">
+              {upload.file ? upload.file.name : 'Choisir un fichier (PDF, Word, image)…'}
+              <input
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.gif"
+                onChange={(e) => setUpload({ ...upload, file: e.target.files?.[0] || null })}
+              />
+            </label>
+            <input
+              className="input !w-48 !py-2.5 text-sm"
+              placeholder="Nom (ex. Contrat 2026)"
+              value={upload.name}
+              onChange={(e) => setUpload({ ...upload, name: e.target.value })}
+            />
+            <select className="input !w-44 !py-2.5 text-sm" value={upload.category} onChange={(e) => setUpload({ ...upload, category: e.target.value })}>
+              {Object.entries(DOC_CATEGORIES).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+            <button className="btn-primary shrink-0 !px-5 !py-2.5 text-sm" onClick={doUpload} disabled={!upload.file || uploading}>
+              {uploading ? 'Envoi…' : 'Ajouter'}
+            </button>
+          </div>
+        </div>
+        <ul className="mt-3 divide-y divide-ink-50 rounded-2xl bg-white ring-1 ring-ink-100">
+          {(d.documents || []).map((doc) => (
+            <li key={doc.id} className="flex items-center gap-3 px-4 py-3">
+              <span className="text-lg">📎</span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-ink-800">{doc.name}</p>
+                <p className="text-xs text-ink-400">{DOC_CATEGORIES[doc.category] || doc.category} · {fmtDate(doc.created_at)}</p>
+              </div>
+              <button className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100" onClick={() => doDownload(doc)}>
+                Télécharger
+              </button>
+              <button className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" onClick={() => doRemoveDoc(doc)} title="Supprimer">
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+        {(d.documents || []).length === 0 && (
+          <p className="mt-3 text-center text-sm text-ink-400">Aucune pièce dans ce dossier pour l'instant.</p>
+        )}
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Congés récents</p>
+        <ul className="space-y-2">
+          {(d.leaves || []).slice(0, 5).map((l) => (
+            <li key={l.id} className="flex items-center justify-between gap-3 rounded-xl bg-cream px-4 py-2.5 text-sm">
+              <span className="font-semibold text-ink-700">{LEAVE_TYPES[l.type] || l.type}</span>
+              <span className="text-ink-500">
+                {fmtDate(l.start_date)}{l.end_date ? ` → ${fmtDate(l.end_date)}` : ''}{l.days ? ` · ${l.days} j` : ''}
+              </span>
+              <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${LEAVE_STATUS_STYLES[l.status] || ''}`}>
+                {LEAVE_STATUS[l.status] || l.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {(d.leaves || []).length === 0 && <p className="text-sm text-ink-400">Aucun congé enregistré.</p>}
+      </div>
+
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+    </div>
+  );
+}
+
+function OrgNode({ node, level = 0, onOpenFile }) {
+  return (
+    <li className="relative">
+      <div
+        className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 ring-1 ring-ink-100"
+        style={{ marginLeft: level * 26 }}
+      >
+        {node.photo ? (
+          <img src={node.photo} alt={node.full_name} className="h-10 w-10 shrink-0 rounded-xl object-cover" />
+        ) : (
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 font-display text-sm font-bold text-brand-700">
+            {node.full_name.slice(0, 2).toUpperCase()}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <button className="block max-w-full truncate font-display text-sm font-bold text-ink-900 hover:text-brand-700" onClick={() => onOpenFile(node)}>
+            {node.full_name}
+          </button>
+          <p className="truncate text-xs text-ink-400">{node.position || '—'}</p>
+        </div>
+        {node.department && (
+          <span className="hidden shrink-0 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-700 sm:block">
+            {node.department}
+          </span>
+        )}
+        {node.status !== 'actif' && (
+          <span className="shrink-0 rounded-full bg-ink-100 px-2.5 py-1 text-[11px] font-bold text-ink-500">Inactif</span>
+        )}
+      </div>
+      {node.children?.length > 0 && (
+        <ul className="mt-2 space-y-2 border-l-2 border-brand-100 pl-2" style={{ marginLeft: level * 26 + 24 }}>
+          {node.children.map((c) => (
+            <OrgNode key={c.id} node={c} level={level + 1} onOpenFile={onOpenFile} />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
@@ -244,28 +512,40 @@ export default function GrhAdmin() {
   const [filterLeaveStatus, setFilterLeaveStatus] = useState('');
 
   const [empModal, setEmpModal] = useState(null);
+  const [fileModal, setFileModal] = useState(null);
   const [leaveModal, setLeaveModal] = useState(null);
   const [newDept, setNewDept] = useState('');
+  const [orgTree, setOrgTree] = useState([]);
+  const [calMonth, setCalMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [leavesMonth, setLeavesMonth] = useState([]);
   const [error, setError] = useState('');
 
   const loadAll = useCallback(async () => {
     try {
-      const [em, de, le, ov] = await Promise.all([
+      const [em, de, le, ov, og] = await Promise.all([
         api.grh.employees.list(),
         api.grh.departments.list(),
         api.grh.leaves.list(),
-        api.grh.overview()
+        api.grh.overview(),
+        api.grh.orgchart()
       ]);
       setEmployees(em);
       setDepartments(de);
       setLeaves(le);
       setOverview(ov);
+      setOrgTree(og);
     } catch (e) {
       setError(e.message);
     }
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  useEffect(() => {
+    api.grh.leaves.list({ month: calMonth, status: 'approuve' })
+      .then(setLeavesMonth)
+      .catch(() => setLeavesMonth([]));
+  }, [calMonth, tab]);
 
   const filteredEmployees = useMemo(() => {
     let list = employees;
@@ -284,6 +564,20 @@ export default function GrhAdmin() {
   );
 
   const maxDept = Math.max(1, ...(overview?.byDept || []).map((d) => d.n));
+
+  const shiftMonth = (delta) => {
+    const [y, m] = calMonth.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+    setCalMonth(d.toISOString().slice(0, 7));
+  };
+  const monthLabel = (ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  };
+  const leavesOnDay = (day) => {
+    const ds = `${calMonth}-${String(day).padStart(2, '0')}`;
+    return leavesMonth.filter((l) => l.start_date <= ds && (!l.end_date || l.end_date >= ds));
+  };
 
   const quickSetLeaveStatus = async (l, status) => {
     try {
@@ -505,7 +799,27 @@ export default function GrhAdmin() {
                     {isSuper && e.salary != null && (
                       <p className="font-bold text-accent-800">💰 {Number(e.salary).toLocaleString('fr-FR')} {e.salary_currency}/mois</p>
                     )}
+                    <p>
+                      🌴 Congés restants :{' '}
+                      <span className={e.balance && e.balance.remaining < 0 ? 'font-bold text-red-600' : 'font-bold text-brand-700'}>
+                        {e.balance?.remaining ?? '—'} j
+                      </span>
+                    </p>
                   </div>
+                </div>
+                <div className="flex shrink-0 flex-col justify-end gap-2">
+                  <button
+                    onClick={() => setFileModal(e)}
+                    className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100"
+                  >
+                    Dossier
+                  </button>
+                  <button
+                    onClick={() => setEmpModal({ ...e, salary: e.salary ?? '' })}
+                    className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100"
+                  >
+                    Modifier
+                  </button>
                 </div>
               </div>
             ))}
@@ -513,6 +827,26 @@ export default function GrhAdmin() {
           {filteredEmployees.length === 0 && (
             <p className="py-10 text-center text-ink-400">Aucun employé ne correspond aux filtres.</p>
           )}
+        </div>
+      )}
+
+      {tab === 'orgchart' && (
+        <div className="space-y-6">
+          <p className="text-sm text-ink-500">
+            Arborescence par supérieur hiérarchique. Cliquez sur un nom pour ouvrir le dossier employé.
+            Renseignez le « Supérieur hiérarchique » dans la fiche de chaque employé pour construire l'organigramme.
+          </p>
+          <div className="card p-6">
+            {orgTree.length === 0 ? (
+              <p className="py-10 text-center text-ink-400">Aucun employé — ajoutez des membres dans l'onglet Équipe.</p>
+            ) : (
+              <ul className="space-y-2">
+                {orgTree.map((n) => (
+                  <OrgNode key={n.id} node={n} onOpenFile={setFileModal} />
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       )}
 
@@ -537,6 +871,61 @@ export default function GrhAdmin() {
             </button>
           </div>
 
+          <div className="card p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="font-display text-lg font-bold text-ink-900">Calendrier — congés approuvés</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => shiftMonth(-1)} className="grid h-9 w-9 place-items-center rounded-lg bg-ink-50 font-bold text-ink-600 hover:bg-ink-100">←</button>
+                <span className="w-44 text-center text-sm font-bold text-ink-700 capitalize">{monthLabel(calMonth)}</span>
+                <button onClick={() => shiftMonth(1)} className="grid h-9 w-9 place-items-center rounded-lg bg-ink-50 font-bold text-ink-600 hover:bg-ink-100">→</button>
+              </div>
+            </div>
+            {(() => {
+              const [y, m] = calMonth.split('-').map(Number);
+              const offset = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
+              const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+              const cells = [...Array(offset).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+              return (
+                <div>
+                  <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] font-bold tracking-wide text-ink-400 uppercase">
+                    {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((d) => (
+                      <div key={d} className="py-1">{d}</div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-1.5">
+                    {cells.map((day, i) =>
+                      day === null ? (
+                        <div key={`x${i}`} />
+                      ) : (
+                        <div key={day} className={`min-h-[68px] rounded-lg p-1.5 ${i % 7 >= 5 ? 'bg-ink-50/60' : 'bg-cream'}`}>
+                          <span className="text-[10px] font-bold text-ink-400">{day}</span>
+                          {leavesOnDay(day).slice(0, 2).map((l) => (
+                            <p
+                              key={l.id}
+                              className={`mt-0.5 truncate rounded px-1 py-0.5 text-[10px] font-semibold ${
+                                l.type === 'conge' ? 'bg-brand-100 text-brand-700' : 'bg-accent-100 text-accent-800'
+                              }`}
+                              title={`${l.employee_name} — ${LEAVE_TYPES[l.type] || l.type}`}
+                            >
+                              {l.employee_name.split(' ')[0]}
+                            </p>
+                          ))}
+                          {leavesOnDay(day).length > 2 && (
+                            <p className="text-[9px] font-bold text-ink-400">+{leavesOnDay(day).length - 2}</p>
+                          )}
+                        </div>
+                      )
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-4 text-xs text-ink-400">
+                    <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-brand-100" /> Congé annuel</span>
+                    <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-accent-100" /> Autres absences</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
           <div className="card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-sm">
@@ -545,6 +934,7 @@ export default function GrhAdmin() {
                     <th className="px-6 py-4">Employé</th>
                     <th className="px-6 py-4">Type</th>
                     <th className="px-6 py-4">Période</th>
+                    <th className="px-6 py-4">Jours</th>
                     <th className="px-6 py-4">Motif</th>
                     <th className="px-6 py-4">Statut</th>
                     <th className="px-6 py-4 text-right">Actions</th>
@@ -561,6 +951,7 @@ export default function GrhAdmin() {
                       <td className="px-6 py-4 text-ink-600">
                         {fmtDate(l.start_date)}{l.end_date ? ` → ${fmtDate(l.end_date)}` : ''}
                       </td>
+                      <td className="px-6 py-4 font-bold text-ink-700">{l.days || '—'}</td>
                       <td className="max-w-[220px] truncate px-6 py-4 text-ink-500" title={l.reason}>{l.reason || '—'}</td>
                       <td className="px-6 py-4">
                         <span className={`rounded-full px-3 py-1 text-xs font-bold ${LEAVE_STATUS_STYLES[l.status] || 'bg-ink-100 text-ink-600'}`}>
@@ -651,9 +1042,21 @@ export default function GrhAdmin() {
           <EmployeeForm
             initial={empModal}
             departments={departments}
+            employees={employees.filter((x) => x.status === 'actif')}
             isSuper={isSuper}
             onSaved={loadAll}
             onClose={() => setEmpModal(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal open={!!fileModal} onClose={() => setFileModal(null)} title={`Dossier — ${fileModal?.full_name || ''}`} wide>
+        {fileModal && (
+          <EmployeeFileModal
+            employee={fileModal}
+            isSuper={isSuper}
+            onChanged={loadAll}
+            onClose={() => setFileModal(null)}
           />
         )}
       </Modal>

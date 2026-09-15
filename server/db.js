@@ -208,4 +208,19 @@ export function ensureUserCodes() {
 ensureUserCodes();
 migrate('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_unique_code ON users(unique_code)');
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS grh_documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  file TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'autre',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
+migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAULT 0');
+migrate("ALTER TABLE grh_employees ADD COLUMN job_description TEXT NOT NULL DEFAULT ''");
+migrate('ALTER TABLE grh_leaves ADD COLUMN days INTEGER NOT NULL DEFAULT 0');
+
 export default db;
