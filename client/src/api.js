@@ -379,7 +379,24 @@ export const api = {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 4000);
+      },
+      downloadInvoice: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/pos/sales/${id}/invoice`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `facture-${id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
       }
+    },
+    report: {
+      daily: (date) => req(`/api/admin/pos/reports/daily?date=${encodeURIComponent(date)}`, { auth: true })
     },
     stats: () => req('/api/admin/pos/stats', { auth: true })
   },

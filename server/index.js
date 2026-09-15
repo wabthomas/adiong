@@ -2645,6 +2645,167 @@ app.get('/api/admin/pos/stats', ...POS, (req, res) => {
   res.json({ today: { n: t.n, total: t.total }, byPayment, last7, topProducts, lowStock, stockValue, products, outOfStock });
 });
 
+// Rapport de caisse journalier
+app.get('/api/admin/pos/reports/daily', ...POS, (req, res) => {
+  const date = String(req.query.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Date invalide (format AAAA-MM-JJ)' });
+  const sales = db.prepare('SELECT * FROM pos_sales WHERE date(created_at) = ?').all(date);
+  const returns = db.prepare('SELECT * FROM pos_returns WHERE date(created_at) = ?').all(date);
+  const gross = money2(sales.reduce((a, s) => a + s.total, 0));
+  const subGross = money2(sales.reduce((a, s) => a + s.subtotal, 0));
+  const discounts = money2(sales.reduce((a, s) => a + s.discount, 0));
+  const returnsTotal = money2(returns.reduce((a, r) => a + r.total, 0));
+  const byPayment = {};
+  for (const s of sales) {
+    if (!byPayment[s.payment_method]) byPayment[s.payment_method] = { n: 0, total: 0 };
+    byPayment[s.payment_method].n += 1;
+    byPayment[s.payment_method].total = money2(byPayment[s.payment_method].total + s.total);
+  }
+  const topProducts = db.prepare(`
+    SELECT COALESCE(p.name, i.product_name) AS name, COALESCE(SUM(i.qty), 0) AS qty, COALESCE(SUM(i.total), 0) AS total
+    FROM pos_sale_items i
+    JOIN pos_sales s ON s.id = i.sale_id
+    LEFT JOIN stock_products p ON p.id = i.product_id
+    WHERE date(s.created_at) = ?
+    GROUP BY i.product_id ORDER BY qty DESC LIMIT 5
+  `).all(date);
+  const voidNumbers = new Set(
+    db.prepare("SELECT reason FROM stock_movements WHERE date(created_at) = ? AND reason LIKE 'Annulation %'")
+      .all(date)
+      .map((r) => r.reason.replace(/^Annulation\s+/, ''))
+      .filter(Boolean)
+  );
+  res.json({
+    date,
+    n: sales.length,
+    gross,
+    subGross,
+    discounts,
+    returnsTotal,
+    net: money2(gross - returnsTotal),
+    voidCount: voidNumbers.size,
+    avg: sales.length ? money2(gross / sales.length) : 0,
+    byPayment,
+    topProducts
+  });
+});
+
+// Facture client (PDF A4)
+app.get('/api/admin/pos/sales/:id/invoice', ...POS, async (req, res) => {
+  const s = fetchSale(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Vente introuvable' });
+  try {
+    const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.28, 841.89]);
+    const W = 595.28;
+    const [font, fontBold] = await Promise.all([
+      doc.embedFont(StandardFonts.Helvetica),
+      doc.embedFont(StandardFonts.HelveticaBold)
+    ]);
+    const brand = rgb(0.059, 0.227, 0.533);
+    const ink = rgb(0.1, 0.12, 0.18);
+    const gray = rgb(0.45, 0.5, 0.58);
+    const siteName = getSetting('site_name') || 'ADI ONG';
+    const tagline = getSetting('site_tagline') || '';
+    const fmtM = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+    const dt = new Date(String(s.created_at).replace(' ', 'T') + 'Z');
+    const dateStr = isNaN(dt) ? s.created_at : dt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+    page.drawRectangle({ x: 0, y: 841.89 - 88, width: W, height: 88, color: brand });
+    page.drawText(siteName.toUpperCase(), { x: 40, y: 782, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+    if (tagline) page.drawText(tagline, { x: 40, y: 764, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+
+    page.drawText('FACTURE', { x: 40, y: 716, size: 24, font: fontBold, color: ink });
+    const numStr = `N° ${s.number}`;
+    page.drawText(numStr, { x: W - 40 - fontBold.widthOfTextAtSize(numStr, 14), y: 720, size: 14, font: fontBold, color: brand });
+
+    const box = (x, y, w, h) => page.drawRectangle({ x, y, width: w, height: h, borderColor: rgb(0.82, 0.85, 0.9), borderWidth: 1 });
+    box(40, 596, 240, 86);
+    box(315, 596, 240, 86);
+    page.drawText('ORGANISATION', { x: 50, y: 666, size: 8, font: fontBold, color: gray });
+    page.drawText(siteName, { x: 50, y: 650, size: 10, font: fontBold, color: ink });
+    let ly = 634;
+    for (const line of [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean)) {
+      page.drawText(String(line).slice(0, 60), { x: 50, y: ly, size: 9, font, color: ink });
+      ly -= 14;
+    }
+    page.drawText('FACTURÉ À', { x: 325, y: 666, size: 8, font: fontBold, color: gray });
+    page.drawText(s.customer_name || 'Client de comptoir', { x: 325, y: 650, size: 10, font: fontBold, color: ink });
+    page.drawText(`Facturé le ${dateStr}`, { x: 325, y: 632, size: 9, font, color: gray });
+    if (s.cashier_name) page.drawText(`Caissier : ${s.cashier_name}`, { x: 325, y: 618, size: 9, font, color: gray });
+
+    let y = 556;
+    page.drawText('ARTICLE', { x: 40, y, size: 8, font: fontBold, color: gray });
+    page.drawText('PRIX U', { x: 380, y, size: 8, font: fontBold, color: gray });
+    page.drawText('QTÉ', { x: 460, y, size: 8, font: fontBold, color: gray });
+    page.drawText('TOTAL', { x: 500, y, size: 8, font: fontBold, color: gray });
+    y -= 6;
+    page.drawLine({ start: { x: 40, y }, end: { x: 555, y }, thickness: 0.7, color: rgb(0.75, 0.78, 0.84) });
+    y -= 16;
+    const wrap = (text, size, maxWidth) => {
+      const words = String(text).split(/\s+/);
+      const lines = [];
+      let line = '';
+      for (const w of words) {
+        const test = line ? `${line} ${w}` : w;
+        if (font.widthOfTextAtSize(test, size) > maxWidth && line) { lines.push(line); line = w; }
+        else line = test;
+      }
+      if (line) lines.push(line);
+      return lines;
+    };
+    for (const it of s.items) {
+      const lineTop = y;
+      for (const line of wrap(it.product_name, 10, 320)) {
+        page.drawText(line, { x: 40, y, size: 10, font, color: ink });
+        y -= 13;
+      }
+      if (it.returned_qty > 0) {
+        page.drawText(`dont ${it.returned_qty} retourné(s)`, { x: 40, y, size: 8, font, color: gray });
+        y -= 12;
+      }
+      const pU = fmtM(it.price);
+      page.drawText(pU, { x: 380 + 60 - font.widthOfTextAtSize(pU, 10), y: lineTop, size: 10, font, color: ink });
+      const q = String(it.qty);
+      page.drawText(q, { x: 460 + 20 - font.widthOfTextAtSize(q, 10), y: lineTop, size: 10, font, color: ink });
+      const t = fmtM(it.total);
+      page.drawText(t, { x: 555 - font.widthOfTextAtSize(t, 10), y: lineTop, size: 10, font: fontBold, color: ink });
+      y -= 8;
+      page.drawLine({ start: { x: 40, y }, end: { x: 555, y }, thickness: 0.4, color: rgb(0.88, 0.9, 0.93) });
+      y -= 16;
+    }
+
+    const row = (label, val, bold = false) => {
+      page.drawText(label, { x: 365, y, size: bold ? 10 : 9.5, font: bold ? fontBold : font, color: bold ? ink : gray });
+      page.drawText(val, { x: 555 - font.widthOfTextAtSize(val, bold ? 10 : 9.5), y, size: bold ? 10 : 9.5, font: bold ? fontBold : font, color: ink });
+      y -= 16;
+    };
+    row('Sous-total', fmtM(s.subtotal));
+    if (s.discount > 0) row('Réduction', `-${fmtM(s.discount)}`);
+    y -= 2;
+    page.drawRectangle({ x: 350, y: y - 6, width: 205, height: 30, color: brand });
+    page.drawText('TOTAL À PAYER', { x: 362, y: y + 4, size: 9, font: fontBold, color: rgb(1, 1, 1) });
+    page.drawText(`${fmtM(s.total)} USD`, { x: 555 - fontBold.widthOfTextAtSize(`${fmtM(s.total)} USD`, 11), y: y + 3, size: 11, font: fontBold, color: rgb(1, 1, 1) });
+    y -= 34;
+    const PM = { especes: 'Espèces', mobile: 'Mobile Money', carte: 'Carte bancaire', virement: 'Virement', autre: 'Autre' };
+    page.drawText(`Mode de paiement : ${PM[s.payment_method] || s.payment_method}`, { x: 40, y, size: 9.5, font, color: gray });
+    if (s.status !== 'vendue') {
+      page.drawText(s.status === 'retournee' ? 'Attention : vente intégralement retournée.' : 'Attention : retour partiel effectué sur cette facture.', { x: 40, y: y - 14, size: 9, font: fontBold, color: rgb(0.78, 0.2, 0.2) });
+    }
+
+    page.drawText('Merci de votre confiance !', { x: (W - fontBold.widthOfTextAtSize('Merci de votre confiance !', 10)) / 2, y: 60, size: 10, font: fontBold, color: ink });
+    const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  ·  ');
+    if (footer) page.drawText(footer.slice(0, 100), { x: (W - font.widthOfTextAtSize(footer.slice(0, 100), 7.5)) / 2, y: 45, size: 7.5, font, color: gray });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="facture-${s.number || s.id}.pdf"`);
+    res.send(Buffer.from(await doc.save()));
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer la facture' });
+  }
+});
+
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, { maxAge: '1d' }));

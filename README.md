@@ -145,6 +145,11 @@ merchandising, produits des ateliers…) et gérer le stock :
   Virement, Autre**), montant reçu et **monnaie rendue**, puis encaissement.
 - **Ticket** : à chaque vente, ticket imprimable (imprimante standard) ou **PDF A5** à l'en-tête de
   l'organisation, avec numéro séquentiel (POS-00001…), lignes, totaux et mode de paiement.
+- **Facture client** : en un clic depuis une vente (ou son détail), **facture PDF A4** avec blocs
+  organisation/client, tableau des articles, totaux, mode de paiement et mention des retours.
+- **Rapport de caisse** : pour n'importe quel jour, rapport imprimable — nombre de ventes, montant
+  encaissé, total avant réduction, réductions accordées, retours, ventes annulées, panier moyen,
+  répartition par mode de paiement et meilleures ventes du jour.
 - **Ventes** : historique filtrable (période, paiement, recherche), détail par vente, **retours
   partiels ou totaux** (le stock retourné est réapprovisionné automatiquement, motif tracé) et
   **annulation** d'une vente (suppression + réapprovisionnement du stock non retourné).

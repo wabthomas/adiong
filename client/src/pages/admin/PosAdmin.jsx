@@ -64,12 +64,90 @@ const PRINT_RECEIPT_CSS = `
 @page { size: A4; margin: 10mm; }
 @media print {
   body * { visibility: hidden; }
-  .print-receipt, .print-receipt * { visibility: visible; }
-  .print-receipt { position: fixed; top: 0; left: 50%; transform: translateX(-50%); box-shadow: none !important; margin: 0 !important; }
+  .print-receipt, .print-receipt *, .print-report, .print-report * { visibility: visible; }
+  .print-receipt, .print-report { position: fixed; top: 0; left: 50%; transform: translateX(-50%); box-shadow: none !important; margin: 0 !important; }
   .no-print { display: none !important; }
 }
-.print-receipt { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+.print-receipt, .print-report { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 `;
+
+const fmtDateLong = (d) => {
+  if (!d) return '';
+  const dt = new Date(String(d).slice(0, 10) + 'T00:00:00Z');
+  if (isNaN(dt)) return String(d);
+  return dt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+};
+
+function ReportSheet({ rep, site }) {
+  const kpis = [
+    { label: 'Ventes', value: rep.n },
+    { label: 'Encaissé', value: fmtMoney(rep.gross) },
+    { label: 'Net du jour', value: fmtMoney(rep.net) }
+  ];
+  return (
+    <div className="print-report mx-auto w-full max-w-[660px] rounded-xl bg-white p-8 text-[13px] text-ink-900 ring-1 ring-ink-950/10">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="font-display text-2xl font-extrabold text-brand-700">RAPPORT DE CAISSE</p>
+          <p className="mt-1 capitalize text-ink-500">{fmtDateLong(rep.date)}</p>
+        </div>
+        <div className="text-right text-xs text-ink-500">
+          <p className="font-display text-sm font-extrabold text-ink-900">{site.site_name || 'ADI ONG'}</p>
+          {site.address && <p className="mt-0.5">{site.address}</p>}
+          {site.phone1 && <p>{site.phone1}</p>}
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-3 gap-3">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-xl bg-cream p-4 text-center">
+            <p className="font-display text-xl font-extrabold text-brand-700">{k.value}</p>
+            <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">{k.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6">
+        <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Paiements du jour</p>
+        <div className="divide-y divide-ink-50 rounded-xl ring-1 ring-ink-100">
+          {Object.entries(PAY_METHODS).filter(([m]) => rep.byPayment[m]).map(([m, v]) => (
+            <div key={m} className="flex items-center justify-between px-4 py-2.5">
+              <span className="text-ink-700">{m === 'especes' ? '💵 ' : m === 'mobile' ? '📱 ' : m === 'carte' ? '💳 ' : m === 'virement' ? '🏦 ' : '🧾 '}{PAY_METHODS[m]}</span>
+              <span className="text-ink-500">{v.n} vente(s) — <strong className="text-ink-800">{fmtMoney(v.total)}</strong></span>
+            </div>
+          ))}
+          {rep.n === 0 && <p className="px-4 py-3 text-ink-400">Aucune vente enregistrée ce jour-là.</p>}
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+        <p className="flex justify-between"><span className="text-ink-500">Total avant réduction</span><strong>{fmtMoney(rep.subGross)}</strong></p>
+        <p className="flex justify-between"><span className="text-ink-500">Réductions accordées</span><strong>- {fmtMoney(rep.discounts)}</strong></p>
+        <p className="flex justify-between"><span className="text-ink-500">Retours enregistrés</span><strong className="text-red-600">- {fmtMoney(rep.returnsTotal)}</strong></p>
+        <p className="flex justify-between"><span className="text-ink-500">Ventes annulées</span><strong>{rep.voidCount}</strong></p>
+        <p className="flex justify-between"><span className="text-ink-500">Panier moyen</span><strong>{fmtMoney(rep.avg)}</strong></p>
+      </div>
+
+      {rep.topProducts.length > 0 && (
+        <div className="mt-6">
+          <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Meilleures ventes du jour</p>
+          <ul className="divide-y divide-ink-50 rounded-xl ring-1 ring-ink-100">
+            {rep.topProducts.map((p, i) => (
+              <li key={i} className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-ink-700">{i + 1}. {p.name}</span>
+                <span className="text-ink-500">{p.qty} unité(s) — <strong className="text-ink-800">{fmtMoney(p.total)}</strong></span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="mt-6 text-center text-[11px] text-ink-400">
+        Rapport généré le {new Date().toLocaleDateString('fr-FR')} à {new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} — ADI ONG
+      </p>
+    </div>
+  );
+}
 
 function ReceiptSheet({ sale, site }) {
   return (
@@ -441,10 +519,13 @@ function ReturnModal({ sale, onDone, onClose }) {
 }
 
 function SalesTab() {
+  const { site } = useSite();
   const [rows, setRows] = useState([]);
   const [filters, setFilters] = useState({ from: '', to: '', payment: '', q: '' });
   const [detail, setDetail] = useState(null);
   const [retSale, setRetSale] = useState(null);
+  const [report, setReport] = useState(null);
+  const [reportDate, setReportDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
@@ -478,6 +559,20 @@ function SalesTab() {
       alert(e.message);
     }
   };
+  const downloadInvoice = async (s) => {
+    try {
+      await api.pos.sales.downloadInvoice(s.id, `facture-${s.number || s.id}.pdf`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const openReport = async () => {
+    try {
+      setReport(await api.pos.report.daily(reportDate));
+    } catch (e) {
+      alert(e.message);
+    }
+  };
   const totalShown = rows.reduce((a, r) => a + (Number(r.total) || 0), 0);
 
   return (
@@ -506,6 +601,14 @@ function SalesTab() {
         >
           Réinitialiser
         </button>
+        <div className="ml-auto flex items-end gap-2">
+          <Field label="Rapport de caisse">
+            <input className="input !w-40 !py-2.5 text-sm" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
+          </Field>
+          <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
+            🖨 Générer
+          </button>
+        </div>
       </div>
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
@@ -547,6 +650,9 @@ function SalesTab() {
                       </button>
                       <button onClick={() => downloadPdf(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
                         ⬇ Ticket
+                      </button>
+                      <button onClick={() => downloadInvoice(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                        🧾 Facture
                       </button>
                       {r.status !== 'retournee' && (
                         <button onClick={() => setRetSale(r)} className="rounded-lg bg-accent-50 px-2.5 py-1.5 text-xs font-bold text-accent-800 hover:bg-accent-100">
@@ -618,6 +724,7 @@ function SalesTab() {
               </div>
               <div className="no-print flex gap-2">
                 <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadPdf(detail)}>⬇ Ticket PDF</button>
+                <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadInvoice(detail)}>🧾 Facture PDF</button>
                 {detail.status !== 'retournee' && (
                   <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => { setRetSale(detail); setDetail(null); }}>
                     ↩ Retourner
@@ -658,6 +765,22 @@ function SalesTab() {
             }}
             onClose={() => setRetSale(null)}
           />
+        )}
+      </Modal>
+
+      <Modal open={!!report} onClose={() => setReport(null)} title={report ? `Rapport de caisse — ${report.date}` : ''} wide>
+        {report && (
+          <div className="space-y-4">
+            <ReportSheet rep={report} site={site} />
+            <div className="no-print flex flex-wrap justify-end gap-2 border-t border-ink-100 pt-4">
+              <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
+                ↻ Actualiser
+              </button>
+              <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => window.print()}>
+                🖨 Imprimer
+              </button>
+            </div>
+          </div>
         )}
       </Modal>
     </div>
