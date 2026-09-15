@@ -91,8 +91,8 @@ export function ImageInput({ value, onChange, label = 'Image' }) {
                   if (!file) return;
                   setUploading(true);
                   try {
-                    const { url } = await api.upload(file);
-                    onChange(url);
+                    const media = await api.media.upload(file);
+                    onChange(media.url);
                   } catch (err) {
                     alert(err.message);
                   } finally {
@@ -108,7 +108,7 @@ export function ImageInput({ value, onChange, label = 'Image' }) {
           </div>
         </div>
       </div>
-      <MediaLibrary open={libOpen} onClose={() => setLibOpen(false)} onPick={(url) => { onChange(url); setLibOpen(false); }} />
+      <MediaLibrary open={libOpen} onClose={() => setLibOpen(false)} accept="image" onPick={(url) => { onChange(url); setLibOpen(false); }} />
     </div>
   );
 }

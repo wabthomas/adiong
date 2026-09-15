@@ -31,6 +31,7 @@ const Sep = () => <span className="mx-1 h-6 w-px bg-ink-100" />;
 
 export default function RichTextEditor({ value, onChange, placeholder = 'Rédigez votre article…' }) {
   const [libOpen, setLibOpen] = useState(false);
+  const [libMode, setLibMode] = useState('image');
   const [preview, setPreview] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
 
@@ -39,7 +40,11 @@ export default function RichTextEditor({ value, onChange, placeholder = 'Rédige
       StarterKit.configure({ heading: { levels: [2, 3, 4] } }),
       Underline,
       Highlight,
-      Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener' } }),
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+        HTMLAttributes: { rel: 'noopener noreferrer' }
+      }),
       Image.configure({ allowBase64: false }),
       Placeholder.configure({ placeholder }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
@@ -64,6 +69,32 @@ export default function RichTextEditor({ value, onChange, placeholder = 'Rédige
       editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
     }
     setLinkUrl('');
+  };
+
+  const insertPdf = (url, filename = '') => {
+    const selected = editor.state.doc.textBetween(
+      editor.state.selection.from,
+      editor.state.selection.to,
+      ' '
+    ).trim();
+    const base = String(filename || 'Document').replace(/\.pdf$/i, '');
+    if (selected) {
+      editor.chain().focus().extendMarkRange('link').setLink({
+        href: url,
+        target: '_blank',
+        class: 'doc-pdf'
+      }).run();
+      return;
+    }
+    const label = `📄 ${base} (PDF)`;
+    const safeUrl = String(url).replace(/"/g, '&quot;');
+    const safeLabel = String(label)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    editor.chain().focus().insertContent(
+      `<p><a href="${safeUrl}" class="doc-pdf" target="_blank" rel="noopener noreferrer">${safeLabel}</a></p>`
+    ).run();
   };
 
   return (
@@ -125,10 +156,19 @@ export default function RichTextEditor({ value, onChange, placeholder = 'Rédige
           type="button"
           title="Insérer une image depuis la bibliothèque"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setLibOpen(true)}
+          onClick={() => { setLibMode('image'); setLibOpen(true); }}
           className="rounded-lg px-2.5 py-2 text-sm font-bold text-ink-600 hover:bg-brand-50 hover:text-brand-700"
         >
           🖼 Image
+        </button>
+        <button
+          type="button"
+          title="Importer un PDF et insérer son lien"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setLibMode('pdf'); setLibOpen(true); }}
+          className="rounded-lg px-2.5 py-2 text-sm font-bold text-ink-600 hover:bg-brand-50 hover:text-brand-700"
+        >
+          📄 PDF
         </button>
         <button
           type="button"
@@ -195,12 +235,16 @@ export default function RichTextEditor({ value, onChange, placeholder = 'Rédige
       <MediaLibrary
         open={libOpen}
         onClose={() => setLibOpen(false)}
-        onPick={(url, alt) => {
-          editor
-            .chain()
-            .focus()
-            .setImage({ src: url, alt: alt || undefined, class: 'rounded-2xl shadow-soft' })
-            .run();
+        accept={libMode}
+        onPick={(url, extra) => {
+          if (libMode === 'pdf') insertPdf(url, extra);
+          else {
+            editor
+              .chain()
+              .focus()
+              .setImage({ src: url, alt: extra || undefined, class: 'rounded-2xl shadow-soft' })
+              .run();
+          }
           setLibOpen(false);
         }}
       />

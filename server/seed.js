@@ -1,5 +1,11 @@
 import bcrypt from 'bcryptjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import Jimp from 'jimp';
 import db from './db.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const slugify = (s) =>
   s
@@ -13,8 +19,8 @@ const slugify = (s) =>
 export const DEFAULT_SETTINGS = {
   site_name: 'ADI ONG',
   site_tagline: "Soutenir l'inclusion des personnes handicapées dans tous les secteurs de la vie",
-  logo: '',
-  favicon: '',
+  logo: '/uploads/seed/logo.png',
+  favicon: '/uploads/seed/favicon.png',
   grh_enabled: '0',
   address: '38 Av. Baraka, Rue Dr. Maganga, Q. Himbi, Commune de Goma, Nord-Kivu, RDC',
   phone1: '+243 976 483 612',
@@ -379,6 +385,58 @@ Chaque personne compte, chaque contribution, chaque don compte pour créer un mo
     insCampaign.run(c.slug, c.title, c.description, c.image, c.goal_amount, c.collected_amount, c.deadline, c.cause_slug, now);
 
   console.log('✅ Base de données initialisée avec les données de l\'ONG ADI.');
+}
+
+export async function syncMediaLibrary() {
+  const uploadRoot = path.join(__dirname, 'uploads');
+  const dirs = [
+    { dir: path.join(uploadRoot, 'seed'), urlPrefix: '/uploads/seed' },
+    { dir: path.join(uploadRoot, 'media'), urlPrefix: '/uploads/media' },
+    { dir: path.join(uploadRoot, 'docs'), urlPrefix: '/uploads/docs' }
+  ];
+  const exists = db.prepare('SELECT 1 FROM media WHERE url = ?');
+  const taken = db.prepare('SELECT 1 FROM media WHERE filename = ?');
+  const ins = db.prepare(
+    `INSERT INTO media (filename, url, thumb, size, width, height, mime, alt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  for (const { dir, urlPrefix } of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir)) {
+      if (/\.thumb\.jpe?g$/i.test(name)) continue;
+      if (!/\.(jpe?g|png|webp|gif|avif|svg|pdf)$/i.test(name)) continue;
+      const url = `${urlPrefix}/${name}`;
+      if (exists.get(url)) continue;
+      const filePath = path.join(dir, name);
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) continue;
+
+      let width = 0;
+      let height = 0;
+      let mime = 'image/jpeg';
+      if (/\.pdf$/i.test(name)) {
+        mime = 'application/pdf';
+      } else {
+        try {
+          const img = await Jimp.read(filePath);
+          width = img.bitmap.width;
+          height = img.bitmap.height;
+          mime = img.getMIME() || mime;
+        } catch {
+          if (/\.png$/i.test(name)) mime = 'image/png';
+          else if (/\.webp$/i.test(name)) mime = 'image/webp';
+          else if (/\.gif$/i.test(name)) mime = 'image/gif';
+          else if (/\.svg$/i.test(name)) mime = 'image/svg+xml';
+        }
+      }
+
+      const thumbFile = name.replace(/\.[^.]+$/, '.thumb.jpg');
+      const thumb = fs.existsSync(path.join(dir, thumbFile)) ? `${urlPrefix}/${thumbFile}` : url;
+      let filename = name;
+      if (taken.get(filename)) filename = `${path.parse(name).name}-${stat.mtimeMs}${path.extname(name)}`;
+      ins.run(filename, url, thumb, stat.size, width, height, mime, '');
+    }
+  }
 }
 
 export { slugify };

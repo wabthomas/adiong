@@ -68,7 +68,7 @@ export default function AdminLayout() {
       <div className="flex items-center gap-3 px-5 pt-6 pb-7">
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-600 text-white">
           <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <circle cx="12" cy="8" r="3" fill="#f5a524" stroke="none" />
+            <circle cx="12" cy="8" r="3" fill="#fc7a03" stroke="none" />
             <path d="M5 18.5c1.4-4 4-5.5 7-5.5s5.6 1.5 7 5.5" strokeLinecap="round" />
           </svg>
         </span>

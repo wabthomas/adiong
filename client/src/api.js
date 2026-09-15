@@ -19,7 +19,9 @@ export const setSavedUser = (u) => {
 
 async function req(path, { method = 'GET', body, auth = false, form = false } = {}) {
   const headers = {};
-  if (body) headers['Content-Type'] = 'application/json';
+  const isForm = form || (typeof FormData !== 'undefined' && body instanceof FormData);
+  // Let the browser set multipart/form-data + boundary for FormData.
+  if (body && !isForm) headers['Content-Type'] = 'application/json';
   if (auth) {
     const t = getToken();
     if (t) headers['Authorization'] = `Bearer ${t}`;
@@ -27,7 +29,7 @@ async function req(path, { method = 'GET', body, auth = false, form = false } = 
   const res = await fetch(path, {
     method,
     headers,
-    body: body ? (form ? body : JSON.stringify(body)) : undefined
+    body: body ? (isForm ? body : JSON.stringify(body)) : undefined
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
@@ -87,18 +89,18 @@ export const api = {
     update: (b) => req('/api/admin/settings', { method: 'PUT', body: b, auth: true })
   },
   media: {
-    list: (q = '') => req(`/api/admin/media${q ? `?q=${encodeURIComponent(q)}` : ''}`, { auth: true }),
+    list: (q = '', type = '') => {
+      const p = new URLSearchParams();
+      if (q) p.set('q', q);
+      if (type) p.set('type', type);
+      const qs = p.toString();
+      return req(`/api/admin/media${qs ? `?${qs}` : ''}`, { auth: true });
+    },
     upload: async (file, alt = '') => {
       const fd = new FormData();
       fd.append('image', file);
       if (alt) fd.append('alt', alt);
-      const headers = {};
-      const t = getToken();
-      if (t) headers['Authorization'] = `Bearer ${t}`;
-      const res = await fetch('/api/admin/media', { method: 'POST', headers, body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
-      return data;
+      return req('/api/admin/media', { method: 'POST', body: fd, auth: true });
     },
     update: (id, b) => req(`/api/admin/media/${id}`, { method: 'PATCH', body: b, auth: true }),
     remove: (id) => req(`/api/admin/media/${id}`, { method: 'DELETE', auth: true })
@@ -159,7 +161,7 @@ export const api = {
   async upload(file) {
     const fd = new FormData();
     fd.append('image', file);
-    return req('/api/admin/upload', { method: 'POST', body: fd, auth: true, form: true });
+    return req('/api/admin/upload', { method: 'POST', body: fd, auth: true });
   }
 };
 

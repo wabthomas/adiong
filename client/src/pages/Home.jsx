@@ -19,7 +19,7 @@ export default function Home() {
   const reduce = useReducedMotion();
   const heroRef = React.useRef(null);
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
-  const yImg = useTransform(scrollYProgress, [0, 1], [0, reduce ? 0 : 120]);
+  const yImg = useTransform(scrollYProgress, [0, 1], [0, reduce ? 0 : 60]);
   const opacity = useTransform(scrollYProgress, [0, 0.85], [1, 0.25]);
 
   usePageSeo({});
@@ -38,30 +38,33 @@ export default function Home() {
   return (
     <>
       {}
-      <section ref={heroRef} className="relative flex min-h-screen items-center overflow-hidden">
+      <section
+        ref={heroRef}
+        className="relative flex w-full items-center overflow-hidden"
+      >
         <motion.div style={reduce ? undefined : { y: yImg }} className="absolute inset-0">
           <img
             src={heroImage}
             alt="Jeunes personnes en situation de handicap réunies à Goma"
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover object-[center_28%]"
           />
           <div className="absolute inset-0 bg-gradient-to-r from-ink-950/90 via-ink-950/65 to-ink-950/30" />
-          <div className="absolute inset-0 bg-gradient-to-t from-ink-950/80 via-transparent to-ink-950/40" />
+          <div className="absolute inset-0 bg-gradient-to-t from-ink-950/70 via-transparent to-ink-950/40" />
         </motion.div>
 
-        <div className="container-x relative pt-32 pb-24" style={reduce ? undefined : { opacity }}>
-          <div className="max-w-3xl">
+        <div className="container-x relative pt-24 pb-10 sm:pt-28 sm:pb-12" style={reduce ? undefined : { opacity }}>
+          <div className="max-w-2xl">
             <motion.p
               initial={reduce ? false : { opacity: 0, y: 24 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, delay: 0.15 }}
-              className="mb-5 inline-flex items-center gap-2.5 rounded-full bg-white/10 px-5 py-2 text-sm font-bold text-white ring-1 ring-white/25 backdrop-blur"
+              className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-xs font-bold text-white ring-1 ring-white/25 backdrop-blur sm:text-sm"
             >
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent-400" />
               {site.hero_kicker || "Bienvenue dans le monde de l'ONG ADI"}
             </motion.p>
 
-            <h1 className="font-display text-4xl leading-[1.08] font-extrabold text-white sm:text-5xl lg:text-[4rem]">
+            <h1 className="font-display text-[1.65rem] leading-tight font-extrabold text-white sm:text-3xl lg:text-[2.35rem]">
               {heroLines(site.hero_title || site.site_tagline || '').map((line, i) => (
                 <span key={i} className="block overflow-hidden">
                   <motion.span
@@ -87,7 +90,7 @@ export default function Home() {
               initial={reduce ? false : { opacity: 0, y: 24 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, delay: 0.75 }}
-              className="mt-7 max-w-2xl text-lg leading-relaxed text-white/80"
+              className="mt-4 max-w-xl text-sm leading-relaxed text-white/80 sm:text-base"
             >
               {site.hero_text}
             </motion.p>
@@ -96,12 +99,12 @@ export default function Home() {
               initial={reduce ? false : { opacity: 0, y: 24 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, delay: 0.95 }}
-              className="mt-10 flex flex-wrap items-center gap-4"
+              className="mt-6 flex flex-wrap items-center gap-3"
             >
               <Link to="/faire-un-don" className="btn-accent">
                 <IconHeart className="h-5 w-5" /> Faire un don
               </Link>
-              <Link to="/notre-travail" className="btn border border-white/30 bg-white/10 px-7 py-3.5 text-white backdrop-blur transition-all hover:bg-white/20">
+              <Link to="/notre-travail" className="btn border border-white/30 bg-white/10 px-6 py-3 text-white backdrop-blur transition-all hover:bg-white/20">
                 Notre travail <IconArrow className="h-4 w-4" />
               </Link>
               {site.video_url && (
@@ -109,10 +112,10 @@ export default function Home() {
                   href={site.video_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="group inline-flex items-center gap-3 font-semibold text-white/90 hover:text-white"
+                  className="group inline-flex items-center gap-3 text-sm font-semibold text-white/90 hover:text-white"
                 >
-                  <span className="grid h-12 w-12 place-items-center rounded-full bg-white/15 ring-1 ring-white/30 transition-all group-hover:bg-accent-400 group-hover:text-ink-950">
-                    <IconPlay className="ml-0.5 h-5 w-5" />
+                  <span className="grid h-10 w-10 place-items-center rounded-full bg-white/15 ring-1 ring-white/30 transition-all group-hover:bg-accent-400 group-hover:text-ink-950">
+                    <IconPlay className="ml-0.5 h-4 w-4" />
                   </span>
                   Voir la vidéo — What ADI can do
                 </a>
@@ -121,18 +124,17 @@ export default function Home() {
           </div>
         </div>
 
-        {}
         <motion.div
-          initial={reduce ? false : { opacity: 0, y: 40 }}
+          initial={reduce ? false : { opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 1.15 }}
-          className="absolute right-8 bottom-24 hidden lg:block"
+          className="absolute top-[46%] right-10 hidden -translate-y-1/2 lg:block"
         >
-          <div className="animate-floaty rounded-3xl bg-white/10 p-6 shadow-lift ring-1 ring-white/25 backdrop-blur-xl">
-            <p className="font-display text-5xl font-extrabold text-accent-400">
+          <div className="animate-floaty w-[7.25rem] rounded-2xl bg-white/10 px-3 py-3 shadow-lift ring-1 ring-white/25 backdrop-blur-xl">
+            <p className="font-display text-2xl leading-none font-extrabold text-accent-400">
               <Counter value={stats[0].value} suffix={stats[0].suffix} />
             </p>
-            <p className="mt-1 max-w-[170px] text-sm font-semibold text-white/85">
+            <p className="mt-1.5 text-[11px] leading-snug font-semibold text-white/85">
               {stats[0].label}
             </p>
           </div>
