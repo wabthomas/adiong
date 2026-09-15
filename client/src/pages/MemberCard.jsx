@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useSite } from '../hooks/useSite.jsx';
 import { usePageSeo } from '../hooks/useSeo.js';
-import { IconMail, IconPhone } from '../components/Icons.jsx';
+import { IconMail, IconPhone, IconPrinter } from '../components/Icons.jsx';
 
 export default function MemberCard() {
   const { code } = useParams();
@@ -103,6 +103,10 @@ export default function MemberCard() {
             />
             <p className="mt-2 text-[11px] font-semibold tracking-wide text-ink-400 uppercase">Scanner pour vérifier</p>
           </div>
+
+          <Link to={`/membre/${encodeURIComponent(member.unique_code)}/carte`} className="btn-primary mt-6 flex items-center justify-center gap-2">
+            <IconPrinter className="h-4 w-4" /> Carte imprimable
+          </Link>
         </div>
       </div>
     </section>

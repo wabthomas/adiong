@@ -154,6 +154,9 @@ export function MemberQrCard({ user, canRegenerate = false, onRegenerate }) {
         <a className="btn-ghost !px-3 !py-2 text-xs" href={url} target="_blank" rel="noreferrer">
           Voir la fiche
         </a>
+        <a className="btn-ghost !px-3 !py-2 text-xs" href={`${url}/carte`} target="_blank" rel="noreferrer">
+          Carte imprimable
+        </a>
         {canRegenerate && onRegenerate && (
           <button
             type="button"

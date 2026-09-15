@@ -15,6 +15,7 @@ import CampaignDetail from './pages/CampaignDetail.jsx';
 import Donate from './pages/Donate.jsx';
 import Contact from './pages/Contact.jsx';
 import MemberCard from './pages/MemberCard.jsx';
+import MemberPrintCard from './pages/MemberPrintCard.jsx';
 import NotFound from './pages/NotFound.jsx';
 const AdminLogin = lazy(() => import('./pages/admin/AdminLogin.jsx'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
@@ -70,6 +71,7 @@ function Shell() {
             <Route path="/faire-un-don" element={<Donate />} />
             <Route path="/contact" element={<Contact />} />
             <Route path="/membre/:code" element={<MemberCard />} />
+            <Route path="/membre/:code/carte" element={<MemberPrintCard />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AnimatePresence>
