@@ -35,9 +35,40 @@ ensureSettings();
 seedIfEmpty();
 
 const app = express();
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors());
+app.use(helmet(process.env.NODE_ENV === 'production' ? {
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      'default-src': ["'self'"],
+      'script-src': ["'self'"],
+      'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      'img-src': ["'self'", 'data:', 'blob:'],
+      'connect-src': ["'self'"],
+      'object-src': ["'none'"],
+      'frame-ancestors': ["'self'"],
+      'base-uri': ["'self'"],
+      'form-action': ["'self'"]
+    }
+  },
+  crossOriginResourcePolicy: { policy: 'same-site' }
+} : { contentSecurityPolicy: false }));
+app.use(cors({
+  origin: (origin, cb) => cb(null, !origin),
+  credentials: false
+}));
 app.use(express.json({ limit: '2mb' }));
+
+// Chemins typiques des scanners WordPress (l'ancien site en était victime) → 404 uniforme
+const SUSPICIOUS_PATHS = [
+  /^\/wp-/, /^\/xmlrpc\.php/, /^\/wp-admin/, /^\/wp-login/, /^\/wp-content/, /^\/wp-includes/,
+  /^\/\.env/, /^\/\.git/, /^\/\.htaccess/, /^\/\.htpasswd/, /^\/cgi-bin/, /^\/phpmyadmin/,
+  /^\/administrator/, /^\/install/, /^\/setup\.php/, /^\/config\.php/, /^\/license\.txt/
+];
+app.use((req, res, next) => {
+  if (SUSPICIOUS_PATHS.some((r) => r.test(req.path))) return res.status(404).send('Not Found');
+  next();
+});
 
 // Limitation de débit (fenêtre glissante simple, en mémoire)
 const buckets = new Map();
@@ -62,9 +93,13 @@ setInterval(() => {
   for (const [k, b] of buckets) if (now > b.reset) buckets.delete(k);
 }, 60_000).unref();
 
-const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, key: (req) => `${req.ip}:${String(req.body?.email || '').toLowerCase()}`, message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' });
-const contactLimiter = rateLimit({ windowMs: 60 * 60_000, max: 5, message: 'Trop de messages envoyés depuis votre connexion. Réessayez dans une heure.' });
-const donateLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, message: 'Trop de dons enregistrés depuis votre connexion. Réessayez dans une heure.' });
+const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, key: (req) => `login:${req.ip}:${String(req.body?.email || '').toLowerCase()}`, message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' });
+const contactLimiter = rateLimit({ windowMs: 60 * 60_000, max: 5, key: (req) => `contact:${req.ip}`, message: 'Trop de messages envoyés depuis votre connexion. Réessayez dans une heure.' });
+const donateLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `donate:${req.ip}`, message: 'Trop de dons enregistrés depuis votre connexion. Réessayez dans une heure.' });
+const registerLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `register:${req.ip}`, message: 'Trop de tentatives d’inscription. Réessayez plus tard.' });
+
+// Limiteur global de l'API (filet de sécurité anti scan/brute-force)
+app.use('/api', rateLimit({ windowMs: 15 * 60_000, max: 600, key: (req) => `api:${req.ip}`, message: 'Trop de requêtes depuis votre connexion. Réessayez plus tard.' }));
 
 // Envoi d'emails (SMTP). Sans configuration, le message est seulement journalisé
 // pour ne jamais faire échouer la requête.
@@ -136,10 +171,25 @@ export const publicSite = () => {
   return out;
 };
 
+const tokenHash = (t) => crypto.createHash('sha256').update(String(t)).digest('hex');
+const revokedTokens = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [h, exp] of revokedTokens) if (exp < now) revokedTokens.delete(h);
+}, 15 * 60_000).unref();
+
+const logSecurity = (type, ip, email = '', detail = '') => {
+  try {
+    db.prepare('INSERT INTO security_events (type, ip, email, detail) VALUES (?, ?, ?, ?)')
+      .run(type, String(ip || ''), String(email || ''), String(detail || '').slice(0, 200));
+  } catch { /* non bloquant */ }
+};
+
 const authRequired = (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Non authentifié' });
+  if (revokedTokens.has(tokenHash(token))) return res.status(401).json({ error: 'Session révoquée, reconnectez-vous' });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
     const fresh = db.prepare('SELECT role FROM users WHERE id = ?').get(req.user.id);
@@ -201,11 +251,25 @@ app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));
 app.post('/api/auth/login', loginLimiter, (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
-  if (!user || !bcrypt.compareSync(password, user.password_hash))
+  const em = String(email).toLowerCase().trim();
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(em);
+  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    logSecurity('login_fail', req.ip, em);
     return res.status(401).json({ error: 'Identifiants incorrects' });
+  }
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
+  logSecurity('login_ok', req.ip, user.email);
   res.json({ token, user: { email: user.email, full_name: user.full_name, role: user.role } });
+});
+
+app.post('/api/auth/logout', authRequired, (req, res) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (token) {
+    revokedTokens.set(tokenHash(token), (req.user?.exp || 0) * 1000);
+    logSecurity('logout', req.ip, req.user?.email || '');
+  }
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/password', authRequired, (req, res) => {
@@ -300,7 +364,14 @@ app.get('/robots.txt', (req, res) => {
   const base = siteBaseUrl(req);
   res.set('Content-Type', 'text/plain; charset=utf-8');
   res.set('Cache-Control', 'public, max-age=3600');
-  res.send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api\n\nSitemap: ${base}/sitemap.xml\n`);
+  res.send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api\nDisallow: /inscription\n\nSitemap: ${base}/sitemap.xml\n`);
+});
+
+app.get('/security.txt', (req, res) => {
+  const base = siteBaseUrl(req);
+  res.set('Content-Type', 'text/plain; charset=utf-8');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.send(`Contact: ${getSetting('email') || 'contact@adiong.org'}\nExpires: 2027-03-31T00:00:00.000Z\nPreferred-Languages: fr\nPolicy: Report via email; include the URL and a description of the issue. We aim to respond within 72h.\n`);
 });
 
 app.get('/rss.xml', (req, res) => {
@@ -342,10 +413,23 @@ ${items}
   res.send(body);
 });
 
+const clip = (v, max) => String(v ?? '').slice(0, max);
+const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(v || ''));
+// Anti-spam : honeypot (champ invisible, rempli par les bots) + piège temporel
+// (un formulaire rempli en moins de 3 s est considéré comme un bot).
+// Réponse "ok" silencieuse pour ne pas révéler le piège.
+const isSpam = (b) => !!(b.website) || (b.opened_at && Date.now() - Number(b.opened_at) < 3000);
+
 app.post('/api/contact', contactLimiter, (req, res) => {
-  const { name, email, subject, message } = req.body || {};
+  const b = req.body || {};
+  if (isSpam(b)) return res.json({ ok: true });
+  const name = clip(b.name, 100).trim();
+  const email = clip(b.email, 120).trim();
+  const subject = clip(b.subject, 200).trim();
+  const message = clip(b.message, 2000).trim();
   if (!name || !email || !message) return res.status(400).json({ error: 'Nom, email et message sont requis' });
-  db.prepare('INSERT INTO messages (name, email, subject, message) VALUES (?, ?, ?, ?)').run(name, email, subject || '', message);
+  if (!isEmail(email)) return res.status(400).json({ error: 'Adresse email invalide' });
+  db.prepare('INSERT INTO messages (name, email, subject, message) VALUES (?, ?, ?, ?)').run(name, email, subject, message);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   notifyEmail(
     `Nouveau message de ${name}${subject ? ` — ${subject}` : ''}`,
@@ -357,8 +441,15 @@ app.post('/api/contact', contactLimiter, (req, res) => {
 });
 
 app.post('/api/donate', donateLimiter, (req, res) => {
-  const { name, email, amount, message, campaignId } = req.body || {};
-  if (!name || !amount || Number(amount) <= 0) return res.status(400).json({ error: 'Nom et montant sont requis' });
+  const b = req.body || {};
+  if (isSpam(b)) return res.json({ ok: true });
+  const name = clip(b.name, 100).trim();
+  const email = clip(b.email, 120).trim();
+  const amount = Number(b.amount);
+  const message = clip(b.message, 500).trim();
+  const campaignId = b.campaignId ? Number(b.campaignId) : null;
+  if (!name || !amount || amount <= 0 || amount > 1000000) return res.status(400).json({ error: 'Nom et montant sont requis' });
+  if (email && !isEmail(email)) return res.status(400).json({ error: 'Adresse email invalide' });
   db.prepare('INSERT INTO donations (campaign_id, donor_name, donor_email, amount, message) VALUES (?, ?, ?, ?, ?)')
     .run(campaignId || null, name, email || '', Number(amount), message || '');
   let campaignTitle = '';
@@ -647,6 +738,10 @@ function guardLastAdmin(id, role) {
   return null;
 }
 
+app.get('/api/admin/security', authRequired, requireRole('admin'), (req, res) => {
+  res.json(db.prepare('SELECT * FROM security_events ORDER BY id DESC LIMIT 100').all());
+});
+
 app.get('/api/admin/users', authRequired, requireRole('admin'), (req, res) => {
   const users = db.prepare('SELECT id, email, full_name, role, created_at FROM users ORDER BY created_at').all();
   res.json(users.map((u) => ({ ...u, role_label: ROLE_LABELS[u.role] || u.role })));
@@ -889,7 +984,6 @@ app.delete('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
 
 // ---------- Inscription sur invitation (lien à usage unique) ----------
 const INVITE_ROLES = ['editor', 'viewer', 'admin'];
-const registerLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, message: 'Trop de tentatives d’inscription. Réessayez plus tard.' });
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const inviteState = (inv) => {
@@ -978,7 +1072,9 @@ if (fs.existsSync(clientDist)) {
 
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
-  res.status(err.status || 500).json({ error: err.message || 'Erreur serveur' });
+  const status = err.status || 500;
+  if (status >= 500) console.error('[erreur]', err);
+  res.status(status).json({ error: status >= 500 ? 'Erreur serveur' : err.message || 'Erreur' });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API ADI ONG sur http://0.0.0.0:${PORT}`));

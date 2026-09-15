@@ -46,6 +46,7 @@ export const api = {
   contact: (body) => req('/api/contact', { method: 'POST', body }),
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
+  logout: () => req('/api/auth/logout', { method: 'POST', body: {}, auth: true }),
   password: (body) => req('/api/auth/password', { method: 'POST', body, auth: true }),
   dashboard: () => req('/api/admin/dashboard', { auth: true }),
   adminArticles: {
@@ -112,6 +113,9 @@ export const api = {
   modules: {
     get: () => req('/api/admin/modules', { auth: true }),
     update: (b) => req('/api/admin/modules', { method: 'PUT', body: b, auth: true })
+  },
+  adminSecurity: {
+    events: () => req('/api/admin/security', { auth: true })
   },
   invites: {
     list: () => req('/api/admin/invites', { auth: true }),

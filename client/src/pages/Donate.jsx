@@ -19,8 +19,10 @@ export default function Donate() {
   const [custom, setCustom] = useState('');
   const [campaignId, setCampaignId] = useState(params.get('campaignId') || '');
   const [message, setMessage] = useState('');
+  const [website, setWebsite] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const openedAtRef = React.useRef(Date.now());
 
   usePageSeo({
     title: site.donate_header?.title,
@@ -51,9 +53,13 @@ export default function Donate() {
         email,
         amount: effective,
         message,
-        campaignId: campaignId || null
+        campaignId: campaignId || null,
+        website,
+        opened_at: openedAtRef.current
       });
       setStatus('done');
+      setWebsite('');
+      openedAtRef.current = Date.now();
     } catch (err) {
       setStatus('error');
       setError(err.message);
@@ -180,6 +186,12 @@ export default function Donate() {
                   <div className="mt-5">
                     <label className="label">Message (optionnel)</label>
                     <textarea className="input min-h-[90px]" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Un mot pour l'équipe ADI…" />
+                  </div>
+
+                  <div className="absolute -left-[9999px] top-0 h-px w-px overflow-hidden" aria-hidden="true">
+                    <label>Ne pas remplir ce champ
+                      <input type="text" tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} />
+                    </label>
                   </div>
 
                   {status === 'error' && (

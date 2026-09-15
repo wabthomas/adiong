@@ -9,9 +9,10 @@ import { IconCheck, IconMail, IconPhone, IconPin, IconWhatsapp } from '../compon
 
 export default function Contact() {
   const { site } = useSite();
-  const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
+  const [form, setForm] = useState({ name: '', email: '', subject: '', message: '', website: '' });
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const openedAtRef = React.useRef(Date.now());
 
   usePageSeo({
     title: site.contact_header?.title,
@@ -26,9 +27,10 @@ export default function Contact() {
     setStatus('loading');
     setError('');
     try {
-      await api.contact(form);
+      await api.contact({ ...form, opened_at: openedAtRef.current });
       setStatus('done');
-      setForm({ name: '', email: '', subject: '', message: '' });
+      setForm({ name: '', email: '', subject: '', message: '', website: '' });
+      openedAtRef.current = Date.now();
     } catch (err) {
       setStatus('error');
       setError(err.message);
@@ -80,6 +82,11 @@ export default function Contact() {
                     <div className="mt-5">
                       <label className="label">Message *</label>
                       <textarea className="input min-h-[140px]" required value={form.message} onChange={set('message')} placeholder="Votre message…" />
+                    </div>
+                    <div className="absolute -left-[9999px] top-0 h-px w-px overflow-hidden" aria-hidden="true">
+                      <label>Ne pas remplir ce champ
+                        <input type="text" tabIndex={-1} autoComplete="off" value={form.website} onChange={set('website')} />
+                      </label>
                     </div>
                     {status === 'error' && (
                       <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>

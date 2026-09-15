@@ -54,6 +54,7 @@ export default function AdminLayout() {
   if (!authed) return null;
 
   const logout = () => {
+    api.logout().catch(() => {});
     setToken(null);
     nav('/admin/login', { replace: true });
   };

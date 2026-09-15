@@ -41,10 +41,12 @@ export default function UsersAdmin() {
   const [inviteError, setInviteError] = useState('');
   const [created, setCreated] = useState(null);
   const [copied, setCopied] = useState('');
+  const [securityEvents, setSecurityEvents] = useState([]);
 
   const load = useCallback(() => api.adminUsers.list().then(setUsers).catch(() => {}), []);
   const loadInvites = useCallback(() => api.invites.list().then(setInvites).catch(() => {}), []);
-  useEffect(() => { load(); loadInvites(); }, [load, loadInvites]);
+  const loadSecurity = useCallback(() => api.adminSecurity.events().then(setSecurityEvents).catch(() => {}), []);
+  useEffect(() => { load(); loadInvites(); loadSecurity(); }, [load, loadInvites, loadSecurity]);
 
   const inviteUrl = (inv) => `${window.location.origin}/inscription?token=${inv.token}`;
 
@@ -292,6 +294,46 @@ export default function UsersAdmin() {
           </table>
           {invites.length === 0 && (
             <p className="py-10 text-center text-ink-400">Aucun lien d'invitation — générez-en un pour inviter un employé.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="card mt-6 overflow-hidden">
+        <div className="border-b border-ink-100 bg-cream/70 px-6 py-4">
+          <h3 className="font-display text-lg font-bold text-ink-900">Sécurité — derniers événements</h3>
+          <p className="mt-0.5 text-sm text-ink-400">Connexions réussies/échouées et déconnexions (100 derniers) — utile pour repérer des tentatives d'intrusion.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="border-b border-ink-100 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <tr>
+                <th className="px-6 py-3.5">Événement</th>
+                <th className="px-6 py-3.5">Email</th>
+                <th className="px-6 py-3.5">Adresse IP</th>
+                <th className="px-6 py-3.5 text-right">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {securityEvents.map((ev) => (
+                <tr key={ev.id} className="border-b border-ink-50 last:border-0">
+                  <td className="px-6 py-3">
+                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${
+                      ev.type === 'login_fail' ? 'bg-red-100 text-red-700' : ev.type === 'login_ok' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'
+                    }`}>
+                      {ev.type === 'login_fail' ? 'Échec connexion' : ev.type === 'login_ok' ? 'Connexion' : ev.type === 'logout' ? 'Déconnexion' : ev.type}
+                    </span>
+                  </td>
+                  <td className="px-6 py-3 text-ink-600">{ev.email || '—'}</td>
+                  <td className="px-6 py-3 font-mono text-xs text-ink-500">{ev.ip || '—'}</td>
+                  <td className="px-6 py-3 text-right text-ink-400">
+                    {new Date((ev.created_at || '') + 'Z').toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {securityEvents.length === 0 && (
+            <p className="py-10 text-center text-ink-400">Aucun événement enregistré pour le moment.</p>
           )}
         </div>
       </div>

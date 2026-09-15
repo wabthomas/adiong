@@ -163,6 +163,15 @@ CREATE TABLE IF NOT EXISTS partners (
   published INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS security_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  ip TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 const migrate = (sql) => { try { db.exec(sql); } catch {  } };

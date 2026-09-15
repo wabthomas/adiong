@@ -128,11 +128,22 @@ super admin ; il doit toujours rester au moins un compte privilégié (super adm
 
 ## Sécurité
 
+Le site a été conçu en tenant compte des attaques subies par l'ancienne version WordPress :
+
 - **En-têtes de sécurité** (helmet) : `X-Content-Type-Options`, `X-Frame-Options`, HSTS, `Referrer-Policy`…
+- **Content-Security-Policy** : activée en production (scripts/styles/connexion limités à l'origine du site, `object-src 'none'`, `frame-ancestors 'self'`).
+- **CORS** : seule l'origine du site est acceptée — aucune requête cross-origin n'est servie.
 - **Limitation de débit** (anti brute-force / anti spam) :
   - connexion admin : 10 tentatives / 15 min par couple IP+email,
   - formulaire de contact : 5 messages / heure par IP,
-  - dons : 10 envois / heure par IP.
+  - dons : 10 envois / heure par IP,
+  - filet global : 600 requêtes / 15 min par IP sur toute l'API.
+- **Anti-spam des formulaires** (contact & dons) : champ piège invisible (honeypot) + piège temporel (un formulaire soumis en moins de 3 s est rejeté). Les bots reçoivent une réponse « succès » silencieuse sans que le message soit enregistré.
+- **Validation des entrées** : adresses email vérifiées, longeurs maximales imposées (nom 100, email 120, sujet 200, message 2000, don 500, montant ≤ 1 M), montants contrôlés.
+- **Cheminements d'attaque neutralisés** : `/wp-login.php`, `/xmlrpc.php`, `/.env`, `/.git`, `/phpmyadmin`, etc. renvoient un 404 uniforme pour ne pas révéler de quoi le site est fait.
+- **Sessions** : révocation serveur au déconnexion (un token déconnecté n'est plus valide) + journal des connexions réussies/échouées et des déconnexions, visible dans *Espace admin → Utilisateurs → Sécurité*.
+- **Erreurs** : les erreurs internes (500) renvoient un message générique, sans détail technique.
+- **`/security.txt`** : fichier de contact pour les chercheurs en sécurité (norme CVE).
 
 ## Notifications par email (SMTP)
 
