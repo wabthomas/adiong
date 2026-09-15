@@ -58,13 +58,13 @@ export default function Home() {
               initial={reduce ? false : { opacity: 0, y: 24 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, delay: 0.15 }}
-              className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-xs font-bold text-white ring-1 ring-white/25 backdrop-blur sm:text-sm"
+              className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-sm font-bold text-white ring-1 ring-white/25 backdrop-blur sm:text-[15px]"
             >
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent-400" />
               {site.hero_kicker || "Bienvenue dans le monde de l'ONG ADI"}
             </motion.p>
 
-            <h1 className="font-display text-[1.65rem] leading-tight font-extrabold text-white sm:text-3xl lg:text-[2.35rem]">
+            <h1 className="font-display text-[1.9rem] leading-[1.35] font-extrabold text-white sm:text-[2.25rem] sm:leading-[1.32] lg:text-[2.75rem] lg:leading-[1.28]">
               {heroLines(site.hero_title || site.site_tagline || '').map((line, i) => (
                 <span key={i} className="block overflow-hidden">
                   <motion.span
@@ -90,7 +90,7 @@ export default function Home() {
               initial={reduce ? false : { opacity: 0, y: 24 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, delay: 0.75 }}
-              className="mt-4 max-w-xl text-sm leading-relaxed text-white/80 sm:text-base"
+              className="mt-5 max-w-2xl text-base leading-[1.8] text-white/85 sm:text-lg sm:leading-[1.85]"
             >
               {site.hero_text}
             </motion.p>

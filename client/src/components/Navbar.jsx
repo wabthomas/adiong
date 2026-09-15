@@ -60,13 +60,15 @@ export default function Navbar() {
     setMobileAcc(null);
   }, [loc.pathname]);
 
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
   const openMega = (id) => {
     clearTimeout(closeTimer.current);
     setMega(id);
   };
   const scheduleCloseMega = () => {
     clearTimeout(closeTimer.current);
-    closeTimer.current = setTimeout(() => setMega(null), 140);
+    closeTimer.current = setTimeout(() => setMega(null), 280);
   };
 
   const solid = scrolled || open || mega || loc.pathname.startsWith('/admin');
@@ -85,7 +87,7 @@ export default function Navbar() {
         solid ? 'bg-white/95 shadow-soft backdrop-blur-lg' : 'bg-transparent'
       }`}
     >
-      <div onMouseLeave={scheduleCloseMega}>
+      <div onMouseEnter={() => clearTimeout(closeTimer.current)} onMouseLeave={scheduleCloseMega}>
         <nav className="container-x flex h-[76px] items-center justify-between gap-4">
           <Link to="/" className="group flex items-center gap-3" aria-label="Accueil ADI ONG" onMouseEnter={() => openMega(null)}>
             {site.logo ? (
@@ -117,14 +119,14 @@ export default function Navbar() {
             {links.map((l) => (
               <li
                 key={l.to}
-                className="group/mega static"
+                className="static"
                 onMouseEnter={() => openMega(l.mega || null)}
               >
                 <NavLink
                   to={l.to}
                   end={l.to === '/'}
                   className={({ isActive }) =>
-                    `inline-flex items-center gap-1 rounded-lg px-3.5 py-2 text-[15px] font-semibold transition-colors group-hover/mega:bg-accent-400 group-hover/mega:text-ink-950 ${itemClass(
+                    `inline-flex items-center gap-1 rounded-lg px-3.5 py-2 text-[15px] font-semibold transition-colors ${itemClass(
                       isActive,
                       !!l.mega,
                       mega === l.mega
@@ -137,7 +139,12 @@ export default function Navbar() {
                   {l.mega && <Chevron className="h-3.5 w-3.5 opacity-70" />}
                 </NavLink>
                 {l.mega && (
-                  <div className="invisible absolute inset-x-0 top-full z-50 opacity-0 transition-opacity duration-150 group-hover/mega:visible group-hover/mega:opacity-100">
+                  <div
+                    className={`absolute inset-x-0 top-[calc(100%-10px)] z-50 pt-2.5 transition-opacity duration-150 ${
+                      mega === l.mega ? 'visible opacity-100' : 'invisible opacity-0 pointer-events-none'
+                    }`}
+                    onMouseEnter={() => openMega(l.mega)}
+                  >
                     <div className="border-t-4 border-accent-400 bg-white shadow-lift">
                       <div className="container-x py-6">
                         {l.mega === 'news' && <NewsMega featured={featured} more={moreNews} />}
