@@ -204,6 +204,7 @@ export default function UsersAdmin() {
                     >
                       <option value="super_admin">Super admin</option>
                       <option value="admin">Administrateur</option>
+                      <option value="cashier">Caissier</option>
                       <option value="editor">Éditeur</option>
                       <option value="viewer">Consultation</option>
                     </select>

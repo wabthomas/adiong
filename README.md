@@ -135,16 +135,18 @@ paramètres, utilisateurs, GRH, point de vente) > `editor` (contenu) > `viewer` 
 Le compte initial `admin@adiong.org` est super admin. Seul un super admin peut créer/donner le rôle
 super admin ; il doit toujours rester au moins un compte privilégié (super admin ou admin).
 
-## Module Point de vente (POS) + stock
+## Module Point de vente (POS) + stock + boutique en ligne
 
-Module **interne** (jamais visible sur le site public) pour vendre des produits (boutique,
-merchandising, produits des ateliers…) et gérer le stock :
+Module pour vendre des produits (merchandising, produits des ateliers…) : caisse interne,
+suivi des ventes, gestion du stock et **boutique en ligne publique** :
 
 - **Caisse** : grille de produits (recherche, filtres par catégorie, stock affiché, rupture bloquée),
-  panier avec quantités, client, **réduction**, choix du paiement (**Espèces, Mobile Money, Carte,
-  Virement, Autre**), montant reçu et **monnaie rendue**, puis encaissement.
+  **scan de code-barres** (champ dédié + Entrée, compatible douchette), panier avec quantités,
+  client, **réduction**, choix du paiement (**Espèces, Mobile Money, Carte, Virement, Autre**),
+  montant reçu et **monnaie rendue**, puis encaissement.
 - **Ticket** : à chaque vente, ticket imprimable (imprimante standard) ou **PDF A5** à l'en-tête de
-  l'organisation, avec numéro séquentiel (POS-00001…), lignes, totaux et mode de paiement.
+  l'organisation, avec numéro séquentiel (POS-00001…), lignes (code-barres compris), totaux et mode
+  de paiement.
 - **Facture client** : en un clic depuis une vente (ou son détail), **facture PDF A4** avec blocs
   organisation/client, tableau des articles, totaux, mode de paiement et mention des retours.
 - **Rapport de caisse** : pour n'importe quel jour, rapport imprimable — nombre de ventes, montant
@@ -153,16 +155,28 @@ merchandising, produits des ateliers…) et gérer le stock :
 - **Ventes** : historique filtrable (période, paiement, recherche), détail par vente, **retours
   partiels ou totaux** (le stock retourné est réapprovisionné automatiquement, motif tracé) et
   **annulation** d'une vente (suppression + réapprovisionnement du stock non retourné).
-- **Stock** : catalogue produits (nom, référence, catégorie, prix de vente, coût d'achat, image,
-  actif/inactif), **seuils d'alerte** « stock bas / rupture », catégories (création, renommage,
-  suppression protégée), **mouvements** (entrée, sortie, ajustement) et historique complet tracé
-  (chaque vente, retour, annulation et mouvement laisse une piste horodatée avec l'auteur).
+- **Boutique en ligne** : page publique **/boutique** (lien dans le menu du site) où n'importe quel
+  visiteur parcourt les produits actifs en stock, compose un panier et commande avec **Mobile Money
+  ou espèces à la remise**. Le stock est réservé à l'enregistrement (mouvements « Commande en ligne
+  OR-xxxxx » tracés) ; le client reçoit un numéro de commande et est contacté par téléphone.
+- **Commandes en ligne** : onglet de suivi (attentes → préparation → livrée, annulation possible en
+  attente avec réapprovisionnement automatique), accessible aux caissiers et administrateurs.
+- **Stock** : catalogue produits (nom, référence, **code-barres unique**, catégorie, prix de vente,
+  coût d'achat, image, actif/inactif), **seuils d'alerte** « stock bas / rupture », catégories
+  (création, renommage, suppression protégée), **mouvements** (entrée, sortie, ajustement) et
+  historique complet tracé (chaque vente, retour, annulation, commande et mouvement laisse une
+  piste horodatée avec l'auteur).
 - **Statistiques** : ventes et chiffre d'affaires du jour, répartition par mode de paiement,
   graphique des 7 derniers jours, meilleures ventes sur 30 jours, valeur du stock et alertes.
 
+**Rôles** : en plus des super admins et administrateurs, le rôle **Caissier** est dédié à la vente :
+il peut encaisser, scanner, consulter ventes/commandes/stock, faire des mouvements et suivre les
+commandes en ligne — mais **pas** gérer le catalogue, les retours, les annulations, les rapports ni
+les statistiques (contrôlé côté serveur et masqué dans l'interface).
+
 **Activation / désactivation** : comme le module GRH, réservée au **super administrateur**
-(*Admin → Paramètres → Modules*). La désactivation masque le menu et ferme l'API POS
-(les données sont conservées). Visible pour les rôles super admin et administrateur.
+(*Admin → Paramètres → Modules*). La désactivation masque le menu, ferme l'API POS **et la
+boutique publique** (les données sont conservées).
 
 ## Sécurité
 

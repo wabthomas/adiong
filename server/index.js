@@ -209,7 +209,8 @@ const ROLES = {
   admin: ['super_admin', 'admin'],
   content: ['super_admin', 'admin', 'editor'],
   hr: ['super_admin', 'admin'],
-  any: ['super_admin', 'admin', 'editor', 'viewer']
+  pos: ['super_admin', 'admin', 'cashier'],
+  any: ['super_admin', 'admin', 'editor', 'viewer', 'cashier']
 };
 const requireRole = (group) => (req, res, next) => {
   if (!ROLES[group].includes(req.user?.role))
@@ -358,6 +359,13 @@ app.get('/api/public/member/:code/qr', async (req, res) => {
 });
 
 app.get('/api/public/site', (req, res) => res.json(publicSite()));
+
+app.get('/api/public/modules', (req, res) => {
+  res.json({
+    grh_enabled: getSetting('grh_enabled') === '1',
+    pos_enabled: getSetting('pos_enabled') === '1'
+  });
+});
 
 app.get('/api/public/articles', (req, res) => {
   const { category, limit } = req.query;
@@ -890,7 +898,7 @@ function applyUserFields(user, body, { allowRole = false, actorRole } = {}) {
   if (typeof job_title === 'string') db.prepare('UPDATE users SET job_title = ? WHERE id = ?').run(job_title.trim(), user.id);
   if (typeof bio === 'string') db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio.trim(), user.id);
   if (allowRole && role) {
-    if (!['super_admin', 'admin', 'editor', 'viewer'].includes(role)) throw Object.assign(new Error('Rôle invalide'), { status: 400 });
+    if (!['super_admin', 'admin', 'editor', 'viewer', 'cashier'].includes(role)) throw Object.assign(new Error('Rôle invalide'), { status: 400 });
     if (role === 'super_admin' && actorRole !== 'super_admin')
       throw Object.assign(new Error('Seul un super administrateur peut accorder ce rôle'), { status: 403 });
     const err = guardLastAdmin(user.id, role);
@@ -924,7 +932,7 @@ app.post('/api/admin/users', authRequired, requireRole('admin'), (req, res) => {
   const { email, password, full_name, role, photo, phone, job_title, bio } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
   if (password.length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum' });
-  if (!['super_admin', 'admin', 'editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+  if (!['super_admin', 'admin', 'editor', 'viewer', 'cashier'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
   if (role === 'super_admin' && req.user.role !== 'super_admin')
     return res.status(403).json({ error: 'Seul un super administrateur peut créer un super administrateur' });
   const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
@@ -2160,8 +2168,9 @@ app.delete('/api/admin/invites/:id', authRequired, requireRole('admin'), (req, r
   res.json({ ok: true });
 });
 
-// ---------- Point de vente + stock (rôles admin+super, module activable) ----------
-const POS = [authRequired, requireRole('admin'), requireModule('pos_enabled', 'Point de vente')];
+// ---------- Point de vente + stock (caissier pour la caisse, admin+ pour la gestion) ----------
+const POS = [authRequired, requireRole('pos'), requireModule('pos_enabled', 'Point de vente')];
+const POS_ADMIN = [authRequired, requireRole('admin'), requireModule('pos_enabled', 'Point de vente')];
 const PAYMENT_METHODS = ['especes', 'mobile', 'carte', 'virement', 'autre'];
 const STOCK_MOVEMENT_TYPES = ['entree', 'sortie', 'ajustement'];
 const money2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -2206,7 +2215,7 @@ app.get('/api/admin/pos/categories', ...POS, (req, res) => {
   `).all());
 });
 
-app.post('/api/admin/pos/categories', ...POS, (req, res) => {
+app.post('/api/admin/pos/categories', ...POS_ADMIN, (req, res) => {
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
   try {
@@ -2217,7 +2226,7 @@ app.post('/api/admin/pos/categories', ...POS, (req, res) => {
   }
 });
 
-app.put('/api/admin/pos/categories/:id', ...POS, (req, res) => {
+app.put('/api/admin/pos/categories/:id', ...POS_ADMIN, (req, res) => {
   const ex = db.prepare('SELECT * FROM stock_categories WHERE id = ?').get(req.params.id);
   if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
   const name = String(req.body?.name || '').trim();
@@ -2230,7 +2239,7 @@ app.put('/api/admin/pos/categories/:id', ...POS, (req, res) => {
   }
 });
 
-app.delete('/api/admin/pos/categories/:id', ...POS, (req, res) => {
+app.delete('/api/admin/pos/categories/:id', ...POS_ADMIN, (req, res) => {
   const used = db.prepare('SELECT COUNT(*) n FROM stock_products WHERE category_id = ?').get(req.params.id).n;
   if (used > 0) return res.status(409).json({ error: `Impossible : ${used} produit(s) rattaché(s) à cette catégorie.` });
   db.prepare('DELETE FROM stock_categories WHERE id = ?').run(req.params.id);
@@ -2246,7 +2255,7 @@ app.get('/api/admin/pos/products', ...POS, (req, res) => {
   `;
   const where = [];
   const params = [];
-  if (search) { where.push('(p.name LIKE ? OR p.reference LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+  if (search) { where.push('(p.name LIKE ? OR p.reference LIKE ? OR p.barcode LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
   if (category_id) { where.push('p.category_id = ?'); params.push(category_id); }
   if (active === '1') where.push('p.active = 1');
   if (active === '0') where.push('p.active = 0');
@@ -2255,16 +2264,19 @@ app.get('/api/admin/pos/products', ...POS, (req, res) => {
   res.json(db.prepare(sql).all(...params));
 });
 
-app.post('/api/admin/pos/products', ...POS, (req, res) => {
+app.post('/api/admin/pos/products', ...POS_ADMIN, (req, res) => {
   const b = req.body || {};
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nom du produit requis' });
   const price = Math.max(0, Number(b.price) || 0);
   const stock = Math.max(0, Math.trunc(Number(b.stock) || 0));
   const cost = b.cost === '' || b.cost == null ? null : Math.max(0, Number(b.cost) || null);
+  const barcode = String(b.barcode || '').trim().slice(0, 64);
+  if (barcode && db.prepare('SELECT id FROM stock_products WHERE barcode = ?').get(barcode))
+    return res.status(409).json({ error: 'Ce code-barres est déjà attribué à un autre produit' });
   const info = runTx(() => {
     const r = db.prepare(`INSERT INTO stock_products
-      (name, reference, description, category_id, price, cost, stock, min_stock, image, active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (name, reference, description, category_id, price, cost, stock, min_stock, image, active, barcode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       String(b.name).trim().slice(0, 200),
       String(b.reference || '').trim().slice(0, 40),
       String(b.description || '').slice(0, 2000),
@@ -2274,7 +2286,8 @@ app.post('/api/admin/pos/products', ...POS, (req, res) => {
       stock,
       Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
       b.image || '',
-      b.active === false || b.active === 0 || b.active === '0' ? 0 : 1
+      b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
+      barcode
     );
     if (stock > 0) {
       db.prepare('INSERT INTO stock_movements (product_id, type, qty, reason, created_by) VALUES (?, ?, ?, ?, ?)')
@@ -2285,15 +2298,18 @@ app.post('/api/admin/pos/products', ...POS, (req, res) => {
   res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(info));
 });
 
-app.put('/api/admin/pos/products/:id', ...POS, (req, res) => {
+app.put('/api/admin/pos/products/:id', ...POS_ADMIN, (req, res) => {
   const ex = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(req.params.id);
   if (!ex) return res.status(404).json({ error: 'Produit introuvable' });
   const b = { ...ex, ...req.body };
   const nextStock = Math.max(0, Math.trunc(Number(b.stock) || 0));
   const cost = b.cost === '' || b.cost == null ? null : Math.max(0, Number(b.cost) || null);
+  const barcode = String(b.barcode || '').trim().slice(0, 64);
+  if (barcode && barcode !== ex.barcode && db.prepare('SELECT id FROM stock_products WHERE barcode = ? AND id != ?').get(barcode, ex.id))
+    return res.status(409).json({ error: 'Ce code-barres est déjà attribué à un autre produit' });
   runTx(() => {
     db.prepare(`UPDATE stock_products SET
-      name = ?, reference = ?, description = ?, category_id = ?, price = ?, cost = ?, stock = ?, min_stock = ?, image = ?, active = ?
+      name = ?, reference = ?, description = ?, category_id = ?, price = ?, cost = ?, stock = ?, min_stock = ?, image = ?, active = ?, barcode = ?
       WHERE id = ?`).run(
       String(b.name).trim().slice(0, 200),
       String(b.reference || '').trim().slice(0, 40),
@@ -2305,6 +2321,7 @@ app.put('/api/admin/pos/products/:id', ...POS, (req, res) => {
       Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
       b.image || '',
       b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
+      barcode,
       ex.id
     );
     if (nextStock !== ex.stock) {
@@ -2313,6 +2330,18 @@ app.put('/api/admin/pos/products/:id', ...POS, (req, res) => {
     }
   });
   res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(ex.id));
+});
+
+app.get('/api/admin/pos/products/by-barcode/:code', ...POS, (req, res) => {
+  const code = String(req.params.code || '').trim();
+  if (!code) return res.status(404).json({ error: 'Code-barres vide' });
+  const p = db.prepare(`
+    SELECT p.*, c.name AS category
+    FROM stock_products p LEFT JOIN stock_categories c ON c.id = p.category_id
+    WHERE p.barcode = ?
+  `).get(code);
+  if (!p) return res.status(404).json({ error: 'Aucun produit ne correspond à ce code-barres' });
+  res.json(p);
 });
 
 app.get('/api/admin/pos/products/:id', ...POS, (req, res) => {
@@ -2330,7 +2359,7 @@ app.get('/api/admin/pos/products/:id', ...POS, (req, res) => {
   res.json(p);
 });
 
-app.delete('/api/admin/pos/products/:id', ...POS, (req, res) => {
+app.delete('/api/admin/pos/products/:id', ...POS_ADMIN, (req, res) => {
   const used = db.prepare('SELECT COUNT(*) n FROM pos_sale_items WHERE product_id = ?').get(req.params.id).n;
   if (used > 0) return res.status(409).json({ error: 'Impossible : ce produit apparaît dans des ventes. Désactivez-le plutôt.' });
   db.prepare('DELETE FROM stock_movements WHERE product_id = ?').run(req.params.id);
@@ -2467,7 +2496,7 @@ app.get('/api/admin/pos/sales/:id', ...POS, (req, res) => {
 });
 
 // Retours (totaux ou partiels) — réapprovisionne le stock
-app.post('/api/admin/pos/sales/:id/return', ...POS, (req, res) => {
+app.post('/api/admin/pos/sales/:id/return', ...POS_ADMIN, (req, res) => {
   const s = fetchSale(req.params.id);
   if (!s) return res.status(404).json({ error: 'Vente introuvable' });
   if (s.status === 'retournee') return res.status(409).json({ error: 'Cette vente est déjà intégralement retournée.' });
@@ -2513,7 +2542,7 @@ app.post('/api/admin/pos/sales/:id/return', ...POS, (req, res) => {
 });
 
 // Annulation (void) : supprime la vente et réapprovisionne le stock non retourné
-app.delete('/api/admin/pos/sales/:id', ...POS, (req, res) => {
+app.delete('/api/admin/pos/sales/:id', ...POS_ADMIN, (req, res) => {
   const s = fetchSale(req.params.id);
   if (!s) return res.status(404).json({ error: 'Vente introuvable' });
   runTx(() => {
@@ -2578,11 +2607,17 @@ app.get('/api/admin/pos/sales/:id/pdf', ...POS, async (req, res) => {
     y -= 6;
     page.drawLine({ start: { x: 30, y }, end: { x: W - 30, y }, thickness: 0.7, color: rgb(0.8, 0.83, 0.88) });
     y -= 16;
+    const barcodes = new Map(db.prepare('SELECT id, barcode FROM stock_products').all().map((r) => [r.id, r.barcode]));
     for (const it of s.items) {
       page.drawText(`${it.qty} × ${it.product_name}`.slice(0, 48), { x: 30, y, size: 9, font, color: ink });
       const val = fmtM(it.total);
       page.drawText(val, { x: W - 30 - font.widthOfTextAtSize(val, 9), y, size: 9, font, color: ink });
       y -= 13;
+      const bc = barcodes.get(it.product_id);
+      if (bc) {
+        page.drawText(`CB ${bc}`, { x: 30, y, size: 7.5, font, color: gray });
+        y -= 12;
+      }
       if (it.returned_qty > 0) {
         page.drawText(`dont ${it.returned_qty} retourné(s)`, { x: 30, y, size: 7.5, font, color: gray });
         y -= 12;
@@ -2614,7 +2649,7 @@ app.get('/api/admin/pos/sales/:id/pdf', ...POS, async (req, res) => {
 });
 
 // Statistiques
-app.get('/api/admin/pos/stats', ...POS, (req, res) => {
+app.get('/api/admin/pos/stats', ...POS_ADMIN, (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const t = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(total), 0) total FROM pos_sales WHERE date(created_at) = ?').get(today);
   const byPayment = db.prepare(
@@ -2646,7 +2681,7 @@ app.get('/api/admin/pos/stats', ...POS, (req, res) => {
 });
 
 // Rapport de caisse journalier
-app.get('/api/admin/pos/reports/daily', ...POS, (req, res) => {
+app.get('/api/admin/pos/reports/daily', ...POS_ADMIN, (req, res) => {
   const date = String(req.query.date || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Date invalide (format AAAA-MM-JJ)' });
   const sales = db.prepare('SELECT * FROM pos_sales WHERE date(created_at) = ?').all(date);
@@ -2804,6 +2839,127 @@ app.get('/api/admin/pos/sales/:id/invoice', ...POS, async (req, res) => {
   } catch {
     res.status(500).json({ error: 'Impossible de générer la facture' });
   }
+});
+
+// ---------- Boutique en ligne (commandes publiques) + suivi admin ----------
+const SHOP_METHODS = ['mobile', 'especes'];
+const nextShopRef = () => {
+  const row = db.prepare(`SELECT id FROM shop_orders ORDER BY id DESC LIMIT 1`).get();
+  return 'OR-' + String((row ? row.id : 0) + 1).padStart(5, '0');
+};
+const parseShopItems = (raw) => {
+  const items = Array.isArray(raw) ? raw : [];
+  if (items.length === 0) return { error: 'Panier vide' };
+  if (items.length > 50) return { error: 'Trop de lignes de commande (50 maximum)' };
+  const clean = [];
+  for (const it of items) {
+    const qty = Math.trunc(Number(it?.qty) || 0);
+    if (!it?.product_id || qty <= 0 || qty > 200) return { error: 'Quantités invalides (1 à 200 par ligne)' };
+    clean.push({ product_id: Number(it.product_id), qty });
+  }
+  return { items: clean };
+};
+
+app.get('/api/public/shop', (req, res) => {
+  if (getSetting('pos_enabled') !== '1') return res.status(403).json({ error: 'La boutique en ligne est actuellement fermée.' });
+  const categories = db.prepare(`
+    SELECT c.*, (SELECT COUNT(*) FROM stock_products p WHERE p.category_id = c.id AND p.active = 1 AND p.stock > 0) AS products
+    FROM stock_categories c
+  `).all();
+  const products = db.prepare(`
+    SELECT p.id, p.name, p.description, p.price, p.stock, p.image, p.barcode, p.category_id, c.name AS category
+    FROM stock_products p LEFT JOIN stock_categories c ON c.id = p.category_id
+    WHERE p.active = 1 AND p.stock > 0
+    ORDER BY c.name IS NULL, c.name, p.name
+  `).all();
+  res.json({ categories, products });
+});
+
+app.post('/api/public/shop/orders', (req, res) => {
+  if (getSetting('pos_enabled') !== '1') return res.status(403).json({ error: 'La boutique en ligne est actuellement fermée.' });
+  const b = req.body || {};
+  const customer_name = String(b.customer_name || '').trim().slice(0, 120);
+  const phone = String(b.phone || '').trim().slice(0, 40);
+  const note = String(b.note || '').trim().slice(0, 500);
+  const payment_method = SHOP_METHODS.includes(b.payment_method) ? b.payment_method : 'mobile';
+  if (!customer_name) return res.status(400).json({ error: 'Votre nom est requis' });
+  if (!phone) return res.status(400).json({ error: 'Un numéro de téléphone est requis' });
+  const parsed = parseShopItems(b.items);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  try {
+    const order = runTx(() => {
+      let subtotal = 0;
+      const lines = [];
+      for (const it of parsed.items) {
+        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
+        if (!p || !p.active) return { fail: 404, msg: 'Un produit du panier n\'est plus disponible.' };
+        if (p.stock < it.qty) return { fail: 409, msg: `Stock insuffisant pour « ${p.name} » (${p.stock} restant).` };
+        subtotal += p.price * it.qty;
+        lines.push({
+          product_id: p.id, product_name: p.name, qty: it.qty, price: p.price, total: p.price * it.qty
+        });
+      }
+      subtotal = money2(subtotal);
+      const reference = nextShopRef();
+      const r = db.prepare(`INSERT INTO shop_orders
+        (reference, customer_name, phone, note, items, subtotal, total, payment_method, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attente')`).run(
+        reference, customer_name, phone, note, JSON.stringify(lines), subtotal, subtotal, payment_method
+      );
+      for (const it of parsed.items) {
+        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
+        db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(p.stock - it.qty, p.id);
+        db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(p.id, 'sortie', it.qty, p.stock - it.qty, `Commande en ligne ${reference}`, null);
+      }
+      return db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(r.lastInsertRowid);
+    });
+    if (order && order.fail) return res.status(order.fail).json({ error: order.msg });
+    const full = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(order.id);
+    full.items = JSON.parse(full.items || '[]');
+    res.status(201).json(full);
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ }
+    return res.status(500).json({ error: 'Impossible d’enregistrer la commande' });
+  }
+});
+
+app.get('/api/admin/pos/orders', ...POS, (req, res) => {
+  const { status } = req.query;
+  let sql = 'SELECT * FROM shop_orders';
+  const params = [];
+  if (status) { sql += ' WHERE status = ?'; params.push(status); }
+  sql += ' ORDER BY id DESC';
+  const rows = db.prepare(sql).all(...params);
+  rows.forEach((o) => { o.items = JSON.parse(o.items || '[]'); });
+  res.json(rows);
+});
+
+app.patch('/api/admin/pos/orders/:id', ...POS, (req, res) => {
+  const o = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'Commande introuvable' });
+  const status = (req.body || {}).status;
+  const ALLOWED = ['attente', 'preparation', 'livree', 'annulee'];
+  if (!ALLOWED.includes(status)) return res.status(400).json({ error: 'Statut invalide' });
+  if (status === o.status) return res.json({ ...o, items: JSON.parse(o.items || '[]') });
+  if ((status === 'annulee') && o.status !== 'attente')
+    return res.status(409).json({ error: 'Seule une commande en attente peut être annulée.' });
+  const lines = JSON.parse(o.items || '[]');
+  runTx(() => {
+    if (status === 'annulee') {
+      for (const it of lines) {
+        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
+        if (p) {
+          db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(p.stock + it.qty, p.id);
+          db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(p.id, 'entree', it.qty, p.stock + it.qty, `Commande en ligne annulée ${o.reference}`, req.user.id);
+        }
+      }
+    }
+    db.prepare(`UPDATE shop_orders SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, o.id);
+  });
+  const up = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(o.id);
+  res.json({ ...up, items: lines });
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

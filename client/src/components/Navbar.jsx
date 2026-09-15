@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { IconArrow, IconClose, IconHeart, IconMenu } from './Icons.jsx';
 import { useSite } from '../hooks/useSite.jsx';
 import { categoryLabel } from './Cards.jsx';
-import { fmtDate } from '../api.js';
+import { api, fmtDate } from '../api.js';
 
 const links = [
   { to: '/', label: 'Accueil' },
@@ -39,6 +39,23 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [mega, setMega] = useState(null);
   const [mobileAcc, setMobileAcc] = useState(null);
+  const [shopEnabled, setShopEnabled] = useState(false);
+
+  useEffect(() => {
+    api.modules().then((m) => setShopEnabled(!!m.pos_enabled)).catch(() => setShopEnabled(false));
+  }, []);
+
+  const navLinks = shopEnabled
+    ? [
+        { to: '/', label: 'Accueil' },
+        { to: '/a-propos', label: 'À propos', mega: 'about' },
+        { to: '/notre-travail', label: 'Notre travail', mega: 'work' },
+        { to: '/actualites', label: 'Actualités', mega: 'news' },
+        { to: '/collectes', label: 'Collectes', mega: 'campaigns' },
+        { to: '/boutique', label: 'Boutique' },
+        { to: '/contact', label: 'Contact' }
+      ]
+    : links;
   const loc = useLocation();
   const reduce = useReducedMotion();
   const closeTimer = useRef(null);
@@ -116,7 +133,7 @@ export default function Navbar() {
           </Link>
 
           <ul className="hidden items-center gap-0.5 lg:flex">
-            {links.map((l) => (
+            {navLinks.map((l) => (
               <li
                 key={l.to}
                 className="static"
@@ -187,7 +204,7 @@ export default function Navbar() {
             className="overflow-hidden border-t border-ink-100 bg-white shadow-lift lg:hidden"
           >
             <ul className="container-x flex flex-col gap-1 py-4">
-              {links.map((l, i) => (
+              {navLinks.map((l, i) => (
                 <motion.li
                   key={l.to}
                   initial={reduce ? false : { opacity: 0, x: -14 }}

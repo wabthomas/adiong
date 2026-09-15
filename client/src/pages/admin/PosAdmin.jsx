@@ -6,10 +6,18 @@ import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 const TABS = [
   ['caisse', 'Caisse'],
   ['ventes', 'Ventes'],
+  ['commandes', 'Commandes en ligne'],
   ['stock', 'Stock'],
   ['mouvements', 'Mouvements'],
-  ['stats', 'Statistiques']
+  ['stats', 'Statistiques', true]
 ];
+
+const ORDER_STATUS = {
+  attente: { label: 'En attente', cls: 'bg-accent-100 text-accent-800' },
+  preparation: { label: 'En préparation', cls: 'bg-blue-100 text-blue-700' },
+  livree: { label: 'Livrée', cls: 'bg-emerald-100 text-emerald-700' },
+  annulee: { label: 'Annulée', cls: 'bg-red-100 text-red-700' }
+};
 
 const PAY_METHODS = {
   especes: 'Espèces',
@@ -199,6 +207,7 @@ function CaisseTab() {
   const [products, setProducts] = useState([]);
   const [cats, setCats] = useState([]);
   const [search, setSearch] = useState('');
+  const [scan, setScan] = useState('');
   const [cat, setCat] = useState('');
   const [cart, setCart] = useState([]);
   const [customer, setCustomer] = useState('');
@@ -219,7 +228,9 @@ function CaisseTab() {
   const visible = useMemo(() => {
     const s = search.toLowerCase();
     return products.filter(
-      (p) => (!s || p.name.toLowerCase().includes(s) || p.reference?.toLowerCase().includes(s)) && (!cat || String(p.category_id) === String(cat))
+      (p) =>
+        (!s || p.name.toLowerCase().includes(s) || p.reference?.toLowerCase().includes(s) || p.barcode?.toLowerCase().includes(s)) &&
+        (!cat || String(p.category_id) === String(cat))
     );
   }, [products, search, cat]);
 
@@ -246,6 +257,22 @@ function CaisseTab() {
     setCustomer('');
     setDiscount('');
     setPaid('');
+  };
+
+  const scanCode = async () => {
+    const code = scan.trim();
+    if (!code) return;
+    try {
+      const p = await api.pos.products.byBarcode(code);
+      if (!p.active) { setError(`« ${p.name} » n'est plus actif.`); return; }
+      if (p.stock <= 0) { setError(`« ${p.name} » n'est plus en stock.`); return; }
+      const inCart = cart.find((c) => c.product.id === p.id);
+      if (inCart && inCart.qty >= p.stock) { setError(`Stock maximum atteint pour « ${p.name} » (${p.stock}).`); return; }
+      add(p);
+      setScan('');
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   const subtotal = cart.reduce((a, c) => a + c.product.price * c.qty, 0);
@@ -297,6 +324,13 @@ function CaisseTab() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            <input
+              className="input !w-60 !py-2.5 text-sm"
+              placeholder="📷 Scanner un code-barres + Entrée"
+              value={scan}
+              onChange={(e) => setScan(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && scanCode()}
+            />
             <div className="flex flex-wrap gap-1.5">
               <button
                 onClick={() => setCat('')}
@@ -337,7 +371,11 @@ function CaisseTab() {
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-bold text-ink-900">{p.name}</p>
-                    {p.reference && <p className="truncate text-[11px] text-ink-400">{p.reference}</p>}
+                    {(p.reference || p.barcode) && (
+                      <p className="truncate text-[11px] text-ink-400">
+                        {[p.reference, p.barcode && `CB ${p.barcode}`].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
                     <p className="mt-1 font-display text-sm font-extrabold text-brand-700">{fmtMoney(p.price)}</p>
                   </div>
                 </div>
@@ -518,7 +556,7 @@ function ReturnModal({ sale, onDone, onClose }) {
   );
 }
 
-function SalesTab() {
+function SalesTab({ canManage = false }) {
   const { site } = useSite();
   const [rows, setRows] = useState([]);
   const [filters, setFilters] = useState({ from: '', to: '', payment: '', q: '' });
@@ -601,14 +639,16 @@ function SalesTab() {
         >
           Réinitialiser
         </button>
-        <div className="ml-auto flex items-end gap-2">
-          <Field label="Rapport de caisse">
-            <input className="input !w-40 !py-2.5 text-sm" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
-          </Field>
-          <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
-            🖨 Générer
-          </button>
-        </div>
+        {canManage && (
+          <div className="ml-auto flex items-end gap-2">
+            <Field label="Rapport de caisse">
+              <input className="input !w-40 !py-2.5 text-sm" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
+            </Field>
+            <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
+              🖨 Générer
+            </button>
+          </div>
+        )}
       </div>
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
@@ -654,14 +694,16 @@ function SalesTab() {
                       <button onClick={() => downloadInvoice(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
                         🧾 Facture
                       </button>
-                      {r.status !== 'retournee' && (
+                      {canManage && r.status !== 'retournee' && (
                         <button onClick={() => setRetSale(r)} className="rounded-lg bg-accent-50 px-2.5 py-1.5 text-xs font-bold text-accent-800 hover:bg-accent-100">
                           ↩ Retour
                         </button>
                       )}
-                      <button onClick={() => voidSale(r)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Annuler la vente">
-                        Annuler
-                      </button>
+                      {canManage && (
+                        <button onClick={() => voidSale(r)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Annuler la vente">
+                          Annuler
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -722,17 +764,19 @@ function SalesTab() {
                 {detail.discount > 0 && <p className="flex justify-between gap-8 text-ink-600"><span>Réduction</span><span>- {fmtMoney(detail.discount)}</span></p>}
                 <p className="flex justify-between gap-8 font-display text-base font-extrabold text-ink-900"><span>Total</span><span>{fmtMoney(detail.total)}</span></p>
               </div>
-              <div className="no-print flex gap-2">
+              <div className="no-print flex flex-wrap gap-2">
                 <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadPdf(detail)}>⬇ Ticket PDF</button>
                 <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadInvoice(detail)}>🧾 Facture PDF</button>
-                {detail.status !== 'retournee' && (
+                {canManage && detail.status !== 'retournee' && (
                   <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => { setRetSale(detail); setDetail(null); }}>
                     ↩ Retourner
                   </button>
                 )}
-                <button className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={() => voidSale(detail)}>
-                  Annuler
-                </button>
+                {canManage && (
+                  <button className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={() => voidSale(detail)}>
+                    Annuler
+                  </button>
+                )}
               </div>
             </div>
             {(detail.returns || []).length > 0 && (
@@ -791,6 +835,7 @@ function ProductForm({ initial, categories, onSaved, onClose }) {
   const [f, setF] = useState({
     name: initial.name ?? '',
     reference: initial.reference ?? '',
+    barcode: initial.barcode ?? '',
     description: initial.description ?? '',
     category_id: initial.category_id ?? '',
     price: initial.price ?? '',
@@ -839,6 +884,9 @@ function ProductForm({ initial, categories, onSaved, onClose }) {
         </Field>
         <Field label="Référence (SKU)">
           <input className="input" value={f.reference} onChange={set('reference')} placeholder="Ex. TSH-BLU-M" />
+        </Field>
+        <Field label="Code-barres" hint="Optionnel — scanneable en caisse, unique">
+          <input className="input font-mono" value={f.barcode} onChange={set('barcode')} placeholder="Ex. 6112345678901" />
         </Field>
         <Field label="Catégorie">
           <select className="input" value={f.category_id ?? ''} onChange={set('category_id')}>
@@ -1021,7 +1069,7 @@ function CategoriesModal({ categories, onChanged, onClose }) {
   );
 }
 
-function StockTab() {
+function StockTab({ canManage = false }) {
   const [products, setProducts] = useState([]);
   const [cats, setCats] = useState([]);
   const [search, setSearch] = useState('');
@@ -1079,14 +1127,16 @@ function StockTab() {
             ))}
           </select>
         </div>
-        <div className="flex gap-2">
-          <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => setCatsModal(true)}>
-            🏷️ Catégories
-          </button>
-          <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setProdModal({})}>
-            + Produit
-          </button>
-        </div>
+        {canManage && (
+          <div className="flex gap-2">
+            <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => setCatsModal(true)}>
+              🏷️ Catégories
+            </button>
+            <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setProdModal({})}>
+              + Produit
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="card overflow-hidden">
@@ -1095,6 +1145,7 @@ function StockTab() {
             <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
               <tr>
                 <th className="px-6 py-4">Produit</th>
+                <th className="px-6 py-4">Code-barres</th>
                 <th className="px-6 py-4">Catégorie</th>
                 <th className="px-6 py-4">Prix</th>
                 <th className="px-6 py-4">Coût</th>
@@ -1120,6 +1171,7 @@ function StockTab() {
                       </div>
                     </div>
                   </td>
+                  <td className="px-6 py-4 font-mono text-xs text-ink-500">{p.barcode || '—'}</td>
                   <td className="px-6 py-4 text-ink-600">{p.category || '—'}</td>
                   <td className="px-6 py-4 font-bold text-ink-800">{fmtMoney(p.price)}</td>
                   <td className="px-6 py-4 text-ink-600">{p.cost != null ? fmtMoney(p.cost) : '—'}</td>
@@ -1131,12 +1183,16 @@ function StockTab() {
                       <button onClick={() => setMoveModal(p)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
                         Mouvement
                       </button>
-                      <button onClick={() => setProdModal({ ...p })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
-                        Modifier
-                      </button>
-                      <button onClick={() => removeProduct(p)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
-                        ✕
-                      </button>
+                      {canManage && (
+                        <>
+                          <button onClick={() => setProdModal({ ...p })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                            Modifier
+                          </button>
+                          <button onClick={() => removeProduct(p)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                            ✕
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1258,6 +1314,158 @@ function MovementsTab() {
   );
 }
 
+function OrdersTab() {
+  const [rows, setRows] = useState([]);
+  const [filter, setFilter] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    const p = {};
+    if (filter) p.status = filter;
+    api.pos.orders.list(p).then(setRows).catch((e) => setError(e.message));
+  }, [filter]);
+  useEffect(() => { load(); }, [load]);
+
+  const setStatus = async (o, status) => {
+    if (status === 'annulee' && !confirm(`Annuler la commande ${o.reference} ?\nLe stock sera réapprovisionné.`)) return;
+    try {
+      await api.pos.orders.setStatus(o.id, status);
+      setDetail(null);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const nextAction = (o) => {
+    if (o.status === 'attente') return <button className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100" onClick={() => setStatus(o, 'preparation')}>En préparation</button>;
+    if (o.status === 'preparation') return <button className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => setStatus(o, 'livree')}>✓ Marquer livrée</button>;
+    return null;
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <select className="input !w-56 !py-2.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <option value="">Toutes les commandes</option>
+          {Object.entries(ORDER_STATUS).map(([v, s]) => (
+            <option key={v} value={v}>{s.label}</option>
+          ))}
+        </select>
+        <p className="text-sm text-ink-400">Commandes passées depuis la boutique en ligne — le stock est réservé à la commande.</p>
+      </div>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <tr>
+                <th className="px-6 py-4">N°</th>
+                <th className="px-6 py-4">Date</th>
+                <th className="px-6 py-4">Client</th>
+                <th className="px-6 py-4">Téléphone</th>
+                <th className="px-6 py-4">Articles</th>
+                <th className="px-6 py-4">Paiement</th>
+                <th className="px-6 py-4">Total</th>
+                <th className="px-6 py-4">Statut</th>
+                <th className="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((o) => (
+                <tr key={o.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
+                  <td className="px-6 py-4 font-bold text-ink-900">{o.reference}</td>
+                  <td className="px-6 py-4 text-ink-600">{fmtDateTime(o.created_at)}</td>
+                  <td className="px-6 py-4 text-ink-600">{o.customer_name}</td>
+                  <td className="px-6 py-4 text-ink-600">{o.phone}</td>
+                  <td className="px-6 py-4 text-ink-600">{o.items.reduce((a, i) => a + i.qty, 0)}</td>
+                  <td className="px-6 py-4 text-ink-600">{PAY_METHODS[o.payment_method] || o.payment_method}</td>
+                  <td className="px-6 py-4 font-bold text-brand-700">{fmtMoney(o.total)}</td>
+                  <td className="px-6 py-4">
+                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${ORDER_STATUS[o.status]?.cls || ''}`}>
+                      {ORDER_STATUS[o.status]?.label || o.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex justify-end gap-1.5">
+                      <button className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100" onClick={() => setDetail(o)}>
+                        Détail
+                      </button>
+                      {nextAction(o)}
+                      {o.status === 'attente' && (
+                        <button className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" onClick={() => setStatus(o, 'annulee')}>
+                          Annuler
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {rows.length === 0 && <p className="py-12 text-center text-ink-400">Aucune commande en ligne pour le moment.</p>}
+      </div>
+
+      <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `Commande ${detail.reference}` : ''} wide>
+        {detail && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <p className="text-ink-500">📅 {fmtDateTime(detail.created_at)}</p>
+              <p className="text-ink-500">👤 <strong>{detail.customer_name}</strong></p>
+              <p className="text-ink-500">📞 {detail.phone}</p>
+              <p>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${ORDER_STATUS[detail.status]?.cls || ''}`}>
+                  {ORDER_STATUS[detail.status]?.label || detail.status}
+                </span>
+              </p>
+            </div>
+            {detail.note && <p className="rounded-xl bg-cream px-4 py-3 text-sm text-ink-600">📝 {detail.note}</p>}
+            <div className="overflow-x-auto rounded-xl ring-1 ring-ink-100">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+                  <tr>
+                    <th className="px-4 py-3">Article</th>
+                    <th className="px-4 py-3">P.U.</th>
+                    <th className="px-4 py-3">Qté</th>
+                    <th className="px-4 py-3 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.items.map((i, idx) => (
+                    <tr key={idx} className="border-b border-ink-50 last:border-0">
+                      <td className="px-4 py-3 font-semibold text-ink-800">{i.product_name}</td>
+                      <td className="px-4 py-3 text-ink-600">{fmtMoney(i.price)}</td>
+                      <td className="px-4 py-3 text-ink-600">{i.qty}</td>
+                      <td className="px-4 py-3 text-right font-bold text-ink-800">{fmtMoney(i.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="flex gap-8 font-display text-base font-extrabold text-ink-900">
+                <span>Total : {fmtMoney(detail.total)}</span>
+                <span className="text-sm font-bold text-ink-500">{PAY_METHODS[detail.payment_method] || detail.payment_method}</span>
+              </p>
+              <div className="no-print flex flex-wrap gap-2">
+                {nextAction(detail)}
+                {detail.status === 'attente' && (
+                  <button className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={() => setStatus(detail, 'annulee')}>
+                    Annuler (réappro stock)
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 function StatsTab() {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
@@ -1361,9 +1569,11 @@ function StatsTab() {
 export default function PosAdmin() {
   const [tab, setTab] = useState('caisse');
   const [moduleError, setModuleError] = useState('');
+  const canManage = ['super_admin', 'admin'].includes(getSavedUser()?.role);
+  const tabs = TABS.filter(([, , manage]) => !manage || canManage);
 
   const checkModule = useCallback(() => {
-    api.pos.stats()
+    api.pos.products.list()
       .then(() => setModuleError(''))
       .catch((e) => {
         if (String(e.message).includes('désactivé')) setModuleError(e.message);
@@ -1388,7 +1598,7 @@ export default function PosAdmin() {
         subtitle="Caisse, ventes, stock et statistiques — module interne activable par le super administrateur"
       />
       <div className="mb-8 flex flex-wrap gap-2">
-        {TABS.map(([id, label]) => (
+        {tabs.map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -1402,10 +1612,11 @@ export default function PosAdmin() {
       </div>
 
       {tab === 'caisse' && <CaisseTab />}
-      {tab === 'ventes' && <SalesTab />}
-      {tab === 'stock' && <StockTab />}
+      {tab === 'ventes' && <SalesTab canManage={canManage} />}
+      {tab === 'commandes' && <OrdersTab />}
+      {tab === 'stock' && <StockTab canManage={canManage} />}
       {tab === 'mouvements' && <MovementsTab />}
-      {tab === 'stats' && <StatsTab />}
+      {tab === 'stats' && canManage && <StatsTab />}
     </div>
   );
 }

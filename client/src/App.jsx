@@ -14,6 +14,7 @@ import Campaigns from './pages/Campaigns.jsx';
 import CampaignDetail from './pages/CampaignDetail.jsx';
 import Donate from './pages/Donate.jsx';
 import Contact from './pages/Contact.jsx';
+import Shop from './pages/Shop.jsx';
 import MemberCard from './pages/MemberCard.jsx';
 import MemberPrintCard from './pages/MemberPrintCard.jsx';
 import NotFound from './pages/NotFound.jsx';
@@ -72,6 +73,7 @@ function Shell() {
             <Route path="/collectes/:slug" element={<CampaignDetail />} />
             <Route path="/faire-un-don" element={<Donate />} />
             <Route path="/contact" element={<Contact />} />
+            <Route path="/boutique" element={<Shop />} />
             <Route path="/membre/:code" element={<MemberCard />} />
             <Route path="/membre/:code/carte" element={<MemberPrintCard />} />
             <Route path="*" element={<NotFound />} />

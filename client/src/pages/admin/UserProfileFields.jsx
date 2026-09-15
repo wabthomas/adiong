@@ -16,15 +16,17 @@ export const emptyUser = {
 const ROLE_STYLES = {
   super_admin: 'bg-brand-900 text-white',
   admin: 'bg-brand-100 text-brand-700',
+  cashier: 'bg-amber-100 text-amber-800',
   editor: 'bg-accent-100 text-accent-800',
   viewer: 'bg-ink-100 text-ink-600'
 };
 
-export const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
+export const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', cashier: 'Caissier', editor: 'Éditeur', viewer: 'Consultation' };
 
 export const ROLE_DESCRIPTIONS = {
   super_admin: "Tout, y compris l'activation des modules (GRH) et la gestion des super admins",
   admin: 'Accès complet : contenu, paramètres, utilisateurs, GRH (si activée)',
+  cashier: 'Point de vente : encaisser, suivre les ventes et les commandes en ligne (pas de gestion du catalogue ni des rapports)',
   editor: 'Gère les articles, causes, campagnes et la médiathèque',
   viewer: 'Consultation seule (tableau de bord)'
 };

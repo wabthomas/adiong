@@ -67,6 +67,9 @@ export const api = {
   campaigns: () => req('/api/public/campaigns'),
   campaign: (slug) => req(`/api/public/campaigns/${slug}`),
   partners: () => req('/api/public/partners'),
+  modules: () => req('/api/public/modules'),
+  shop: () => req('/api/public/shop'),
+  shopOrder: (b) => req('/api/public/shop/orders', { method: 'POST', body: b }),
   contact: (body) => req('/api/contact', { method: 'POST', body }),
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
@@ -344,7 +347,17 @@ export const api = {
       update: (id, b) => req(`/api/admin/pos/products/${id}`, { method: 'PUT', body: b, auth: true }),
       get: (id) => req(`/api/admin/pos/products/${id}`, { auth: true }),
       remove: (id) => req(`/api/admin/pos/products/${id}`, { method: 'DELETE', auth: true }),
-      movement: (id, b) => req(`/api/admin/pos/products/${id}/movements`, { method: 'POST', body: b, auth: true })
+      movement: (id, b) => req(`/api/admin/pos/products/${id}/movements`, { method: 'POST', body: b, auth: true }),
+      byBarcode: (code) => req(`/api/admin/pos/products/by-barcode/${encodeURIComponent(code)}`, { auth: true })
+    },
+    orders: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        if (params.status) q.set('status', params.status);
+        const s = q.toString();
+        return req(`/api/admin/pos/orders${s ? `?${s}` : ''}`, { auth: true });
+      },
+      setStatus: (id, status) => req(`/api/admin/pos/orders/${id}`, { method: 'PATCH', body: { status }, auth: true })
     },
     movements: {
       list: (params = {}) => {

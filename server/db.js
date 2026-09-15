@@ -393,10 +393,26 @@ CREATE TABLE IF NOT EXISTS pos_return_items (
   product_id INTEGER,
   qty INTEGER NOT NULL DEFAULT 1
 );
+
+CREATE TABLE IF NOT EXISTS shop_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  reference TEXT UNIQUE NOT NULL,
+  customer_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  items TEXT NOT NULL DEFAULT '[]',
+  subtotal REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  payment_method TEXT NOT NULL DEFAULT 'mobile',
+  status TEXT NOT NULL DEFAULT 'attente',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
 migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE grh_employees ADD COLUMN job_description TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE grh_leaves ADD COLUMN days INTEGER NOT NULL DEFAULT 0');
+migrate("ALTER TABLE stock_products ADD COLUMN barcode TEXT NOT NULL DEFAULT ''");
 
 export default db;
