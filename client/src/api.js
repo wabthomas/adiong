@@ -15,11 +15,14 @@ export const getSavedUser = () => {
 export const setSavedUser = (u) => {
   if (u) localStorage.setItem(USER_KEY, JSON.stringify(u));
   else localStorage.removeItem(USER_KEY);
+  window.dispatchEvent(new Event('adiong-user'));
 };
 
 async function req(path, { method = 'GET', body, auth = false, form = false } = {}) {
   const headers = {};
-  if (body) headers['Content-Type'] = 'application/json';
+  const isForm = form || (typeof FormData !== 'undefined' && body instanceof FormData);
+  // Let the browser set multipart/form-data + boundary for FormData.
+  if (body && !isForm) headers['Content-Type'] = 'application/json';
   if (auth) {
     const t = getToken();
     if (t) headers['Authorization'] = `Bearer ${t}`;
@@ -27,11 +30,32 @@ async function req(path, { method = 'GET', body, auth = false, form = false } = 
   const res = await fetch(path, {
     method,
     headers,
-    body: body ? (form ? body : JSON.stringify(body)) : undefined
+    body: body ? (isForm ? body : JSON.stringify(body)) : undefined
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
+  const raw = await res.text();
+  let data = {};
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      if (!res.ok) throw new Error(httpErrorMessage(res, null, raw));
+      throw new Error(`Réponse invalide (${res.status})`);
+    }
+  }
+  if (!res.ok) throw new Error(httpErrorMessage(res, data, raw));
   return data;
+}
+
+function httpErrorMessage(res, data, raw) {
+  if (data && typeof data === 'object' && !Array.isArray(data) && data.error) {
+    return String(data.error);
+  }
+  const snippet = String(raw || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+  return snippet || `Erreur ${res.status}`;
 }
 
 export const api = {
@@ -47,6 +71,11 @@ export const api = {
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
   logout: () => req('/api/auth/logout', { method: 'POST', body: {}, auth: true }),
+  me: {
+    get: () => req('/api/auth/me', { auth: true }),
+    update: (b) => req('/api/auth/me', { method: 'PUT', body: b, auth: true })
+  },
+  member: (code) => req(`/api/public/member/${encodeURIComponent(code)}`),
   password: (body) => req('/api/auth/password', { method: 'POST', body, auth: true }),
   dashboard: () => req('/api/admin/dashboard', { auth: true }),
   adminArticles: {
@@ -88,18 +117,18 @@ export const api = {
     update: (b) => req('/api/admin/settings', { method: 'PUT', body: b, auth: true })
   },
   media: {
-    list: (q = '') => req(`/api/admin/media${q ? `?q=${encodeURIComponent(q)}` : ''}`, { auth: true }),
+    list: (q = '', type = '') => {
+      const p = new URLSearchParams();
+      if (q) p.set('q', q);
+      if (type) p.set('type', type);
+      const qs = p.toString();
+      return req(`/api/admin/media${qs ? `?${qs}` : ''}`, { auth: true });
+    },
     upload: async (file, alt = '') => {
       const fd = new FormData();
       fd.append('image', file);
       if (alt) fd.append('alt', alt);
-      const headers = {};
-      const t = getToken();
-      if (t) headers['Authorization'] = `Bearer ${t}`;
-      const res = await fetch('/api/admin/media', { method: 'POST', headers, body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
-      return data;
+      return req('/api/admin/media', { method: 'POST', body: fd, auth: true });
     },
     update: (id, b) => req(`/api/admin/media/${id}`, { method: 'PATCH', body: b, auth: true }),
     remove: (id) => req(`/api/admin/media/${id}`, { method: 'DELETE', auth: true })
@@ -108,6 +137,7 @@ export const api = {
     list: () => req('/api/admin/users', { auth: true }),
     create: (b) => req('/api/admin/users', { method: 'POST', body: b, auth: true }),
     update: (id, b) => req(`/api/admin/users/${id}`, { method: 'PUT', body: b, auth: true }),
+    regenerateCode: (id) => req(`/api/admin/users/${id}/code`, { method: 'POST', body: {}, auth: true }),
     remove: (id) => req(`/api/admin/users/${id}`, { method: 'DELETE', auth: true })
   },
   modules: {
@@ -163,7 +193,7 @@ export const api = {
   async upload(file) {
     const fd = new FormData();
     fd.append('image', file);
-    return req('/api/admin/upload', { method: 'POST', body: fd, auth: true, form: true });
+    return req('/api/admin/upload', { method: 'POST', body: fd, auth: true });
   }
 };
 

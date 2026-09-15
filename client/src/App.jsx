@@ -14,6 +14,7 @@ import Campaigns from './pages/Campaigns.jsx';
 import CampaignDetail from './pages/CampaignDetail.jsx';
 import Donate from './pages/Donate.jsx';
 import Contact from './pages/Contact.jsx';
+import MemberCard from './pages/MemberCard.jsx';
 import NotFound from './pages/NotFound.jsx';
 const AdminLogin = lazy(() => import('./pages/admin/AdminLogin.jsx'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
@@ -25,6 +26,7 @@ const DonationsAdmin = lazy(() => import('./pages/admin/DonationsAdmin.jsx'));
 const MessagesAdmin = lazy(() => import('./pages/admin/MessagesAdmin.jsx'));
 const MediaAdmin = lazy(() => import('./pages/admin/MediaAdmin.jsx'));
 const UsersAdmin = lazy(() => import('./pages/admin/UsersAdmin.jsx'));
+const ProfileAdmin = lazy(() => import('./pages/admin/ProfileAdmin.jsx'));
 const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
 const GrhAdmin = lazy(() => import('./pages/admin/GrhAdmin.jsx'));
 const PartnersAdmin = lazy(() => import('./pages/admin/PartnersAdmin.jsx'));
@@ -67,6 +69,7 @@ function Shell() {
             <Route path="/collectes/:slug" element={<CampaignDetail />} />
             <Route path="/faire-un-don" element={<Donate />} />
             <Route path="/contact" element={<Contact />} />
+            <Route path="/membre/:code" element={<MemberCard />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AnimatePresence>
@@ -93,6 +96,7 @@ export default function App() {
           <Route path="messages" element={<MessagesAdmin />} />
           <Route path="medias" element={<MediaAdmin />} />
           <Route path="utilisateurs" element={<UsersAdmin />} />
+          <Route path="profil" element={<ProfileAdmin />} />
           <Route path="grh" element={<GrhAdmin />} />
           <Route path="partenaires" element={<PartnersAdmin />} />
           <Route path="parametres" element={<SettingsAdmin />} />

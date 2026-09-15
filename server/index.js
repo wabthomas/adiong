@@ -9,9 +9,10 @@ import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import multer from 'multer';
 import Jimp from 'jimp';
+import QRCode from 'qrcode';
 import { fileURLToPath } from 'node:url';
-import db from './db.js';
-import { seedIfEmpty, ensureSettings } from './seed.js';
+import db, { newUniqueCode, ensureUserCodes } from './db.js';
+import { seedIfEmpty, ensureSettings, syncMediaLibrary } from './seed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
@@ -33,6 +34,8 @@ const JWT_SECRET = loadSecret();
 
 ensureSettings();
 seedIfEmpty();
+ensureUserCodes();
+await syncMediaLibrary();
 
 const app = express();
 app.use(helmet(process.env.NODE_ENV === 'production' ? {
@@ -229,6 +232,21 @@ const uniqueSlug = (table, desired, ignoreId = null) => {
   return slug;
 };
 
+const isPdfFile = (file) => {
+  const mime = String(file.mimetype || '').toLowerCase();
+  const name = String(file.originalname || '').toLowerCase();
+  return mime === 'application/pdf' || mime === 'application/x-pdf' || name.endsWith('.pdf');
+};
+
+const isAllowedImage = (file) => {
+  const mime = String(file.mimetype || '').toLowerCase();
+  const name = String(file.originalname || '').toLowerCase();
+  if (/^image\/(jpe?g|pjpeg|png|x-png|webp|gif|avif|svg\+xml)$/.test(mime)) return true;
+  return /\.(jpe?g|png|webp|gif|avif|svg)$/.test(name);
+};
+
+const isAllowedUpload = (file) => isAllowedImage(file) || isPdfFile(file);
+
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({
@@ -242,8 +260,8 @@ const upload = multer({
   storage,
   limits: { fileSize: 6 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (/^image\/(jpe?g|png|webp|gif|avif)$/.test(file.mimetype)) cb(null, true);
-    else cb(new Error('Format non supporté (jpg, png, webp, gif)'));
+    if (isAllowedImage(file)) cb(null, true);
+    else cb(new Error('Format non supporté (jpg, png, webp, gif, svg)'));
   }
 });
 app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));
@@ -257,9 +275,9 @@ app.post('/api/auth/login', loginLimiter, (req, res) => {
     logSecurity('login_fail', req.ip, em);
     return res.status(401).json({ error: 'Identifiants incorrects' });
   }
-  const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
+  const token = jwt.sign({ id: user.id, email: user.email, role: user.role, jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '12h' });
   logSecurity('login_ok', req.ip, user.email);
-  res.json({ token, user: { email: user.email, full_name: user.full_name, role: user.role } });
+  res.json({ token, user: publicUser(user) });
 });
 
 app.post('/api/auth/logout', authRequired, (req, res) => {
@@ -281,6 +299,61 @@ app.post('/api/auth/password', authRequired, (req, res) => {
     return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(next, 10), user.id);
   res.json({ ok: true });
+});
+
+app.get('/api/auth/me', authRequired, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  res.json(publicUser(user));
+});
+
+app.put('/api/auth/me', authRequired, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  try {
+    applyUserFields(user, req.body, { allowRole: false });
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message });
+  }
+  res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)));
+});
+
+app.get('/api/public/member/:code', (req, res) => {
+  const code = String(req.params.code || '').toUpperCase().trim();
+  const user = db.prepare('SELECT * FROM users WHERE unique_code = ?').get(code);
+  if (!user) return res.status(404).json({ error: 'Membre introuvable' });
+  const u = publicUser(user);
+  res.json({
+    full_name: u.full_name,
+    photo: u.photo,
+    phone: u.phone,
+    job_title: u.job_title,
+    unique_code: u.unique_code,
+    bio: u.bio,
+    role_label: u.role_label,
+    email: u.email
+  });
+});
+
+app.get('/api/public/member/:code/qr', async (req, res) => {
+  const code = String(req.params.code || '').toUpperCase().trim();
+  const user = db.prepare('SELECT unique_code FROM users WHERE unique_code = ?').get(code);
+  if (!user) return res.status(404).json({ error: 'Membre introuvable' });
+  try {
+    const url = `${requestBase(req)}/membre/${encodeURIComponent(code)}`;
+    const png = await QRCode.toBuffer(url, {
+      type: 'png',
+      width: 640,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#0F3A88', light: '#FFFFFF' }
+    });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(png);
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le QR code' });
+  }
 });
 
 app.get('/api/public/site', (req, res) => res.json(publicSite()));
@@ -434,7 +507,7 @@ app.post('/api/contact', contactLimiter, (req, res) => {
   notifyEmail(
     `Nouveau message de ${name}${subject ? ` — ${subject}` : ''}`,
     `<p><strong>${esc(name)}</strong> &lt;${esc(email)}&gt; a envoyé un message${subject ? ` : <strong>${esc(subject)}</strong>` : ''}.</p>
-     <blockquote style="border-left:3px solid #0e7c66;margin:12px 0;padding:4px 14px;color:#333">${esc(message)}</blockquote>
+     <blockquote style="border-left:3px solid #0f3a88;margin:12px 0;padding:4px 14px;color:#333">${esc(message)}</blockquote>
      <p style="color:#888;font-size:12px">Répondre à : ${esc(email)}</p>`
   );
   res.json({ ok: true });
@@ -627,15 +700,25 @@ app.post('/api/admin/upload', authRequired, requireRole('content'), (req, res) =
 
 const mediaDir = path.join(uploadDir, 'media');
 if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
+const docsDir = path.join(uploadDir, 'docs');
+if (!fs.existsSync(docsDir)) fs.mkdirSync(docsDir, { recursive: true });
 
 const memoryUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (/^image\/(jpe?g|png|webp|gif|avif)$/.test(file.mimetype)) cb(null, true);
-    else cb(new Error('Format non supporté (jpg, png, webp, gif)'));
+    if (isAllowedUpload(file)) cb(null, true);
+    else cb(new Error('Format non supporté (jpg, png, webp, gif, svg, pdf)'));
   }
 });
+
+function uniqueMediaFilename(original) {
+  const base = original || 'image';
+  if (!db.prepare('SELECT 1 FROM media WHERE filename = ?').get(base)) return base;
+  const ext = path.extname(base);
+  const stem = path.basename(base, ext);
+  return `${stem}-${Date.now()}${ext || '.jpg'}`;
+}
 
 function scaleTo(image, maxW, maxH) {
   const { width, height } = image.bitmap;
@@ -647,56 +730,92 @@ function scaleTo(image, maxW, maxH) {
   return { w, h };
 }
 
-async function optimizeBuffer(buffer) {
-  const image = await Jimp.read(buffer);
-  const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  const mainExt = image.mime === Jimp.MIME_IMAGE_PNG && image.bitmap.width < 800 ? 'png' : 'jpg';
-
-  scaleTo(image, 1600, 1600);
-  image.quality(82);
-  const mainPath = path.join(mediaDir, `${stamp}.${mainExt}`);
-  await image.writeAsync(mainPath);
-
-  if (buffer.length > 0 && buffer.length < fs.statSync(mainPath).size) {
-    fs.writeFileSync(mainPath, buffer);
-  }
-
-  const thumb = image.clone();
-  scaleTo(thumb, 480, 480);
-  thumb.quality(78);
-  const thumbPath = path.join(mediaDir, `${stamp}.thumb.jpg`);
-  await thumb.writeAsync(thumbPath);
-
-  const size = fs.statSync(mainPath).size;
-  return {
-    mainName: path.basename(mainPath),
-    thumbName: path.basename(thumbPath),
-    width: image.bitmap.width,
-    height: image.bitmap.height,
-    size
-  };
+function isPdfMedia(row) {
+  return /pdf/i.test(row.mime || '') || /\.pdf$/i.test(row.url || '') || /\.pdf$/i.test(row.filename || '');
 }
 
-app.post('/api/admin/media', authRequired, requireRole('content'), memoryUpload.single('image'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Aucune image fournie' });
-    const opt = await optimizeBuffer(req.file.buffer);
-    const url = `/uploads/media/${opt.mainName}`;
-    const thumb = `/uploads/media/${opt.thumbName}`;
-    const alt = String(req.body?.alt || '').slice(0, 300);
-    const info = db.prepare(`INSERT INTO media (filename, url, thumb, size, width, height, mime, alt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(req.file.originalname, url, thumb, opt.size, opt.width, opt.height, req.file.mimetype, alt);
-    res.json(db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
-  } catch (e) {
-    res.status(400).json({ error: `Échec de l'optimisation : ${e.message}` });
+async function optimizeBuffer(buffer, originalName = 'image.jpg') {
+  const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const origExt = path.extname(originalName).toLowerCase() || '.jpg';
+  const looksPdf = origExt === '.pdf' || buffer.slice(0, 5).toString() === '%PDF-';
+  if (looksPdf) {
+    const mainName = `${stamp}.pdf`;
+    fs.writeFileSync(path.join(docsDir, mainName), buffer);
+    return { folder: 'docs', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
   }
+  if (origExt === '.svg') {
+    const mainName = `${stamp}.svg`;
+    fs.writeFileSync(path.join(mediaDir, mainName), buffer);
+    return { folder: 'media', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
+  }
+  try {
+    const image = await Jimp.read(buffer);
+    const keepPng = origExt === '.png';
+    const mainExt = keepPng ? 'png' : 'jpg';
+
+    scaleTo(image, 1600, 1600);
+    image.quality(82);
+    const mainPath = path.join(mediaDir, `${stamp}.${mainExt}`);
+    await image.writeAsync(mainPath);
+
+    if (buffer.length > 0 && buffer.length < fs.statSync(mainPath).size && origExt === `.${mainExt}`) {
+      fs.writeFileSync(mainPath, buffer);
+    }
+
+    const thumb = image.clone();
+    scaleTo(thumb, 480, 480);
+    thumb.quality(78);
+    const thumbPath = path.join(mediaDir, `${stamp}.thumb.jpg`);
+    await thumb.writeAsync(thumbPath);
+
+    const size = fs.statSync(mainPath).size;
+    return {
+      folder: 'media',
+      mainName: path.basename(mainPath),
+      thumbName: path.basename(thumbPath),
+      width: image.bitmap.width,
+      height: image.bitmap.height,
+      size
+    };
+  } catch {
+    const mainName = `${stamp}${origExt}`;
+    fs.writeFileSync(path.join(mediaDir, mainName), buffer);
+    return { folder: 'media', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
+  }
+}
+
+app.post('/api/admin/media', authRequired, requireRole('content'), (req, res) => {
+  memoryUpload.single('image')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+      const opt = await optimizeBuffer(req.file.buffer, req.file.originalname);
+      const folder = opt.folder || 'media';
+      const url = `/uploads/${folder}/${opt.mainName}`;
+      const thumb = `/uploads/${folder}/${opt.thumbName}`;
+      const alt = String(req.body?.alt || '').slice(0, 300);
+      const filename = uniqueMediaFilename(req.file.originalname);
+      const info = db.prepare(`INSERT INTO media (filename, url, thumb, size, width, height, mime, alt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(filename, url, thumb, opt.size, opt.width, opt.height, req.file.mimetype, alt);
+      res.json(db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
+    } catch (e) {
+      res.status(400).json({ error: `Échec de l'optimisation : ${e.message}` });
+    }
+  });
 });
 
 app.get('/api/admin/media', authRequired, requireRole('content'), (req, res) => {
   const q = String(req.query.q || '').toLowerCase();
+  const type = String(req.query.type || '').toLowerCase();
   let rows = db.prepare('SELECT * FROM media ORDER BY created_at DESC').all();
-  if (q) rows = rows.filter((m) => m.filename.toLowerCase().includes(q));
+  if (type === 'pdf') rows = rows.filter(isPdfMedia);
+  else if (type === 'image') rows = rows.filter((m) => !isPdfMedia(m));
+  if (q) {
+    rows = rows.filter((m) =>
+      m.filename.toLowerCase().includes(q) || (m.alt || '').toLowerCase().includes(q)
+    );
+  }
   res.json(rows);
 });
 
@@ -710,14 +829,17 @@ app.patch('/api/admin/media/:id', authRequired, requireRole('content'), (req, re
 
 app.delete('/api/admin/media/:id', authRequired, requireRole('content'), (req, res) => {
   const m = db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
-  if (!m) return res.status(404).json({ error: 'Image introuvable' });
+  if (!m) return res.status(404).json({ error: 'Fichier introuvable' });
   const used =
     db.prepare('SELECT COUNT(*) n FROM articles WHERE image = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM causes WHERE image = ?').get(m.url).n +
-    db.prepare('SELECT COUNT(*) n FROM campaigns WHERE image = ?').get(m.url).n;
+    db.prepare('SELECT COUNT(*) n FROM campaigns WHERE image = ?').get(m.url).n +
+    db.prepare('SELECT COUNT(*) n FROM users WHERE photo = ?').get(m.url).n +
+    db.prepare('SELECT COUNT(*) n FROM partners WHERE logo = ?').get(m.url).n +
+    db.prepare('SELECT COUNT(*) n FROM articles WHERE content LIKE ?').get(`%${m.url}%`).n;
   const settingUsed = db.prepare('SELECT COUNT(*) n FROM settings WHERE value LIKE ?').get(`%${m.url}%`).n;
   if (used + settingUsed > 0)
-    return res.status(409).json({ error: 'Cette image est utilisée sur le site. Remplacez-la avant de la supprimer.' });
+    return res.status(409).json({ error: 'Ce fichier est utilisé sur le site. Remplacez-le avant de le supprimer.' });
   for (const f of [m.url, m.thumb]) {
     if (!f) continue;
     const rel = f.replace(/^\/uploads\//, '');
@@ -729,6 +851,56 @@ app.delete('/api/admin/media/:id', authRequired, requireRole('content'), (req, r
 
 const ROLE_LABELS = { super_admin: 'Super administrateur', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
 const PRIVILEGED = ['super_admin', 'admin'];
+
+function publicUser(u) {
+  if (!u) return null;
+  return {
+    id: u.id,
+    email: u.email,
+    full_name: u.full_name,
+    role: u.role,
+    role_label: ROLE_LABELS[u.role] || u.role,
+    photo: u.photo || '',
+    phone: u.phone || '',
+    job_title: u.job_title || '',
+    unique_code: u.unique_code || '',
+    bio: u.bio || '',
+    created_at: u.created_at
+  };
+}
+
+function requestBase(req) {
+  if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  return `${proto}://${req.get('host')}`;
+}
+
+function applyUserFields(user, body, { allowRole = false, actorRole } = {}) {
+  const { full_name, email, photo, phone, job_title, bio, role, password } = body || {};
+  if (typeof full_name === 'string') db.prepare('UPDATE users SET full_name = ? WHERE id = ?').run(full_name.trim() || user.full_name, user.id);
+  if (typeof email === 'string' && email.trim()) {
+    const next = email.toLowerCase().trim();
+    const taken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(next, user.id);
+    if (taken) throw Object.assign(new Error('Cet email est déjà utilisé'), { status: 409 });
+    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(next, user.id);
+  }
+  if (typeof photo === 'string') db.prepare('UPDATE users SET photo = ? WHERE id = ?').run(photo, user.id);
+  if (typeof phone === 'string') db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone.trim(), user.id);
+  if (typeof job_title === 'string') db.prepare('UPDATE users SET job_title = ? WHERE id = ?').run(job_title.trim(), user.id);
+  if (typeof bio === 'string') db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio.trim(), user.id);
+  if (allowRole && role) {
+    if (!['super_admin', 'admin', 'editor', 'viewer'].includes(role)) throw Object.assign(new Error('Rôle invalide'), { status: 400 });
+    if (role === 'super_admin' && actorRole !== 'super_admin')
+      throw Object.assign(new Error('Seul un super administrateur peut accorder ce rôle'), { status: 403 });
+    const err = guardLastAdmin(user.id, role);
+    if (err) throw Object.assign(new Error(err), { status: 409 });
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, user.id);
+  }
+  if (password) {
+    if (password.length < 8) throw Object.assign(new Error('Mot de passe : 8 caractères minimum'), { status: 400 });
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), user.id);
+  }
+}
 
 function guardLastAdmin(id, role) {
   const currentPriv = db.prepare('SELECT COUNT(*) n FROM users WHERE role IN (?, ?)').get('super_admin', 'admin').n;
@@ -743,12 +915,12 @@ app.get('/api/admin/security', authRequired, requireRole('admin'), (req, res) =>
 });
 
 app.get('/api/admin/users', authRequired, requireRole('admin'), (req, res) => {
-  const users = db.prepare('SELECT id, email, full_name, role, created_at FROM users ORDER BY created_at').all();
-  res.json(users.map((u) => ({ ...u, role_label: ROLE_LABELS[u.role] || u.role })));
+  const users = db.prepare('SELECT * FROM users ORDER BY created_at').all();
+  res.json(users.map(publicUser));
 });
 
 app.post('/api/admin/users', authRequired, requireRole('admin'), (req, res) => {
-  const { email, password, full_name, role } = req.body || {};
+  const { email, password, full_name, role, photo, phone, job_title, bio } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
   if (password.length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum' });
   if (!['super_admin', 'admin', 'editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
@@ -756,29 +928,38 @@ app.post('/api/admin/users', authRequired, requireRole('admin'), (req, res) => {
     return res.status(403).json({ error: 'Seul un super administrateur peut créer un super administrateur' });
   const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
   if (exists) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
-  const info = db.prepare('INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, ?)')
-    .run(String(email).toLowerCase().trim(), bcrypt.hashSync(password, 10), full_name || email, role);
-  const user = db.prepare('SELECT id, email, full_name, role, created_at FROM users WHERE id = ?').get(info.lastInsertRowid);
-  res.json({ ...user, role_label: ROLE_LABELS[user.role] });
+  const info = db.prepare(
+    'INSERT INTO users (email, password_hash, full_name, role, photo, phone, job_title, unique_code, bio) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    String(email).toLowerCase().trim(),
+    bcrypt.hashSync(password, 10),
+    (full_name || '').trim() || email,
+    role,
+    photo || '',
+    (phone || '').trim(),
+    (job_title || '').trim(),
+    newUniqueCode(),
+    (bio || '').trim()
+  );
+  res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid)));
 });
 
 app.put('/api/admin/users/:id', authRequired, requireRole('admin'), (req, res) => {
-  const { full_name, role, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
-  if (role && !['super_admin', 'admin', 'editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
-  if (role === 'super_admin' && req.user.role !== 'super_admin')
-    return res.status(403).json({ error: 'Seul un super administrateur peut accorder ce rôle' });
-  const err = guardLastAdmin(user.id, role || user.role);
-  if (err) return res.status(409).json({ error: err });
-  if (full_name) db.prepare('UPDATE users SET full_name = ? WHERE id = ?').run(full_name, user.id);
-  if (role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, user.id);
-  if (password) {
-    if (password.length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum' });
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), user.id);
+  try {
+    applyUserFields(user, req.body, { allowRole: true, actorRole: req.user.role });
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message });
   }
-  const fresh = db.prepare('SELECT id, email, full_name, role, created_at FROM users WHERE id = ?').get(user.id);
-  res.json({ ...fresh, role_label: ROLE_LABELS[fresh.role] });
+  res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)));
+});
+
+app.post('/api/admin/users/:id/code', authRequired, requireRole('admin'), (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  db.prepare('UPDATE users SET unique_code = ? WHERE id = ?').run(newUniqueCode(), user.id);
+  res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)));
 });
 
 app.delete('/api/admin/users/:id', authRequired, requireRole('admin'), (req, res) => {
@@ -1025,12 +1206,12 @@ app.post('/api/register', registerLimiter, (req, res) => {
     return res.status(409).json({ error: `Ce lien est réservé à l’adresse ${inv.email}` });
   if (db.prepare('SELECT id FROM users WHERE email = ?').get(em))
     return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
-  const info = db.prepare('INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, ?)')
-    .run(em, bcrypt.hashSync(String(password), 10), String(full_name).trim(), inv.role);
+  const info = db.prepare('INSERT INTO users (email, password_hash, full_name, role, unique_code) VALUES (?, ?, ?, ?, ?)')
+    .run(em, bcrypt.hashSync(String(password), 10), String(full_name).trim(), inv.role, newUniqueCode());
   db.prepare('UPDATE invites SET used = 1, used_at = datetime(\'now\') WHERE id = ?').run(inv.id);
-  const user = db.prepare('SELECT id, email, full_name, role, created_at FROM users WHERE id = ?').get(info.lastInsertRowid);
-  const t = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
-  res.json({ token: t, user: { ...user, role_label: ROLE_LABELS[user.role] } });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+  const t = jwt.sign({ id: user.id, email: user.email, role: user.role, jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '12h' });
+  res.json({ token: t, user: publicUser(user) });
 });
 
 // Gestion des invitations (admin + super admin)

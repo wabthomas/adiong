@@ -24,16 +24,20 @@ export default function Footer() {
           <div>
             <Link to="/" className="flex items-center gap-3">
               {site.logo ? (
-                <img src={site.logo} alt={site.site_name || 'ADI ONG'} className="h-12 max-w-[170px] rounded-xl object-contain" />
-              ) : (
-                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-brand-600">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="white" strokeWidth="1.8">
-                    <circle cx="12" cy="8" r="3" fill="#f5a524" stroke="none" />
-                    <path d="M5 18.5c1.4-4 4-5.5 7-5.5s5.6 1.5 7 5.5" strokeLinecap="round" />
-                  </svg>
+                <span className="rounded-xl bg-white px-2.5 py-1.5">
+                  <img src={site.logo} alt={site.site_name || 'ADI ONG'} className="h-10 max-w-[220px] object-contain sm:h-11 sm:max-w-[260px]" />
                 </span>
+              ) : (
+                <>
+                  <span className="grid h-11 w-11 place-items-center rounded-2xl bg-brand-600">
+                    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="white" strokeWidth="1.8">
+                      <circle cx="12" cy="8" r="3" fill="#fc7a03" stroke="none" />
+                      <path d="M5 18.5c1.4-4 4-5.5 7-5.5s5.6 1.5 7 5.5" strokeLinecap="round" />
+                    </svg>
+                  </span>
+                  <span className="font-display text-xl font-bold">{site.site_name || 'ADI ONG'}</span>
+                </>
               )}
-              <span className="font-display text-xl font-bold">{site.site_name || 'ADI ONG'}</span>
             </Link>
             <p className="mt-5 max-w-sm text-[15px] leading-relaxed text-white/60">{site.site_tagline}.</p>
             <div className="mt-6 flex gap-2.5">

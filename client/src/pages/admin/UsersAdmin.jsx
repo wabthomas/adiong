@@ -1,22 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, getSavedUser } from '../../api.js';
-import { PageTitle, Modal, Field, DeleteButton } from './AdminUI.jsx';
-
-const ROLE_STYLES = {
-  super_admin: 'bg-brand-900 text-white',
-  admin: 'bg-brand-100 text-brand-700',
-  editor: 'bg-accent-100 text-accent-800',
-  viewer: 'bg-ink-100 text-ink-600'
-};
-const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
-const ROLE_DESCRIPTIONS = {
-  super_admin: "Tout, y compris l'activation des modules (GRH) et la gestion des super admins",
-  admin: 'Accès complet : contenu, paramètres, utilisateurs, GRH (si activée)',
-  editor: 'Gère les articles, causes, campagnes et la médiathèque',
-  viewer: 'Consultation seule (tableau de bord)'
-};
-
-const emptyUser = { email: '', password: '', full_name: '', role: 'editor' };
+import { api, getSavedUser, setSavedUser } from '../../api.js';
+import { PageTitle, Modal, DeleteButton, Field } from './AdminUI.jsx';
+import { emptyUser, ROLE_STYLES, ROLE_LABELS, ROLE_DESCRIPTIONS, UserProfileFields, MemberQrCard } from './UserProfileFields.jsx';
 
 const INVITE_ROLES = [
   ['editor', 'Éditeur', 'Publie les articles, causes, campagnes ; gère la médiathèque'],
@@ -87,12 +72,26 @@ export default function UsersAdmin() {
     setSaving(true);
     setError('');
     try {
+      const payload = {
+        full_name: editing.full_name,
+        email: editing.email,
+        role: editing.role,
+        photo: editing.photo || '',
+        phone: editing.phone || '',
+        job_title: editing.job_title || '',
+        bio: editing.bio || ''
+      };
+      if (editing.password) payload.password = editing.password;
       if (editing.id) {
-        const payload = { full_name: editing.full_name, role: editing.role };
-        if (editing.password) payload.password = editing.password;
-        await api.adminUsers.update(editing.id, payload);
+        const updated = await api.adminUsers.update(editing.id, payload);
+        if (meUser?.id === updated.id) setSavedUser({ ...meUser, ...updated });
       } else {
-        await api.adminUsers.create(editing);
+        if (!editing.password) {
+          setError('Mot de passe requis');
+          setSaving(false);
+          return;
+        }
+        await api.adminUsers.create({ ...payload, password: editing.password });
       }
       setEditing(null);
       load();
@@ -100,6 +99,18 @@ export default function UsersAdmin() {
       setError(e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const regenerate = async () => {
+    if (!editing?.id) return;
+    if (!confirm('Générer un nouveau code ? L’ancien QR code ne fonctionnera plus.')) return;
+    try {
+      const updated = await api.adminUsers.regenerateCode(editing.id);
+      setEditing({ ...updated, password: '' });
+      load();
+    } catch (e) {
+      alert(e.message);
     }
   };
 
@@ -117,7 +128,7 @@ export default function UsersAdmin() {
     <div>
       <PageTitle
         title="Utilisateurs & rôles"
-        subtitle={`${users.length} compte(s) — contrôle de l'accès à l'espace d'administration`}
+        subtitle={`${users.length} compte(s) — fiche complète, photo, code unique et QR code`}
         action={
           <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setEditing({ ...emptyUser })}>
             + Nouveau utilisateur
@@ -141,10 +152,11 @@ export default function UsersAdmin() {
 
       <div className="card mt-6 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
               <tr>
                 <th className="px-6 py-4">Utilisateur</th>
+                <th className="px-6 py-4">Code</th>
                 <th className="px-6 py-4">Rôle</th>
                 <th className="px-6 py-4">Créé le</th>
                 <th className="px-6 py-4 text-right">Actions</th>
@@ -155,17 +167,26 @@ export default function UsersAdmin() {
                 <tr key={u.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-100 font-display text-sm font-bold text-brand-700">
-                        {(u.full_name || u.email).slice(0, 2).toUpperCase()}
-                      </span>
+                      {u.photo ? (
+                        <img src={u.photo} alt="" className="h-10 w-10 rounded-full object-cover ring-1 ring-brand-100" />
+                      ) : (
+                        <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-100 font-display text-sm font-bold text-brand-700">
+                          {(u.full_name || u.email).slice(0, 2).toUpperCase()}
+                        </span>
+                      )}
                       <div>
                         <p className="font-semibold text-ink-900">
                           {u.full_name}
                           {meUser?.email === u.email && <span className="ml-2 rounded-full bg-accent-400 px-2 py-0.5 text-[10px] font-bold text-ink-950">VOUS</span>}
                         </p>
-                        <p className="text-xs text-ink-400">{u.email}</p>
+                        <p className="text-xs text-ink-400">{u.job_title || u.email}</p>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="rounded-full bg-brand-50 px-2.5 py-1 font-mono text-xs font-bold text-brand-700">
+                      {u.unique_code || '—'}
+                    </span>
                   </td>
                   <td className="px-6 py-4">
                     <select
@@ -180,7 +201,6 @@ export default function UsersAdmin() {
                         }
                       }}
                       className={`rounded-full px-3 py-1.5 text-xs font-bold outline-none disabled:opacity-60 ${ROLE_STYLES[u.role]}`}
-                      title={u.role === 'admin' && u.id === users.find((x) => x.role === 'admin')?.id ? 'Dernier administrateur : modifiable en dernier' : ''}
                     >
                       <option value="super_admin">Super admin</option>
                       <option value="admin">Administrateur</option>
@@ -194,7 +214,7 @@ export default function UsersAdmin() {
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-2">
                       <button
-                        onClick={() => setEditing({ ...u, password: '' })}
+                        onClick={() => setEditing({ ...emptyUser, ...u, password: '' })}
                         className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100"
                       >
                         Modifier
@@ -387,59 +407,28 @@ export default function UsersAdmin() {
         )}
       </Modal>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing?.id ? 'Modifier l’utilisateur' : 'Nouvel utilisateur'}>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing?.id ? 'Modifier l’utilisateur' : 'Nouvel utilisateur'} wide>
         {editing && (
-          <div className="space-y-5">
-            <Field label="Nom complet">
-              <input className="input" value={editing.full_name || ''} onChange={(e) => setEditing({ ...editing, full_name: e.target.value })} placeholder="Prénom Nom" />
-            </Field>
-            <Field label="Email">
-              <input
-                className="input"
-                type="email"
-                value={editing.email}
-                disabled={!!editing.id}
-                onChange={(e) => setEditing({ ...editing, email: e.target.value })}
-                placeholder="prenom@adiong.org"
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px]">
+            <div>
+              <UserProfileFields
+                value={editing}
+                onChange={setEditing}
+                showRole
+                passwordRequired={!editing.id}
               />
-            </Field>
-            <Field label={editing.id ? 'Nouveau mot de passe (laisser vide pour conserver)' : 'Mot de passe *'} hint="8 caractères minimum">
-              <input
-                className="input"
-                type="password"
-                value={editing.password || ''}
-                onChange={(e) => setEditing({ ...editing, password: e.target.value })}
-                placeholder="••••••••"
-              />
-            </Field>
-            <Field label="Rôle">
-              <div className="space-y-2">
-                {Object.entries(ROLE_DESCRIPTIONS).map(([role, desc]) => (
-                  <button
-                    key={role}
-                    type="button"
-                    onClick={() => setEditing({ ...editing, role })}
-                    className={`flex w-full items-start gap-3 rounded-xl border p-3.5 text-left transition-all ${
-                      editing.role === role
-                        ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-200'
-                        : 'border-ink-200 hover:border-brand-300'
-                    }`}
-                  >
-                    <span className={`mt-0.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${ROLE_STYLES[role]}`}>
-                      {ROLE_LABELS[role]}
-                    </span>
-                    <span className="text-sm leading-snug text-ink-600">{desc}</span>
-                  </button>
-                ))}
+              {error && <p className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+              <div className="mt-6 flex justify-end gap-3 border-t border-ink-100 pt-5">
+                <button
+                  className="btn-primary !px-6 !py-2.5 text-sm"
+                  onClick={save}
+                  disabled={saving || !editing.email || (!editing.id && !editing.password)}
+                >
+                  {saving ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
               </div>
-            </Field>
-            {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
-            <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
-              <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save}
-                disabled={saving || !editing.email || (!editing.id && !editing.password)}>
-                {saving ? 'Enregistrement…' : 'Enregistrer'}
-              </button>
             </div>
+            <MemberQrCard user={editing} canRegenerate={!!editing.id} onRegenerate={regenerate} />
           </div>
         )}
       </Modal>

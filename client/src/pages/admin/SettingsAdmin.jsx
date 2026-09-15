@@ -3,15 +3,37 @@ import { api, getSavedUser } from '../../api.js';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
-  ['identite', 'Identité & contact'],
-  ['marque', 'Logo, favicone & SEO'],
-  ['accueil', 'Accueil'],
-  ['pages', 'En-têtes de pages'],
-  ['apropos', 'À propos'],
-  ['dons', 'Don & collectes'],
-  ['compteurs', 'Compteurs & valeurs'],
-  ['modules', 'Modules (super admin)']
+  { id: 'identite', label: 'Identité', hint: 'Nom, contact, réseaux', icon: 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z' },
+  { id: 'marque', label: 'Marque & SEO', hint: 'Logo, favicone, Google', icon: 'M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z' },
+  { id: 'accueil', label: 'Accueil', hint: 'Hero, mission, bandeau', icon: 'M2.25 12 11.204 3.045c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25' },
+  { id: 'pages', label: 'Pages', hint: 'En-têtes des pages', icon: 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z' },
+  { id: 'apropos', label: 'À propos', hint: 'Présentation, valeurs', icon: 'M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z' },
+  { id: 'dons', label: 'Dons', hint: 'Montants et collectes', icon: 'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z' },
+  { id: 'compteurs', label: 'Compteurs', hint: 'Stats et listes', icon: 'M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z' },
+  { id: 'modules', label: 'Modules', hint: 'GRH et super admin', icon: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z' }
 ];
+
+function TabIcon({ d }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.7" stroke="currentColor" className="h-5 w-5 shrink-0">
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
+
+function SettingsSection({ title, desc, children }) {
+  return (
+    <section className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5">
+      {(title || desc) && (
+        <div className="border-b border-ink-100 px-6 py-4">
+          {title && <h3 className="font-display text-base font-bold text-ink-900">{title}</h3>}
+          {desc && <p className="mt-0.5 text-sm text-ink-400">{desc}</p>}
+        </div>
+      )}
+      <div className="space-y-5 p-6">{children}</div>
+    </section>
+  );
+}
 
 function FlatListEditor({ items, onChange, placeholder = 'Texte…', numeric = false }) {
   const list = items || [];
@@ -145,7 +167,7 @@ export default function SettingsAdmin() {
   const [modMsg, setModMsg] = useState('');
 
   const isSuper = getSavedUser()?.role === 'super_admin';
-  const visibleTabs = isSuper ? TABS : TABS.filter(([id]) => id !== 'modules');
+  const visibleTabs = isSuper ? TABS : TABS.filter((t) => t.id !== 'modules');
 
   useEffect(() => {
     api.adminSettings.get().then(setS).catch(() => {});
@@ -199,70 +221,88 @@ export default function SettingsAdmin() {
     }
   };
 
+  const activeTab = TABS.find((t) => t.id === tab) || TABS[0];
+
   return (
-    <div>
-      <PageTitle
-        title="Paramètres du site"
-        subtitle="Tout le contenu du site est éditable ici — chaque changement est visible immédiatement après enregistrement"
-        action={
-          <div className="flex gap-2">
-            <button className="btn-ghost !px-5 !py-2.5 text-sm" onClick={() => setPwOpen(true)}>
-              Changer le mot de passe
-            </button>
-            <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={save} disabled={saving}>
-              {saving ? 'Enregistrement…' : 'Enregistrer les changements'}
-            </button>
+    <div className="lg:grid lg:grid-cols-[240px_minmax(0,1fr)] lg:items-start lg:gap-8">
+      <aside className="mb-6 lg:sticky lg:top-24 lg:mb-0">
+        <p className="mb-3 px-1 text-xs font-bold uppercase tracking-wider text-ink-400">Rubriques</p>
+        <nav className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+          {visibleTabs.map((t) => {
+            const on = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors lg:w-full ${
+                  on ? 'bg-white text-brand-800 shadow-soft ring-1 ring-brand-100' : 'text-ink-600 hover:bg-white/70'
+                }`}
+              >
+                <span className={`grid h-9 w-9 place-items-center rounded-lg ${on ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-100'}`}>
+                  <TabIcon d={t.icon} />
+                </span>
+                <span className="hidden min-w-0 lg:block">
+                  <span className="block text-sm font-bold">{t.label}</span>
+                  <span className="block text-[11px] font-medium text-ink-400">{t.hint}</span>
+                </span>
+                <span className="text-sm font-bold lg:hidden">{t.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+
+      <div>
+        <div className="sticky top-16 z-20 -mx-4 mb-6 border-b border-ink-100 bg-[#f4f6fb]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:mx-0 lg:rounded-2xl lg:border lg:bg-white/90 lg:px-5 lg:shadow-soft">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-display text-lg font-bold text-ink-900">{activeTab.label}</h2>
+              <p className="text-sm text-ink-400">{activeTab.hint} — visible sur le site dès l'enregistrement</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setPwOpen(true)}>
+                Mot de passe
+              </button>
+              <button type="button" className="btn-primary !px-5 !py-2 text-sm" onClick={save} disabled={saving}>
+                {saving ? 'Enregistrement…' : 'Enregistrer'}
+              </button>
+            </div>
           </div>
-        }
-      />
-
-      {msg && (
-        <p className={`mb-5 rounded-xl px-4 py-3 text-sm font-semibold ${msg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
-          {msg}
-        </p>
-      )}
-
-      {}
-      <div className="mb-8 flex flex-wrap gap-2">
-        {visibleTabs.map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`rounded-full px-5 py-2.5 text-sm font-bold transition-all ${
-              tab === id ? 'bg-brand-600 text-white shadow-soft' : 'bg-white text-ink-600 ring-1 ring-ink-200 hover:ring-brand-300'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+          {msg && (
+            <p className={`mt-3 rounded-xl px-4 py-2.5 text-sm font-semibold ${msg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
+              {msg}
+            </p>
+          )}
+        </div>
 
       {tab === 'identite' && (
-        <div className="card grid gap-5 p-7 sm:grid-cols-2">
-          <Field label="Nom du site"><input className="input" value={s.site_name || ''} onChange={set('site_name')} /></Field>
-          <Field label="Slogan (tagline)"><input className="input" value={s.site_tagline || ''} onChange={set('site_tagline')} /></Field>
-          <div className="sm:col-span-2">
-            <Field label="Adresse"><input className="input" value={s.address || ''} onChange={set('address')} /></Field>
+        <SettingsSection title="Identité & contact" desc="Coordonnées affichées dans le pied de page et la page Contact.">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Nom du site"><input className="input" value={s.site_name || ''} onChange={set('site_name')} /></Field>
+            <Field label="Slogan (tagline)"><input className="input" value={s.site_tagline || ''} onChange={set('site_tagline')} /></Field>
+            <div className="sm:col-span-2">
+              <Field label="Adresse"><input className="input" value={s.address || ''} onChange={set('address')} /></Field>
+            </div>
+            <Field label="Téléphone 1"><input className="input" value={s.phone1 || ''} onChange={set('phone1')} /></Field>
+            <Field label="Téléphone 2"><input className="input" value={s.phone2 || ''} onChange={set('phone2')} /></Field>
+            <Field label="Email"><input className="input" value={s.email || ''} onChange={set('email')} /></Field>
+            <Field label="WhatsApp (format international)"><input className="input" value={s.whatsapp || ''} onChange={set('whatsapp')} /></Field>
+            <Field label="Lien Facebook"><input className="input" value={s.facebook || ''} onChange={set('facebook')} /></Field>
+            <Field label="Lien X / Twitter"><input className="input" value={s.twitter || ''} onChange={set('twitter')} /></Field>
+            <Field label="Lien Instagram"><input className="input" value={s.instagram || ''} onChange={set('instagram')} /></Field>
+            <Field label="Lien Pinterest"><input className="input" value={s.pinterest || ''} onChange={set('pinterest')} /></Field>
+            <Field label="Lien de la vidéo (bouton « Voir la vidéo » sur l'accueil, optionnel)"><input className="input" value={s.video_url || ''} onChange={set('video_url')} /></Field>
+            <div className="sm:col-span-2">
+              <Field label="Texte de copyright (pied de page)"><input className="input" value={s.copyright || ''} onChange={set('copyright')} /></Field>
+            </div>
           </div>
-          <Field label="Téléphone 1"><input className="input" value={s.phone1 || ''} onChange={set('phone1')} /></Field>
-          <Field label="Téléphone 2"><input className="input" value={s.phone2 || ''} onChange={set('phone2')} /></Field>
-          <Field label="Email"><input className="input" value={s.email || ''} onChange={set('email')} /></Field>
-          <Field label="WhatsApp (format international)"><input className="input" value={s.whatsapp || ''} onChange={set('whatsapp')} /></Field>
-          <Field label="Lien Facebook"><input className="input" value={s.facebook || ''} onChange={set('facebook')} /></Field>
-          <Field label="Lien X / Twitter"><input className="input" value={s.twitter || ''} onChange={set('twitter')} /></Field>
-          <Field label="Lien Instagram"><input className="input" value={s.instagram || ''} onChange={set('instagram')} /></Field>
-          <Field label="Lien Pinterest"><input className="input" value={s.pinterest || ''} onChange={set('pinterest')} /></Field>
-          <Field label="Lien de la vidéo (bouton « Voir la vidéo » sur l'accueil, optionnel)"><input className="input" value={s.video_url || ''} onChange={set('video_url')} /></Field>
-          <div className="sm:col-span-2">
-            <Field label="Texte de copyright (pied de page)"><input className="input" value={s.copyright || ''} onChange={set('copyright')} /></Field>
-          </div>
-        </div>
+        </SettingsSection>
       )}
 
       {tab === 'marque' && (
-        <div className="space-y-6">
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Logo & favicone</h3>
+        <div className="space-y-5">
+          <SettingsSection title="Logo & favicone" desc="PNG transparent recommandé pour le logo. Favicone carrée 512×512.">
             <div className="grid gap-5 lg:grid-cols-2">
               <div>
                 <ImageInput
@@ -296,14 +336,9 @@ export default function SettingsAdmin() {
                 )}
               </div>
             </div>
-          </div>
+          </SettingsSection>
 
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">SEO global</h3>
-            <p className="text-sm text-ink-400">
-              Utilisé sur toutes les pages sans SEO propre (l'accueil notamment). Les articles ont leur propre SEO,
-              éditables dans chaque article.
-            </p>
+          <SettingsSection title="SEO global" desc="Utilisé sur les pages sans SEO propre (accueil). Les articles ont leur propre fiche SEO.">
             <Field label="Titre par défaut (onglet du navigateur)" hint={`${(s.seo_title || '').length}/60 caractères recommandés`}>
               <input className="input" value={s.seo_title || ''} onChange={set('seo_title')} />
             </Field>
@@ -335,14 +370,13 @@ export default function SettingsAdmin() {
                 </div>
               </div>
             </div>
-          </div>
+          </SettingsSection>
         </div>
       )}
 
       {tab === 'accueil' && (
-        <div className="space-y-6">
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Section d'accueil (hero)</h3>
+        <div className="space-y-5">
+          <SettingsSection title="Section d'accueil (hero)">
             <ImageInput label="Image de fond de l'accueil" value={s.hero_image || ''} onChange={(v) => setS({ ...s, hero_image: v })} />
             <Field label="Petit titre (kicker)">
               <input className="input" value={s.hero_kicker || ''} onChange={set('hero_kicker')} />
@@ -361,10 +395,9 @@ export default function SettingsAdmin() {
                 <input className="input" value={s.hero_badge_sub || ''} onChange={set('hero_badge_sub')} />
               </Field>
             </div>
-          </div>
+          </SettingsSection>
 
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Section « Notre mission »</h3>
+          <SettingsSection title="Section « Notre mission »">
             <Field label="Image de la section">
               <ImageInput label="" value={s.about_image || ''} onChange={(v) => setS({ ...s, about_image: v })} />
             </Field>
@@ -379,40 +412,36 @@ export default function SettingsAdmin() {
             <Field label="Texte de la mission">
               <textarea className="input" rows={4} value={s.mission_text || ''} onChange={setTextarea('mission_text')} />
             </Field>
-          </div>
+          </SettingsSection>
 
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Bandeau défilant (mots-clés)</h3>
+          <SettingsSection title="Bandeau défilant (mots-clés)">
             <Field label="Les mots séparés par ✦" hint="Chaque élément est une case ci-dessous">
               <FlatListEditor items={s.marquee_items || []} onChange={(v) => setS({ ...s, marquee_items: v })} placeholder="Mot ou expression" />
             </Field>
-          </div>
+          </SettingsSection>
 
-          <div className="card grid gap-5 p-7 sm:grid-cols-3">
-            <div>
-              <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Section « Notre travail »</h3>
+          <div className="grid gap-5 lg:grid-cols-3">
+            <SettingsSection title="Section « Notre travail »">
               <Field label="Kicker"><input className="input" value={s.home_work_kicker || ''} onChange={set('home_work_kicker')} /></Field>
-              <div className="mt-4"><Field label="Titre"><input className="input" value={s.home_work_title || ''} onChange={set('home_work_title')} /></Field></div>
-              <div className="mt-4"><Field label="Texte"><textarea className="input" rows={3} value={s.home_work_text || ''} onChange={setTextarea('home_work_text')} /></Field></div>
-            </div>
-            <div>
-              <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Section « Actualités »</h3>
+              <Field label="Titre"><input className="input" value={s.home_work_title || ''} onChange={set('home_work_title')} /></Field>
+              <Field label="Texte"><textarea className="input" rows={3} value={s.home_work_text || ''} onChange={setTextarea('home_work_text')} /></Field>
+            </SettingsSection>
+            <SettingsSection title="Section « Actualités »">
               <Field label="Kicker"><input className="input" value={s.home_news_kicker || ''} onChange={set('home_news_kicker')} /></Field>
-              <div className="mt-4"><Field label="Titre"><input className="input" value={s.home_news_title || ''} onChange={set('home_news_title')} /></Field></div>
-              <div className="mt-4"><Field label="Texte"><textarea className="input" rows={3} value={s.home_news_text || ''} onChange={setTextarea('home_news_text')} /></Field></div>
-            </div>
-            <div>
-              <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Bannière « Coup de main »</h3>
+              <Field label="Titre"><input className="input" value={s.home_news_title || ''} onChange={set('home_news_title')} /></Field>
+              <Field label="Texte"><textarea className="input" rows={3} value={s.home_news_text || ''} onChange={setTextarea('home_news_text')} /></Field>
+            </SettingsSection>
+            <SettingsSection title="Bannière « Coup de main »">
               <Field label="Kicker"><input className="input" value={s.cta_kicker || ''} onChange={set('cta_kicker')} /></Field>
-              <div className="mt-4"><Field label="Titre"><textarea className="input" rows={2} value={s.cta_title || ''} onChange={setTextarea('cta_title')} /></Field></div>
-              <div className="mt-4"><Field label="Texte"><textarea className="input" rows={3} value={s.cta_text || ''} onChange={setTextarea('cta_text')} /></Field></div>
-            </div>
+              <Field label="Titre"><textarea className="input" rows={2} value={s.cta_title || ''} onChange={setTextarea('cta_title')} /></Field>
+              <Field label="Texte"><textarea className="input" rows={3} value={s.cta_text || ''} onChange={setTextarea('cta_text')} /></Field>
+            </SettingsSection>
           </div>
         </div>
       )}
 
       {tab === 'pages' && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-2">
           {[
             ['about_header', 'Page « À propos »'],
             ['work_header', 'Page « Notre travail »'],
@@ -421,55 +450,48 @@ export default function SettingsAdmin() {
             ['donate_header', 'Page « Faire un don »'],
             ['contact_header', 'Page « Contact »']
           ].map(([key, label]) => (
-            <div key={key} className="card p-6">
-              <h3 className="mb-4 font-display text-lg font-bold text-ink-900">{label}</h3>
+            <SettingsSection key={key} title={label}>
               <PageHeaderEditor header={s[key] || {}} onChange={(v) => setS({ ...s, [key]: v })} />
-            </div>
+            </SettingsSection>
           ))}
         </div>
       )}
 
       {tab === 'apropos' && (
-        <div className="space-y-6">
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Présentation</h3>
+        <div className="space-y-5">
+          <SettingsSection title="Présentation">
             <Field label="Titre"><input className="input" value={s.about_title || ''} onChange={set('about_title')} /></Field>
             <Field label="Texte"><textarea className="input" rows={4} value={s.about_text || ''} onChange={setTextarea('about_text')} /></Field>
-          </div>
+          </SettingsSection>
           <div className="grid gap-5 sm:grid-cols-2">
-            <div className="card space-y-5 p-7">
-              <h3 className="font-display text-lg font-bold text-ink-900">Section « Valeurs »</h3>
+            <SettingsSection title="Section « Valeurs »">
               <Field label="Kicker"><input className="input" value={s.about_values_kicker || ''} onChange={set('about_values_kicker')} /></Field>
               <Field label="Titre"><input className="input" value={s.about_values_title || ''} onChange={set('about_values_title')} /></Field>
-            </div>
-            <div className="card space-y-5 p-7">
-              <h3 className="font-display text-lg font-bold text-ink-900">Section « Méthode de travail »</h3>
+            </SettingsSection>
+            <SettingsSection title="Section « Méthode de travail »">
               <Field label="Kicker"><input className="input" value={s.about_method_kicker || ''} onChange={set('about_method_kicker')} /></Field>
               <Field label="Titre"><input className="input" value={s.about_method_title || ''} onChange={set('about_method_title')} /></Field>
               <Field label="Texte d'intro"><textarea className="input" rows={2} value={s.about_method_text || ''} onChange={setTextarea('about_method_text')} /></Field>
-            </div>
+            </SettingsSection>
           </div>
           <div className="grid gap-5 sm:grid-cols-2">
-            <div className="card space-y-5 p-7">
-              <h3 className="font-display text-lg font-bold text-ink-900">Carte « Notre présence »</h3>
+            <SettingsSection title="Carte « Notre présence »">
               <Field label="Titre"><input className="input" value={s.about_presence_title || ''} onChange={set('about_presence_title')} /></Field>
               <Field label="Texte"><textarea className="input" rows={4} value={s.about_presence_text || ''} onChange={setTextarea('about_presence_text')} /></Field>
-            </div>
-            <div className="card space-y-5 p-7">
-              <h3 className="font-display text-lg font-bold text-ink-900">Carte « Carrière & bénévolat »</h3>
+            </SettingsSection>
+            <SettingsSection title="Carte « Carrière & bénévolat »">
               <Field label="Titre"><input className="input" value={s.about_career_title || ''} onChange={set('about_career_title')} /></Field>
               <Field label="Texte" hint="Le mail de contact est inséré automatiquement à la fin">
                 <textarea className="input" rows={4} value={s.about_career_text || ''} onChange={setTextarea('about_career_text')} />
               </Field>
-            </div>
+            </SettingsSection>
           </div>
         </div>
       )}
 
       {tab === 'dons' && (
-        <div className="space-y-6">
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Page « Faire un don »</h3>
+        <div className="space-y-5">
+          <SettingsSection title="Page « Faire un don »">
             <Field label="Montants proposés (USD)" hint="Les boutons de montants rapides sur le formulaire">
               <FlatListEditor numeric items={s.donate_amounts || []} onChange={(v) => setS({ ...s, donate_amounts: v })} placeholder="Montant" />
             </Field>
@@ -479,21 +501,18 @@ export default function SettingsAdmin() {
             <Field label="Points « Pourquoi donner »">
               <FlatListEditor items={s.donate_why_points || []} onChange={(v) => setS({ ...s, donate_why_points: v })} placeholder="Point de vente" />
             </Field>
-          </div>
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Pages des campagnes</h3>
+          </SettingsSection>
+          <SettingsSection title="Pages des campagnes">
             <Field label="Points de réassurance (« À quoi sert cette collecte ? »)">
               <FlatListEditor items={s.campaign_points || []} onChange={(v) => setS({ ...s, campaign_points: v })} placeholder="Point de réassurance" />
             </Field>
-          </div>
+          </SettingsSection>
         </div>
       )}
 
       {tab === 'compteurs' && (
-        <div className="space-y-6">
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Statistiques (compteurs animés de l'accueil)</h3>
-            <p className="text-sm text-ink-400">Le 1ᵉ compteur est aussi affiché dans la carte flottante du hero.</p>
+        <div className="space-y-5">
+          <SettingsSection title="Statistiques" desc="Le 1ᵉ compteur est aussi affiché dans la carte flottante du hero.">
             <ItemListEditor
               numericFirst
               items={s.stats || []}
@@ -504,15 +523,13 @@ export default function SettingsAdmin() {
                 ['label', 'Libellé']
               ]}
             />
-          </div>
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Valeurs (page À propos)</h3>
+          </SettingsSection>
+          <SettingsSection title="Valeurs (page À propos)">
             <ItemListEditor items={s.values || []} onChange={(v) => setS({ ...s, values: v })} />
-          </div>
-          <div className="card space-y-5 p-7">
-            <h3 className="font-display text-lg font-bold text-ink-900">Méthode de travail (page À propos)</h3>
+          </SettingsSection>
+          <SettingsSection title="Méthode de travail (page À propos)">
             <ItemListEditor items={s.method || []} onChange={(v) => setS({ ...s, method: v })} />
-          </div>
+          </SettingsSection>
         </div>
       )}
 
@@ -587,6 +604,7 @@ export default function SettingsAdmin() {
           </button>
         </div>
       </Modal>
+      </div>
     </div>
   );
 }

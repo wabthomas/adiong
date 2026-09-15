@@ -7,7 +7,7 @@ export default function MediaAdmin() {
     <div>
       <PageTitle
         title="Médiathèque"
-        subtitle="Toutes les images du site — upload, recherche, copie d'URL, suppression (optimisées automatiquement)"
+        subtitle="Images et documents PDF — import, recherche, copie d'URL, insertion dans les articles"
       />
       <MediaLibrary embedded />
     </div>
