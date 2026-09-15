@@ -50,7 +50,7 @@ function PartnerLogo({ p }) {
     />
   );
   return p.link ? (
-    <a href={p.link} target="_blank" rel="noopener" title={p.name}>
+    <a href={p.link} target="_blank" rel="noopener noreferrer" title={p.name}>
       {inner}
     </a>
   ) : (

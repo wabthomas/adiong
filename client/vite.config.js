@@ -8,8 +8,8 @@ export default defineConfig({
     port: 5173,
     allowedHosts: true,
     proxy: {
-      '/api': { target: 'http://localhost:4000', changeOrigin: true },
-      '/uploads': { target: 'http://localhost:4000', changeOrigin: true }
+      '/api': { target: 'http://localhost:4000', changeOrigin: true, timeout: 120000 },
+      '/uploads': { target: 'http://localhost:4000', changeOrigin: true, timeout: 120000 }
     }
   },
   preview: {

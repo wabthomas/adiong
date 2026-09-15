@@ -6,6 +6,21 @@ import {
   IconPinterest, IconTwitter, IconWhatsapp, IconHeart
 } from './Icons.jsx';
 
+function FooterCredit({ text }) {
+  const raw = text || "Fait avec {heart} pour l'inclusion";
+  const parts = raw.split('{heart}');
+  return (
+    <span className="inline-flex items-center gap-1.5 text-white/40">
+      {parts.map((part, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <IconHeart className="h-4 w-4 text-accent-400" />}
+          {part}
+        </React.Fragment>
+      ))}
+    </span>
+  );
+}
+
 export default function Footer() {
   const { site, causes } = useSite();
   const socials = [
@@ -115,9 +130,7 @@ export default function Footer() {
           <p className="text-sm text-white/50">{site.copyright || '© 2026 ADI ONG — Tous droits réservés.'}</p>
           <div className="flex items-center gap-5 text-sm">
             <Link to="/admin" className="text-white/40 transition-colors hover:text-accent-300">Espace admin</Link>
-            <span className="inline-flex items-center gap-1.5 text-white/40">
-              Fait avec <IconHeart className="h-4 w-4 text-accent-400" /> pour l'inclusion
-            </span>
+            <FooterCredit text={site.footer_credit} />
           </div>
         </div>
       </div>

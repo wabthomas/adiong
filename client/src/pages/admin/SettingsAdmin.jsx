@@ -309,6 +309,11 @@ export default function SettingsAdmin() {
             <div className="sm:col-span-2">
               <Field label="Texte de copyright (pied de page)"><input className="input" value={s.copyright || ''} onChange={set('copyright')} /></Field>
             </div>
+            <div className="sm:col-span-2">
+              <Field label="Mention à droite du copyright" hint="Écrivez {heart} pour afficher le cœur orange.">
+                <input className="input" value={s.footer_credit || ''} onChange={set('footer_credit')} placeholder="Fait avec {heart} pour l'inclusion" />
+              </Field>
+            </div>
           </div>
         </SettingsSection>
       )}

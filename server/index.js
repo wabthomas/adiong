@@ -143,7 +143,7 @@ const setSetting = (key, value) =>
 const STRING_SETTINGS = [
   'grh_annual_leave_days',
   'site_name','site_tagline','logo','favicon','address','phone1','phone2','email','whatsapp','facebook','twitter',
-  'instagram','pinterest','video_url','copyright',
+  'instagram','pinterest','video_url','copyright','footer_credit',
   'seo_title','seo_description','seo_keywords','og_image','twitter_handle',
   'hero_image','hero_kicker','hero_title','hero_text','hero_badge_title','hero_badge_sub','about_image',
   'mission_title','mission_text','home_mission_heading',
@@ -642,9 +642,14 @@ app.post('/api/admin/partners', authRequired, requireRole('content'), (req, res)
   const b = req.body || {};
   if (!String(b.name || '').trim() || !String(b.logo || '').trim())
     return res.status(400).json({ error: 'Nom et logo du partenaire sont requis' });
-  const info = db.prepare('INSERT INTO partners (name, logo, link, sort_order, published) VALUES (?, ?, ?, ?, ?)')
-    .run(String(b.name).trim(), b.logo, b.link || '', Number(b.sort_order) || 0, b.published === false ? 0 : 1);
-  res.json(db.prepare('SELECT * FROM partners WHERE id = ?').get(info.lastInsertRowid));
+  try {
+    const info = db.prepare('INSERT INTO partners (name, logo, link, sort_order, published) VALUES (?, ?, ?, ?, ?)')
+      .run(String(b.name).trim(), b.logo, b.link || '', Number(b.sort_order) || 0, b.published === false ? 0 : 1);
+    res.json(db.prepare('SELECT * FROM partners WHERE id = ?').get(info.lastInsertRowid));
+  } catch (e) {
+    console.error('[partners]', e);
+    res.status(500).json({ error: 'Impossible d’enregistrer le partenaire' });
+  }
 });
 
 app.put('/api/admin/partners/:id', authRequired, requireRole('content'), (req, res) => {
@@ -722,7 +727,7 @@ const memoryUpload = multer({
 });
 
 function uniqueMediaFilename(original) {
-  const base = original || 'image';
+  const base = path.basename(String(original || 'image')).replace(/[^\w.\-+() ]+/g, '_').slice(0, 180) || 'image';
   if (!db.prepare('SELECT 1 FROM media WHERE filename = ?').get(base)) return base;
   const ext = path.extname(base);
   const stem = path.basename(base, ext);
@@ -743,24 +748,30 @@ function isPdfMedia(row) {
   return /pdf/i.test(row.mime || '') || /\.pdf$/i.test(row.url || '') || /\.pdf$/i.test(row.filename || '');
 }
 
-async function optimizeBuffer(buffer, originalName = 'image.jpg') {
+function storeRawMedia(buffer, originalName, folder) {
   const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const origExt = path.extname(originalName).toLowerCase() || (folder === 'docs' ? '.pdf' : '.png');
+  const allowed = /^\.(jpe?g|png|webp|gif|avif|svg|pdf)$/i.test(origExt);
+  const ext = allowed ? origExt : (folder === 'docs' ? '.pdf' : '.png');
+  const dir = folder === 'docs' ? docsDir : mediaDir;
+  const mainName = `${stamp}${ext}`;
+  fs.writeFileSync(path.join(dir, mainName), buffer);
+  return { folder, mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
+}
+
+async function optimizeBuffer(buffer, originalName = 'image.jpg') {
   const origExt = path.extname(originalName).toLowerCase() || '.jpg';
   const looksPdf = origExt === '.pdf' || buffer.slice(0, 5).toString() === '%PDF-';
-  if (looksPdf) {
-    const mainName = `${stamp}.pdf`;
-    fs.writeFileSync(path.join(docsDir, mainName), buffer);
-    return { folder: 'docs', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
-  }
-  if (origExt === '.svg') {
-    const mainName = `${stamp}.svg`;
-    fs.writeFileSync(path.join(mediaDir, mainName), buffer);
-    return { folder: 'media', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
-  }
+  if (looksPdf) return storeRawMedia(buffer, originalName, 'docs');
+  // Logos partenaires : PNG/SVG/GIF/AVIF — Jimp casse souvent la transparence
+  // (PNG indexé) et un crash coupe la requête (500 via le proxy Vite).
+  if (['.svg', '.gif', '.avif'].includes(origExt)) return storeRawMedia(buffer, originalName, 'media');
+  if (origExt === '.png' && buffer.length <= 2 * 1024 * 1024) return storeRawMedia(buffer, originalName, 'media');
   try {
     const image = await Jimp.read(buffer);
     const keepPng = origExt === '.png';
     const mainExt = keepPng ? 'png' : 'jpg';
+    const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
     scaleTo(image, 1600, 1600);
     image.quality(82);
@@ -787,9 +798,7 @@ async function optimizeBuffer(buffer, originalName = 'image.jpg') {
       size
     };
   } catch {
-    const mainName = `${stamp}${origExt}`;
-    fs.writeFileSync(path.join(mediaDir, mainName), buffer);
-    return { folder: 'media', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
+    return storeRawMedia(buffer, originalName, 'media');
   }
 }
 
@@ -797,19 +806,21 @@ app.post('/api/admin/media', authRequired, requireRole('content'), (req, res) =>
   memoryUpload.single('image')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
     try {
-      if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+      if (!req.file?.buffer) return res.status(400).json({ error: 'Aucun fichier fourni' });
       const opt = await optimizeBuffer(req.file.buffer, req.file.originalname);
       const folder = opt.folder || 'media';
       const url = `/uploads/${folder}/${opt.mainName}`;
       const thumb = `/uploads/${folder}/${opt.thumbName}`;
       const alt = String(req.body?.alt || '').slice(0, 300);
       const filename = uniqueMediaFilename(req.file.originalname);
+      const mime = String(req.file.mimetype || 'application/octet-stream').slice(0, 120);
       const info = db.prepare(`INSERT INTO media (filename, url, thumb, size, width, height, mime, alt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(filename, url, thumb, opt.size, opt.width, opt.height, req.file.mimetype, alt);
+        .run(filename, url, thumb, opt.size, opt.width, opt.height, mime, alt);
       res.json(db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     } catch (e) {
-      res.status(400).json({ error: `Échec de l'optimisation : ${e.message}` });
+      console.error('[media]', e);
+      if (!res.headersSent) res.status(500).json({ error: `Échec du téléversement : ${e.message || 'erreur serveur'}` });
     }
   });
 });
