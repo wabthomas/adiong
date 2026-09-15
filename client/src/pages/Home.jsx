@@ -62,7 +62,7 @@ export default function Home() {
             </motion.p>
 
             <h1 className="font-display text-4xl leading-[1.08] font-extrabold text-white sm:text-5xl lg:text-[4rem]">
-              {heroLines(site.hero_title || site.site_tagline).map((line, i) => (
+              {heroLines(site.hero_title || site.site_tagline || '').map((line, i) => (
                 <span key={i} className="block overflow-hidden">
                   <motion.span
                     className="block"
@@ -344,8 +344,10 @@ export default function Home() {
 }
 
 function heroLines(title) {
-  const words = title.split(' ');
-  if (words.length < 6) return [title];
+  const text = String(title || '').trim();
+  if (!text) return [''];
+  const words = text.split(' ');
+  if (words.length < 6) return [text];
   const mid = Math.ceil(words.length / 2);
   return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
 }
