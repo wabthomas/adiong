@@ -856,6 +856,89 @@ app.delete('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Inscription sur invitation (lien à usage unique) ----------
+const INVITE_ROLES = ['editor', 'viewer', 'admin'];
+const registerLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, message: 'Trop de tentatives d’inscription. Réessayez plus tard.' });
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+const inviteState = (inv) => {
+  if (inv.used) return 'used';
+  if (inv.expires_at < todayISO()) return 'expired';
+  return 'available';
+};
+
+app.get('/api/register/validate', (req, res) => {
+  const token = String(req.query.token || '');
+  if (!token) return res.json({ valid: false, error: 'Lien incomplet : token manquant.' });
+  const inv = db.prepare('SELECT * FROM invites WHERE token = ?').get(token);
+  if (!inv) return res.json({ valid: false, error: 'Ce lien d’invitation est invalide.' });
+  const state = inviteState(inv);
+  if (state === 'used') return res.json({ valid: false, error: 'Ce lien a déjà été utilisé. Demandez un nouveau lien à l’administrateur.' });
+  if (state === 'expired') return res.json({ valid: false, error: 'Ce lien a expiré. Demandez un nouveau lien à l’administrateur.' });
+  res.json({
+    valid: true,
+    role: inv.role,
+    role_label: ROLE_LABELS[inv.role],
+    email: inv.email || '',
+    label: inv.label || '',
+    expires_at: inv.expires_at
+  });
+});
+
+app.post('/api/register', registerLimiter, (req, res) => {
+  const { token, full_name, email, password } = req.body || {};
+  const inv = db.prepare('SELECT * FROM invites WHERE token = ?').get(String(token || ''));
+  if (!inv) return res.status(400).json({ error: 'Ce lien d’invitation est invalide.' });
+  const state = inviteState(inv);
+  if (state === 'used') return res.status(409).json({ error: 'Ce lien a déjà été utilisé.' });
+  if (state === 'expired') return res.status(400).json({ error: 'Ce lien a expiré. Demandez un nouveau lien à l’administrateur.' });
+  if (!String(full_name || '').trim() || !email || !password)
+    return res.status(400).json({ error: 'Tous les champs sont requis' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum' });
+  const em = String(email).toLowerCase().trim();
+  if (inv.email && inv.email.toLowerCase() !== em)
+    return res.status(409).json({ error: `Ce lien est réservé à l’adresse ${inv.email}` });
+  if (db.prepare('SELECT id FROM users WHERE email = ?').get(em))
+    return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
+  const info = db.prepare('INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, ?)')
+    .run(em, bcrypt.hashSync(String(password), 10), String(full_name).trim(), inv.role);
+  db.prepare('UPDATE invites SET used = 1, used_at = datetime(\'now\') WHERE id = ?').run(inv.id);
+  const user = db.prepare('SELECT id, email, full_name, role, created_at FROM users WHERE id = ?').get(info.lastInsertRowid);
+  const t = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
+  res.json({ token: t, user: { ...user, role_label: ROLE_LABELS[user.role] } });
+});
+
+// Gestion des invitations (admin + super admin)
+app.get('/api/admin/invites', authRequired, requireRole('admin'), (req, res) => {
+  const rows = db.prepare(`
+    SELECT i.*, u.full_name AS created_by_name
+    FROM invites i LEFT JOIN users u ON u.id = i.created_by
+    ORDER BY i.created_at DESC
+  `).all();
+  res.json(rows.map((r) => ({ ...r, state: inviteState(r) })));
+});
+
+app.post('/api/admin/invites', authRequired, requireRole('admin'), (req, res) => {
+  const { email, role, label, days } = req.body || {};
+  if (!INVITE_ROLES.includes(role))
+    return res.status(400).json({ error: 'Rôle invalide pour une invitation (éditeur, consultation ou administrateur)' });
+  const em = email ? String(email).toLowerCase().trim() : null;
+  if (em && db.prepare('SELECT id FROM users WHERE email = ?').get(em))
+    return res.status(409).json({ error: 'Un compte existe déjà avec cet email — modifiez-le depuis Utilisateurs' });
+  const d = Math.min(30, Math.max(1, Number(days) || 7));
+  const expires_at = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+  const token = crypto.randomBytes(24).toString('hex');
+  const info = db.prepare(
+    'INSERT INTO invites (token, email, role, label, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(token, em, role, String(label || '').trim(), req.user.id, expires_at);
+  res.json({ ...db.prepare('SELECT * FROM invites WHERE id = ?').get(info.lastInsertRowid), state: 'available' });
+});
+
+app.delete('/api/admin/invites/:id', authRequired, requireRole('admin'), (req, res) => {
+  db.prepare('DELETE FROM invites WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, { maxAge: '1d' }));

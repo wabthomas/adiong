@@ -106,6 +106,15 @@ export const api = {
     get: () => req('/api/admin/modules', { auth: true }),
     update: (b) => req('/api/admin/modules', { method: 'PUT', body: b, auth: true })
   },
+  invites: {
+    list: () => req('/api/admin/invites', { auth: true }),
+    create: (b) => req('/api/admin/invites', { method: 'POST', body: b, auth: true }),
+    remove: (id) => req(`/api/admin/invites/${id}`, { method: 'DELETE', auth: true })
+  },
+  register: {
+    validate: (token) => req(`/api/register/validate?token=${encodeURIComponent(token)}`),
+    submit: (b) => req('/api/register', { method: 'POST', body: b })
+  },
   grh: {
     overview: () => req('/api/admin/grh/overview', { auth: true }),
     departments: {

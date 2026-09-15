@@ -140,6 +140,19 @@ CREATE TABLE IF NOT EXISTS grh_leaves (
   status TEXT NOT NULL DEFAULT 'en_attente',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS invites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token TEXT UNIQUE NOT NULL,
+  email TEXT,
+  role TEXT NOT NULL DEFAULT 'editor',
+  label TEXT NOT NULL DEFAULT '',
+  created_by INTEGER,
+  used INTEGER NOT NULL DEFAULT 0,
+  used_at TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 const migrate = (sql) => { try { db.exec(sql); } catch {  } };

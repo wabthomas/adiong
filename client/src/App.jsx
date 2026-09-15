@@ -26,6 +26,7 @@ const MediaAdmin = lazy(() => import('./pages/admin/MediaAdmin.jsx'));
 const UsersAdmin = lazy(() => import('./pages/admin/UsersAdmin.jsx'));
 const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
 const GrhAdmin = lazy(() => import('./pages/admin/GrhAdmin.jsx'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage.jsx'));
 
 function AdminFallback() {
   return (
@@ -78,6 +79,7 @@ export default function App() {
     <>
       <ScrollToTop />
       <Routes>
+        <Route path="/inscription" element={<Suspense fallback={<AdminFallback />}><RegisterPage /></Suspense>} />
         <Route path="/admin/login" element={<Suspense fallback={<AdminFallback />}><AdminLogin /></Suspense>} />
         <Route path="/admin" element={<Suspense fallback={<AdminFallback />}><AdminLayout /></Suspense>}>
           <Route index element={<Dashboard />} />

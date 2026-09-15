@@ -42,6 +42,11 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
     **Optimisation automatique** (Jimp) : redimensionnement max 1600px + compression + miniature 480px ;
     si l'original est déjà plus léger, il est conservé. Suppression bloquée si l'image est encore utilisée.
     Accessible aussi depuis tout champ image (« Bibliothèque ») et depuis l'éditeur d'articles.
+  - **Liens d'invitation** (page Utilisateurs) : générez un lien privé (`/inscription?token=…`) à
+    envoyer à un employé pour qu'il **crée lui-même son compte** (nom, email, mot de passe).
+    L'inscription n'est jamais ouverte au public : sans lien valide, la page refuse l'accès.
+    Options : email imposé, rôle (éditeur / consultation / administrateur), objet, validité (3 à 30 jours).
+    Lien à **usage unique**, révocable, expirable. Limitation de débit sur l'inscription (10/h).
   - **Utilisateurs & rôles** : création/édition/suppression de comptes. Rôles :
     `super_admin` (tout + modules + salaires), `admin` (tout sauf modules/salaires),
     `editor` (articles, causes, campagnes, médiathèque), `viewer` (consultation).
