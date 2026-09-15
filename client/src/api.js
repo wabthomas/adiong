@@ -15,6 +15,7 @@ export const getSavedUser = () => {
 export const setSavedUser = (u) => {
   if (u) localStorage.setItem(USER_KEY, JSON.stringify(u));
   else localStorage.removeItem(USER_KEY);
+  window.dispatchEvent(new Event('adiong-user'));
 };
 
 async function req(path, { method = 'GET', body, auth = false, form = false } = {}) {
@@ -31,9 +32,30 @@ async function req(path, { method = 'GET', body, auth = false, form = false } = 
     headers,
     body: body ? (isForm ? body : JSON.stringify(body)) : undefined
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
+  const raw = await res.text();
+  let data = {};
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      if (!res.ok) throw new Error(httpErrorMessage(res, null, raw));
+      throw new Error(`Réponse invalide (${res.status})`);
+    }
+  }
+  if (!res.ok) throw new Error(httpErrorMessage(res, data, raw));
   return data;
+}
+
+function httpErrorMessage(res, data, raw) {
+  if (data && typeof data === 'object' && !Array.isArray(data) && data.error) {
+    return String(data.error);
+  }
+  const snippet = String(raw || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+  return snippet || `Erreur ${res.status}`;
 }
 
 export const api = {
@@ -48,6 +70,11 @@ export const api = {
   contact: (body) => req('/api/contact', { method: 'POST', body }),
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
+  me: {
+    get: () => req('/api/auth/me', { auth: true }),
+    update: (b) => req('/api/auth/me', { method: 'PUT', body: b, auth: true })
+  },
+  member: (code) => req(`/api/public/member/${encodeURIComponent(code)}`),
   password: (body) => req('/api/auth/password', { method: 'POST', body, auth: true }),
   dashboard: () => req('/api/admin/dashboard', { auth: true }),
   adminArticles: {
@@ -109,6 +136,7 @@ export const api = {
     list: () => req('/api/admin/users', { auth: true }),
     create: (b) => req('/api/admin/users', { method: 'POST', body: b, auth: true }),
     update: (id, b) => req(`/api/admin/users/${id}`, { method: 'PUT', body: b, auth: true }),
+    regenerateCode: (id) => req(`/api/admin/users/${id}/code`, { method: 'POST', body: {}, auth: true }),
     remove: (id) => req(`/api/admin/users/${id}`, { method: 'DELETE', auth: true })
   },
   modules: {

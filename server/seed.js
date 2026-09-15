@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Jimp from 'jimp';
-import db from './db.js';
+import db, { newUniqueCode } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -164,11 +164,12 @@ export function seedIfEmpty() {
   const now = new Date().toISOString();
 
   const hash = bcrypt.hashSync('AdiOng2026!', 10);
-  db.prepare('INSERT INTO users (email, password_hash, full_name, role) VALUES (?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO users (email, password_hash, full_name, role, unique_code) VALUES (?, ?, ?, ?, ?)').run(
     'admin@adiong.org',
     hash,
     'Administrateur ADI',
-    'super_admin'
+    'super_admin',
+    newUniqueCode()
   );
 
   const causes = [

@@ -5,12 +5,19 @@ import { api } from '../../api.js';
 import MediaLibrary from '../../components/MediaLibrary.jsx';
 
 export function PageTitle({ title, subtitle, action }) {
-  return (
-    <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 className="font-display text-2xl font-bold text-ink-900 sm:text-3xl">{title}</h1>
-        {subtitle && <p className="mt-1.5 text-[15px] text-ink-500">{subtitle}</p>}
+  if (!subtitle && !action) {
+    return (
+      <div className="grid min-h-[30vh] place-items-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+          <p className="text-sm font-semibold text-ink-400">{title ? `Chargement — ${title}` : 'Chargement…'}</p>
+        </div>
       </div>
+    );
+  }
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      {subtitle ? <p className="text-[15px] text-ink-500">{subtitle}</p> : <span />}
       {action}
     </div>
   );
@@ -58,18 +65,21 @@ export function Field({ label, children, hint }) {
   );
 }
 
-export function ImageInput({ value, onChange, label = 'Image' }) {
+export function ImageInput({ value, onChange, label = 'Image', round = false }) {
   const [uploading, setUploading] = React.useState(false);
   const [libOpen, setLibOpen] = React.useState(false);
+  const previewCls = round
+    ? 'h-24 w-24 shrink-0 rounded-full object-cover ring-2 ring-brand-100'
+    : 'h-20 w-28 shrink-0 rounded-xl object-cover ring-1 ring-ink-100';
   return (
     <div>
       {label && <label className="label">{label}</label>}
       <div className="flex items-start gap-4">
         {value ? (
-          <img src={value} alt="" className="h-20 w-28 shrink-0 rounded-xl object-cover ring-1 ring-ink-100" />
+          <img src={value} alt="" className={previewCls} />
         ) : (
-          <div className="grid h-20 w-28 shrink-0 place-items-center rounded-xl bg-ink-50 text-xs font-semibold text-ink-300">
-            Aucune
+          <div className={`grid shrink-0 place-items-center bg-ink-50 text-xs font-semibold text-ink-300 ${round ? 'h-24 w-24 rounded-full' : 'h-20 w-28 rounded-xl'}`}>
+            Photo
           </div>
         )}
         <div className="flex-1 space-y-2">

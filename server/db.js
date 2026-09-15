@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -172,6 +173,30 @@ migrate("ALTER TABLE articles ADD COLUMN seo_description TEXT NOT NULL DEFAULT '
 migrate("ALTER TABLE articles ADD COLUMN seo_image TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE articles ADD COLUMN seo_noindex INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE media ADD COLUMN alt TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN photo TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN unique_code TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''");
 try { db.prepare("UPDATE users SET role = 'super_admin' WHERE email = 'admin@adiong.org' AND role = 'admin'").run(); } catch { /* déjà fait */ }
+
+export function newUniqueCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let n = 0; n < 30; n++) {
+    let code = 'ADI-';
+    for (let i = 0; i < 6; i++) code += alphabet[crypto.randomInt(alphabet.length)];
+    if (!db.prepare('SELECT id FROM users WHERE unique_code = ?').get(code)) return code;
+  }
+  return `ADI-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
+export function ensureUserCodes() {
+  const missing = db.prepare("SELECT id FROM users WHERE unique_code IS NULL OR unique_code = ''").all();
+  const setCode = db.prepare('UPDATE users SET unique_code = ? WHERE id = ?');
+  for (const row of missing) setCode.run(newUniqueCode(), row.id);
+}
+
+ensureUserCodes();
+migrate('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_unique_code ON users(unique_code)');
 
 export default db;
