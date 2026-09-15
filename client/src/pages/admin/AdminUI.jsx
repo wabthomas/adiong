@@ -71,6 +71,34 @@ export function ImageInput({ value, onChange, label = 'Image', round = false }) 
   const previewCls = round
     ? 'h-24 w-24 shrink-0 rounded-full object-cover ring-2 ring-brand-100'
     : 'h-20 w-28 shrink-0 rounded-xl object-cover ring-1 ring-ink-100';
+
+  const uploadFile = async (file) => {
+    if (!file) return;
+    const mime = String(file.type || '').toLowerCase();
+    const name = String(file.name || '').toLowerCase();
+    const ok =
+      /^image\/(jpe?g|pjpeg|png|x-png|webp|gif|avif|svg\+xml)$/.test(mime) ||
+      /\.(jpe?g|png|webp|gif|avif|svg)$/.test(name);
+    if (!ok) {
+      alert('Format non supporté. Utilisez JPG, PNG, WebP, GIF ou SVG (pas HEIC/BMP).');
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      alert('Fichier trop volumineux (max. 25 Mo).');
+      return;
+    }
+    setUploading(true);
+    try {
+      const media = await api.media.upload(file);
+      if (!media?.url) throw new Error('Réponse d’upload invalide');
+      onChange(media.url);
+    } catch (err) {
+      alert(err.message || 'Échec du téléversement');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div>
       {label && <label className="label">{label}</label>}
@@ -94,21 +122,13 @@ export function ImageInput({ value, onChange, label = 'Image', round = false }) 
               {uploading ? 'Optimisation…' : '📤 Téléverser'}
               <input
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml,.jpg,.jpeg,.png,.webp,.gif,.svg"
                 className="hidden"
+                disabled={uploading}
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
-                  if (!file) return;
-                  setUploading(true);
-                  try {
-                    const media = await api.media.upload(file);
-                    onChange(media.url);
-                  } catch (err) {
-                    alert(err.message);
-                  } finally {
-                    setUploading(false);
-                    e.target.value = '';
-                  }
+                  e.target.value = '';
+                  await uploadFile(file);
                 }}
               />
             </label>

@@ -4,17 +4,42 @@ import { useSite } from '../../hooks/useSite.jsx';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
-  ['overview', 'Vue d’ensemble'],
-  ['employees', 'Équipe'],
-  ['orgchart', 'Organigramme'],
-  ['leaves', 'Congés'],
-  ['payroll', 'Paie'],
-  ['recruit', 'Recrutement'],
-  ['evaluations', 'Évaluations'],
-  ['trainings', 'Formations'],
-  ['announcements', 'Annonces'],
-  ['departments', 'Départements']
+  { id: 'overview', group: 'Équipe', label: 'Vue d’ensemble', hint: 'Effectif, embauches et absences', icon: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z' },
+  { id: 'employees', group: 'Équipe', label: 'Équipe', hint: 'Fiches, dossiers et soldes de congés', icon: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z' },
+  { id: 'orgchart', group: 'Équipe', label: 'Organigramme', hint: 'Hiérarchie et rattachements', icon: 'M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z' },
+  { id: 'departments', group: 'Équipe', label: 'Départements', hint: 'Services et effectifs', icon: 'M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12v6H3V3Z' },
+  { id: 'leaves', group: 'Temps & paie', label: 'Congés', hint: 'Demandes, validation et calendrier', icon: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5' },
+  { id: 'payroll', group: 'Temps & paie', label: 'Paie', hint: 'Bulletins, PDF et export CSV', icon: 'M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z' },
+  { id: 'recruit', group: 'Développement', label: 'Recrutement', hint: 'Offres, pipeline et embauche', icon: 'M20.25 14.15v4.25c0 .414-.336.75-.75.75h-15a.75.75 0 0 1-.75-.75v-4.25m16.5 0a2.25 2.25 0 0 0 .75-1.661V8.706c0-1.081-.738-2.015-1.797-2.158a48.148 48.148 0 0 0-10.906 0C5.238 6.69 4.5 7.625 4.5 8.706v3.783c0 .655.269 1.25.75 1.661m16.5 0a2.25 2.25 0 0 1-2.25 2.25h-12a2.25 2.25 0 0 1-2.25-2.25m16.5 0V12a2.25 2.25 0 0 0-2.25-2.25h-12A2.25 2.25 0 0 0 4.5 12v2.15' },
+  { id: 'evaluations', group: 'Développement', label: 'Évaluations', hint: 'Bilans et notes sur 5', icon: 'M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z' },
+  { id: 'trainings', group: 'Développement', label: 'Formations', hint: 'Catalogue et participants', icon: 'M4.26 10.147a60.438 60.438 0 0 0-.491 6.347A48.627 48.627 0 0 1 12 20.904a48.627 48.627 0 0 1 8.232-4.41 60.46 60.46 0 0 0-.491-6.347m-15.482 0a50.57 50.57 0 0 0-2.658-.813A59.906 59.906 0 0 1 12 3.493a59.903 59.903 0 0 1 10.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0 1 12 13.489a50.702 50.702 0 0 1 7.74-3.342' },
+  { id: 'announcements', group: 'Développement', label: 'Annonces', hint: 'Messages internes de l’équipe', icon: 'M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 1 1 0-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38a.75.75 0 0 1-1.021-.24l-1.05-1.82a.87.87 0 0 1 .24-1.201l.657-.38c.523-.302.71-.961.463-1.511a24.11 24.11 0 0 1-.985-2.783Zm11.528 3.72a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Zm-1.5-4.5a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Zm-1.5-4.5a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Z' }
 ];
+
+function TabIcon({ d, className = 'h-5 w-5 shrink-0' }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.7" stroke="currentColor" className={className}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
+
+function GrhSection({ title, desc, action, children, padded = true }) {
+  return (
+    <section className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5">
+      {(title || desc || action) && (
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-100 px-6 py-4">
+          <div className="min-w-0">
+            {title && <h3 className="font-display text-base font-bold text-ink-900">{title}</h3>}
+            {desc && <p className="mt-0.5 text-sm text-ink-400">{desc}</p>}
+          </div>
+          {action}
+        </div>
+      )}
+      {padded ? <div className="p-6">{children}</div> : children}
+    </section>
+  );
+}
 
 const CONTRACTS = {
   permanent: 'Permanent (CDI)',
@@ -76,14 +101,24 @@ const emptyLeave = { employee_id: null, type: 'conge', start_date: '', end_date:
 const fmtDate = (d) =>
   d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-function StatCard({ icon, label, value, sub }) {
+function StatCard({ icon, label, value, sub, tone = 'brand' }) {
+  const tones = {
+    brand: 'bg-brand-50 text-brand-700',
+    accent: 'bg-accent-50 text-accent-800',
+    ink: 'bg-ink-50 text-ink-600',
+    warn: 'bg-amber-50 text-amber-800'
+  };
   return (
-    <div className="card flex items-center gap-4 p-6">
-      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-brand-50 text-2xl">{icon}</span>
-      <div className="min-w-0">
-        <p className="font-display text-2xl font-bold text-ink-900">{value}</p>
-        <p className="truncate text-sm font-semibold text-ink-500">{label}</p>
-        {sub && <p className="text-xs text-ink-400">{sub}</p>}
+    <div className="overflow-hidden rounded-2xl bg-white p-5 ring-1 ring-ink-950/5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-wider text-ink-400">{label}</p>
+          <p className="mt-1 font-display text-3xl font-extrabold text-ink-900">{value}</p>
+          {sub && <p className="mt-1 text-xs text-ink-400">{sub}</p>}
+        </div>
+        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${tones[tone]}`}>
+          <TabIcon d={icon} />
+        </span>
       </div>
     </div>
   );
@@ -93,17 +128,28 @@ function EmployeeForm({ initial, departments, employees = [], isSuper, onSaved, 
   const [f, setF] = useState({ ...initial, salary: initial.salary ?? '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const set = (k) => (e) => setF((cur) => ({ ...cur, [k]: e.target.value }));
 
   const save = async () => {
     setSaving(true);
     setError('');
     try {
       const payload = {
-        ...f,
+        full_name: f.full_name,
+        email: f.email || '',
+        phone: f.phone || '',
+        position: f.position || '',
         department_id: f.department_id || null,
+        contract_type: f.contract_type || 'permanent',
+        hire_date: f.hire_date || '',
+        status: f.status || 'actif',
+        leave_date: f.leave_date || '',
+        salary_currency: f.salary_currency || 'USD',
+        photo: f.photo || '',
+        notes: f.notes || '',
         manager_id: f.manager_id ? Number(f.manager_id) : null,
         annual_days: f.annual_days === '' || f.annual_days == null ? 0 : Number(f.annual_days) || 0,
+        job_description: f.job_description || '',
         salary: isSuper ? f.salary : undefined
       };
       if (initial.id) await api.grh.employees.update(initial.id, payload);
@@ -202,8 +248,13 @@ function EmployeeForm({ initial, departments, employees = [], isSuper, onSaved, 
         </div>
       )}
 
-      <Field label="Photo (bibliothèque)">
-        <ImageInput label="" value={f.photo || ''} onChange={(v) => setF({ ...f, photo: v })} />
+      <Field label="Photo">
+        <ImageInput
+          label=""
+          round
+          value={f.photo || ''}
+          onChange={(v) => setF((cur) => ({ ...cur, photo: v }))}
+        />
       </Field>
       <Field label="Notes internes">
         <textarea className="input" rows={3} value={f.notes || ''} onChange={set('notes')} placeholder="Formations, observations…" />
@@ -765,24 +816,24 @@ function PayrollTab({ employees, onChanged }) {
   const totalNet = rows.reduce((acc, r) => acc + (Number(r.net) || 0), 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <style>{PRINT_BULLETIN_CSS}</style>
-      <p className="rounded-2xl border border-accent-200 bg-accent-50 px-5 py-4 text-sm font-semibold text-accent-900">
-        🔒 Module confidentiel : la paie est réservée au super administrateur.
+      <p className="rounded-2xl border border-accent-200 bg-accent-50 px-5 py-3.5 text-sm font-semibold text-accent-900">
+        Module confidentiel : la paie est réservée au super administrateur.
       </p>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-bold text-ink-500">Mois :</label>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-3 ring-1 ring-ink-950/5">
+        <div className="flex items-center gap-2 px-1">
+          <label className="text-sm font-bold text-ink-500">Mois</label>
           <input type="month" className="input !w-44 !py-2.5" value={month} onChange={(e) => setMonth(e.target.value)} />
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={exportCsv} disabled={rows.length === 0}>
-            ⬇ Export CSV
+          <button className="btn-ghost !px-4 !py-2 text-sm" onClick={exportCsv} disabled={rows.length === 0}>
+            Export CSV
           </button>
-          <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={generate}>
-            ⚡ Générer le mois
+          <button className="btn-ghost !px-4 !py-2 text-sm" onClick={generate}>
+            Générer le mois
           </button>
-          <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setFormModal({ month })}>
+          <button className="btn-primary !px-5 !py-2 text-sm" onClick={() => setFormModal({ month })}>
             + Bulletin
           </button>
         </div>
@@ -790,18 +841,22 @@ function PayrollTab({ employees, onChanged }) {
       {msg && <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-      <div className="card overflow-hidden">
+      <GrhSection
+        title={`Bulletins — ${monthLabelFr(month)}`}
+        desc={rows.length ? `${rows.length} bulletin(s) · Masse nette ${fmtMoney(totalNet)}` : 'Aucun bulletin pour ce mois'}
+        padded={false}
+      >
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+            <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
               <tr>
-                <th className="px-6 py-4">Employé</th>
-                <th className="px-6 py-4">Base</th>
-                <th className="px-6 py-4">Primes</th>
-                <th className="px-6 py-4">Retenues</th>
-                <th className="px-6 py-4">Net</th>
-                <th className="px-6 py-4">Statut</th>
-                <th className="px-6 py-4 text-right">Actions</th>
+                <th className="px-6 py-3.5">Employé</th>
+                <th className="px-6 py-3.5">Base</th>
+                <th className="px-6 py-3.5">Primes</th>
+                <th className="px-6 py-3.5">Retenues</th>
+                <th className="px-6 py-3.5">Net</th>
+                <th className="px-6 py-3.5">Statut</th>
+                <th className="px-6 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -846,13 +901,7 @@ function PayrollTab({ employees, onChanged }) {
             Aucun bulletin pour {monthLabelFr(month)} — générez le mois ou créez un bulletin.
           </p>
         )}
-        {rows.length > 0 && (
-          <div className="flex items-center justify-between border-t border-ink-100 bg-cream/70 px-6 py-4 text-sm">
-            <span className="font-bold text-ink-500">{rows.length} bulletin(s) — {monthLabelFr(month)}</span>
-            <span className="font-display font-bold text-brand-700">Masse nette : {fmtMoney(totalNet)}</span>
-          </div>
-        )}
-      </div>
+      </GrhSection>
 
       <Modal open={!!formModal} onClose={() => setFormModal(null)} title={formModal?.id ? 'Modifier le bulletin' : 'Nouveau bulletin'} wide>
         {formModal && (
@@ -1164,17 +1213,18 @@ function RecruitTab({ departments, onChanged }) {
   );
 
   return (
-    <div className="space-y-8">
-      <div>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="font-display text-lg font-bold text-ink-900">Offres d'emploi ({jobs.length})</h3>
-          <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setJobModal({})}>
+    <div className="space-y-5">
+      <GrhSection
+        title={`Offres d'emploi (${jobs.length})`}
+        action={
+          <button className="btn-primary !px-5 !py-2 text-sm" onClick={() => setJobModal({})}>
             + Nouvelle offre
           </button>
-        </div>
+        }
+      >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {jobs.map((j) => (
-            <div key={j.id} className="card flex flex-col p-5">
+            <div key={j.id} className="flex flex-col overflow-hidden rounded-xl bg-cream/60 p-4 ring-1 ring-ink-950/5">
               <div className="flex items-start justify-between gap-2">
                 <p className="font-display font-bold text-ink-900">{j.title}</p>
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${j.published ? 'bg-emerald-100 text-emerald-700' : 'bg-ink-100 text-ink-500'}`}>
@@ -1182,20 +1232,20 @@ function RecruitTab({ departments, onChanged }) {
                 </span>
               </div>
               <div className="mt-2 space-y-1 text-xs text-ink-400">
-                <p>🏢 {j.department || 'Non affecté'} · {CONTRACTS[j.contract_type] || j.contract_type}</p>
-                {j.location && <p>📍 {j.location}</p>}
+                <p>{j.department || 'Non affecté'} · {CONTRACTS[j.contract_type] || j.contract_type}</p>
+                {j.location && <p>{j.location}</p>}
                 {(j.salary_min != null || j.salary_max != null) && (
-                  <p>💰 {fmtMoney(j.salary_min ?? 0, j.salary_currency)} — {fmtMoney(j.salary_max ?? 0, j.salary_currency)}</p>
+                  <p>{fmtMoney(j.salary_min ?? 0, j.salary_currency)} — {fmtMoney(j.salary_max ?? 0, j.salary_currency)}</p>
                 )}
-                {j.deadline && <p>⏳ Jusqu'au {fmtDate(j.deadline)}</p>}
+                {j.deadline && <p>Jusqu'au {fmtDate(j.deadline)}</p>}
                 <p className="font-bold text-brand-700">{j.candidates} candidat(s)</p>
               </div>
-              <div className="mt-4 flex flex-wrap gap-2 border-t border-ink-100 pt-3">
-                <button className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100" onClick={() => setJobModal({ ...j })}>
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-ink-100/80 pt-3">
+                <button className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-ink-600 ring-1 ring-ink-100 hover:bg-ink-50" onClick={() => setJobModal({ ...j })}>
                   Modifier
                 </button>
                 <button
-                  className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100"
+                  className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-ink-600 ring-1 ring-ink-100 hover:bg-ink-50"
                   onClick={async () => {
                     try {
                       await api.grh.jobs.update(j.id, { published: j.published ? 0 : 1 });
@@ -1215,34 +1265,28 @@ function RecruitTab({ departments, onChanged }) {
           ))}
         </div>
         {jobs.length === 0 && (
-          <p className="rounded-2xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
+          <p className="rounded-xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
             Aucune offre d'emploi — créez-en une pour structurer le recrutement.
           </p>
         )}
-      </div>
+      </GrhSection>
 
-      <div>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="font-display text-lg font-bold text-ink-900">Candidats ({candidates.length})</h3>
+      <GrhSection
+        title={`Candidats (${candidates.length})`}
+        action={
           <div className="flex flex-wrap gap-2">
-            <select className="input !w-48 !py-2.5 text-sm" value={filterJob} onChange={(e) => setFilterJob(e.target.value)}>
+            <select className="input !w-48 !py-2 text-sm" value={filterJob} onChange={(e) => setFilterJob(e.target.value)}>
               <option value="">Toutes les offres</option>
               {jobs.map((j) => (
                 <option key={j.id} value={j.id}>{j.title}</option>
               ))}
             </select>
-            <select className="input !w-40 !py-2.5 text-sm" value={filterStage} onChange={(e) => setFilterStage(e.target.value)}>
-              <option value="">Toutes les étapes</option>
-              {Object.entries(STAGE_LABELS).map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-            <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setCandModal({})}>
+            <button className="btn-primary !px-5 !py-2 text-sm" onClick={() => setCandModal({})}>
               + Candidat
             </button>
           </div>
-        </div>
-
+        }
+      >
         <div className="mb-4 flex flex-wrap gap-2">
           {stageCounts.map(({ stage, n }) => (
             <button
@@ -1260,17 +1304,17 @@ function RecruitTab({ departments, onChanged }) {
         {msg && <p className="mb-4 rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
         {error && <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-        <div className="card overflow-hidden">
+        <div className="overflow-hidden rounded-xl ring-1 ring-ink-100">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
                 <tr>
-                  <th className="px-6 py-4">Candidat</th>
-                  <th className="px-6 py-4">Offre</th>
-                  <th className="px-6 py-4">Étape</th>
-                  <th className="px-6 py-4">Entretien</th>
-                  <th className="px-6 py-4">CV</th>
-                  <th className="px-6 py-4 text-right">Actions</th>
+                  <th className="px-6 py-3.5">Candidat</th>
+                  <th className="px-6 py-3.5">Offre</th>
+                  <th className="px-6 py-3.5">Étape</th>
+                  <th className="px-6 py-3.5">Entretien</th>
+                  <th className="px-6 py-3.5">CV</th>
+                  <th className="px-6 py-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1298,7 +1342,7 @@ function RecruitTab({ departments, onChanged }) {
                     <td className="px-6 py-4">
                       {c.cv_file ? (
                         <button className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100" onClick={() => downloadCv(c)}>
-                          📎 Télécharger
+                          Télécharger
                         </button>
                       ) : (
                         <span className="text-xs text-ink-300">—</span>
@@ -1337,7 +1381,7 @@ function RecruitTab({ departments, onChanged }) {
             <p className="py-12 text-center text-ink-400">Aucun candidat{filterJob || filterStage ? ' pour ces filtres' : ''}.</p>
           )}
         </div>
-      </div>
+      </GrhSection>
 
       <Modal open={!!jobModal} onClose={() => setJobModal(null)} title={jobModal?.id ? 'Modifier l’offre' : 'Nouvelle offre d’emploi'} wide>
         {jobModal && (
@@ -1505,26 +1549,26 @@ function EvaluationTab({ employees }) {
   const scoreColor = (n) => (n >= 4 ? 'text-emerald-600' : n >= 3 ? 'text-brand-700' : 'text-red-600');
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-ink-500">
-          Bilan de l'équipe : critères personnalisables notés sur 5, commentaires et validation.
-        </p>
-        <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setModal({})}>+ Nouvelle évaluation</button>
-      </div>
+    <div className="space-y-5">
       {msg && <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-      <div className="card overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-cream/70 px-6 py-4">
-          <h3 className="font-display text-lg font-bold text-ink-900">Évaluations ({visible.length})</h3>
-          <select className="input !w-56 !py-2.5 text-sm" value={filterEmp} onChange={(e) => setFilterEmp(e.target.value)}>
-            <option value="">Tous les employés</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>{e.full_name}</option>
-            ))}
-          </select>
-        </div>
+      <GrhSection
+        title={`Évaluations (${visible.length})`}
+        desc="Critères personnalisables notés sur 5, commentaires et validation."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <select className="input !w-52 !py-2 text-sm" value={filterEmp} onChange={(e) => setFilterEmp(e.target.value)}>
+              <option value="">Tous les employés</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>{e.full_name}</option>
+              ))}
+            </select>
+            <button className="btn-primary !px-5 !py-2 text-sm" onClick={() => setModal({})}>+ Nouvelle évaluation</button>
+          </div>
+        }
+        padded={false}
+      >
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] text-left text-sm">
             <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
@@ -1580,7 +1624,7 @@ function EvaluationTab({ employees }) {
           </table>
         </div>
         {visible.length === 0 && <p className="py-12 text-center text-ink-400">Aucune évaluation — créez la première pour un employé.</p>}
-      </div>
+      </GrhSection>
 
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? `Modifier — ${modal.full_name || ''} (${monthLabelFr(modal.period)})` : 'Nouvelle évaluation'} wide>
         {modal && (
@@ -1747,97 +1791,99 @@ function TrainingTab({ employees }) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-ink-500">
-          Formations et montée en compétences : planifiez, inscrivez les participants et suivez la progression.
-        </p>
-        <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setModal({})}>+ Nouvelle formation</button>
-      </div>
+    <div className="space-y-5">
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {rows.map((t) => (
-          <div key={t.id} className="card flex flex-col p-5">
-            <div className="flex items-start justify-between gap-2">
-              <p className="font-display font-bold text-ink-900">{t.title}</p>
-              <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${t.type === 'interne' ? 'bg-brand-100 text-brand-700' : 'bg-accent-100 text-accent-800'}`}>
-                {TRAIN_TYPES[t.type] || t.type}
-              </span>
-            </div>
-            <div className="mt-2 space-y-1 text-xs text-ink-400">
-              {t.provider && <p>🏛 {t.provider}</p>}
-              {(t.start_date || t.end_date) && (
-                <p>📅 {t.start_date ? fmtDate(t.start_date) : ''}{t.start_date && t.end_date ? ' → ' : ''}{t.end_date ? fmtDate(t.end_date) : ''}</p>
-              )}
-              {t.cost != null && <p>💰 {fmtMoney(t.cost, t.cost_currency)}</p>}
-              {t.notes && <p className="truncate" title={t.notes}>{t.notes}</p>}
-            </div>
+      <GrhSection
+        title={`Formations (${rows.length})`}
+        desc="Planifiez, inscrivez les participants et suivez la progression."
+        action={
+          <button className="btn-primary !px-5 !py-2 text-sm" onClick={() => setModal({})}>+ Nouvelle formation</button>
+        }
+      >
+        <div className="grid gap-4 lg:grid-cols-2">
+          {rows.map((t) => (
+            <div key={t.id} className="flex flex-col overflow-hidden rounded-xl bg-cream/50 p-4 ring-1 ring-ink-950/5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-display font-bold text-ink-900">{t.title}</p>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${t.type === 'interne' ? 'bg-brand-100 text-brand-700' : 'bg-accent-100 text-accent-800'}`}>
+                  {TRAIN_TYPES[t.type] || t.type}
+                </span>
+              </div>
+              <div className="mt-2 space-y-1 text-xs text-ink-400">
+                {t.provider && <p>{t.provider}</p>}
+                {(t.start_date || t.end_date) && (
+                  <p>{t.start_date ? fmtDate(t.start_date) : ''}{t.start_date && t.end_date ? ' → ' : ''}{t.end_date ? fmtDate(t.end_date) : ''}</p>
+                )}
+                {t.cost != null && <p>{fmtMoney(t.cost, t.cost_currency)}</p>}
+                {t.notes && <p className="truncate" title={t.notes}>{t.notes}</p>}
+              </div>
 
-            <div className="mt-4 flex-1">
-              <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Participants ({t.attendees.length})</p>
-              <ul className="space-y-1.5">
-                {t.attendees.map((a) => (
-                  <li key={a.id} className="flex items-center gap-2 rounded-xl bg-cream px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-ink-800">{a.full_name}</p>
-                      <p className="truncate text-[11px] text-ink-400">{a.position || ''}</p>
-                    </div>
-                    <select
-                      className="input !w-28 !py-1.5 text-xs font-bold"
-                      value={a.status}
-                      onChange={(e) => setAttendeeStatus(a, e.target.value)}
-                    >
-                      {Object.entries(TRAIN_STATUS).map(([v, l]) => (
-                        <option key={v} value={v}>{l}</option>
-                      ))}
-                    </select>
-                    <button onClick={() => removeAttendee(a)} className="rounded-lg bg-red-50 px-2 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Retirer">
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {t.attendees.length === 0 && (
-                <p className="rounded-xl border border-dashed border-ink-200 px-3 py-3 text-center text-xs text-ink-400">Aucun participant inscrit.</p>
-              )}
-            </div>
+              <div className="mt-4 flex-1">
+                <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Participants ({t.attendees.length})</p>
+                <ul className="space-y-1.5">
+                  {t.attendees.map((a) => (
+                    <li key={a.id} className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-ink-100">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-ink-800">{a.full_name}</p>
+                        <p className="truncate text-[11px] text-ink-400">{a.position || ''}</p>
+                      </div>
+                      <select
+                        className="input !w-28 !py-1.5 text-xs font-bold"
+                        value={a.status}
+                        onChange={(e) => setAttendeeStatus(a, e.target.value)}
+                      >
+                        {Object.entries(TRAIN_STATUS).map(([v, l]) => (
+                          <option key={v} value={v}>{l}</option>
+                        ))}
+                      </select>
+                      <button onClick={() => removeAttendee(a)} className="rounded-lg bg-red-50 px-2 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Retirer">
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {t.attendees.length === 0 && (
+                  <p className="rounded-xl border border-dashed border-ink-200 px-3 py-3 text-center text-xs text-ink-400">Aucun participant inscrit.</p>
+                )}
+              </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
-              <select
-                className="input !w-48 !py-2 text-xs"
-                value={addEmp[t.id] ?? ''}
-                onChange={(e) => setAddEmp((cur) => ({ ...cur, [t.id]: e.target.value }))}
-              >
-                <option value="">+ Participant…</option>
-                {employees.filter((e) => !t.attendees.some((a) => a.employee_id === e.id)).map((e) => (
-                  <option key={e.id} value={e.id}>{e.full_name}</option>
-                ))}
-              </select>
-              <button
-                className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100 disabled:opacity-40"
-                disabled={!addEmp[t.id]}
-                onClick={() => addAttendee(t, addEmp[t.id])}
-              >
-                Inscrire
-              </button>
-              <div className="ml-auto flex gap-1.5">
-                <button onClick={() => setModal({ ...t })} className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
-                  Modifier
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
+                <select
+                  className="input !w-48 !py-2 text-xs"
+                  value={addEmp[t.id] ?? ''}
+                  onChange={(e) => setAddEmp((cur) => ({ ...cur, [t.id]: e.target.value }))}
+                >
+                  <option value="">+ Participant…</option>
+                  {employees.filter((e) => !t.attendees.some((a) => a.employee_id === e.id)).map((e) => (
+                    <option key={e.id} value={e.id}>{e.full_name}</option>
+                  ))}
+                </select>
+                <button
+                  className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100 disabled:opacity-40"
+                  disabled={!addEmp[t.id]}
+                  onClick={() => addAttendee(t, addEmp[t.id])}
+                >
+                  Inscrire
                 </button>
-                <button onClick={() => remove(t)} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100">
-                  Supprimer
-                </button>
+                <div className="ml-auto flex gap-1.5">
+                  <button onClick={() => setModal({ ...t })} className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                    Modifier
+                  </button>
+                  <button onClick={() => remove(t)} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100">
+                    Supprimer
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
-      {rows.length === 0 && (
-        <p className="rounded-2xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
-          Aucune formation enregistrée — planifiez la première.
-        </p>
-      )}
+          ))}
+        </div>
+        {rows.length === 0 && (
+          <p className="rounded-xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
+            Aucune formation enregistrée — planifiez la première.
+          </p>
+        )}
+      </GrhSection>
 
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Modifier la formation' : 'Nouvelle formation'} wide>
         {modal && (
@@ -1937,49 +1983,51 @@ function AnnouncementTab() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-ink-500">
-          Messages internes visibles par chaque employé dans « Mon espace ». Les annonces épinglées restent en tête de liste.
-        </p>
-        <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setModal({})}>+ Nouvelle annonce</button>
-      </div>
+    <div className="space-y-5">
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-      <div className="space-y-4">
-        {rows.map((a) => (
-          <div key={a.id} className={`card p-5 ${a.pinned ? 'ring-2 ring-brand-200' : ''}`}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-display font-bold text-ink-900">
-                  {a.pinned ? '📌 ' : ''}{a.title}
-                </p>
-                <p className="mt-1 text-xs text-ink-400">
-                  {fmtDate(a.created_at)}{a.expires_at ? ` · expire le ${fmtDate(a.expires_at)}` : ' · sans expiration'}
-                  {a.created_by_name ? ` · par ${a.created_by_name}` : ''}
-                </p>
+      <GrhSection
+        title={`Annonces (${rows.length})`}
+        desc="Visibles dans « Mon espace ». Les annonces épinglées restent en tête."
+        action={
+          <button className="btn-primary !px-5 !py-2 text-sm" onClick={() => setModal({})}>+ Nouvelle annonce</button>
+        }
+      >
+        <div className="space-y-3">
+          {rows.map((a) => (
+            <div key={a.id} className={`rounded-xl bg-cream/50 p-4 ring-1 ${a.pinned ? 'ring-brand-200' : 'ring-ink-950/5'}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-display font-bold text-ink-900">
+                    {a.pinned ? '📌 ' : ''}{a.title}
+                  </p>
+                  <p className="mt-1 text-xs text-ink-400">
+                    {fmtDate(a.created_at)}{a.expires_at ? ` · expire le ${fmtDate(a.expires_at)}` : ' · sans expiration'}
+                    {a.created_by_name ? ` · par ${a.created_by_name}` : ''}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-1.5">
+                  <button onClick={() => togglePin(a)} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-ink-600 ring-1 ring-ink-100 hover:bg-ink-50">
+                    {a.pinned ? 'Désépingler' : 'Épingler'}
+                  </button>
+                  <button onClick={() => setModal({ ...a })} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-ink-600 ring-1 ring-ink-100 hover:bg-ink-50">
+                    Éditer
+                  </button>
+                  <button onClick={() => remove(a)} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                    ✕
+                  </button>
+                </div>
               </div>
-              <div className="flex shrink-0 gap-1.5">
-                <button onClick={() => togglePin(a)} className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
-                  {a.pinned ? 'Désépingler' : 'Épingler'}
-                </button>
-                <button onClick={() => setModal({ ...a })} className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
-                  Éditer
-                </button>
-                <button onClick={() => remove(a)} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
-                  ✕
-                </button>
-              </div>
+              <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-600">{a.content}</p>
             </div>
-            <p className="mt-3 text-sm leading-relaxed whitespace-pre-wrap text-ink-600">{a.content}</p>
-          </div>
-        ))}
-      </div>
-      {rows.length === 0 && (
-        <p className="rounded-2xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
-          Aucune annonce interne — publiez la première.
-        </p>
-      )}
+          ))}
+        </div>
+        {rows.length === 0 && (
+          <p className="rounded-xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
+            Aucune annonce interne — publiez la première.
+          </p>
+        )}
+      </GrhSection>
 
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Modifier l’annonce' : 'Nouvelle annonce interne'} wide>
         {modal && (
@@ -1994,18 +2042,18 @@ function OrgNode({ node, level = 0, onOpenFile }) {
   return (
     <li className="relative">
       <div
-        className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 ring-1 ring-ink-100"
-        style={{ marginLeft: level * 26 }}
+        className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 ring-1 ring-ink-950/5 transition-shadow hover:shadow-soft"
+        style={{ marginLeft: level * 22 }}
       >
         {node.photo ? (
-          <img src={node.photo} alt={node.full_name} className="h-10 w-10 shrink-0 rounded-xl object-cover" />
+          <img src={node.photo} alt={node.full_name} className="h-10 w-10 shrink-0 rounded-full object-cover ring-2 ring-brand-50" />
         ) : (
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 font-display text-sm font-bold text-brand-700">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-50 font-display text-sm font-bold text-brand-700">
             {node.full_name.slice(0, 2).toUpperCase()}
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <button className="block max-w-full truncate font-display text-sm font-bold text-ink-900 hover:text-brand-700" onClick={() => onOpenFile(node)}>
+          <button className="block max-w-full truncate text-left text-sm font-bold text-ink-900 hover:text-brand-700" onClick={() => onOpenFile(node)}>
             {node.full_name}
           </button>
           <p className="truncate text-xs text-ink-400">{node.position || '—'}</p>
@@ -2020,7 +2068,7 @@ function OrgNode({ node, level = 0, onOpenFile }) {
         )}
       </div>
       {node.children?.length > 0 && (
-        <ul className="mt-2 space-y-2 border-l-2 border-brand-100 pl-2" style={{ marginLeft: level * 26 + 24 }}>
+        <ul className="mt-2 space-y-2 border-l-2 border-brand-100/80 pl-2" style={{ marginLeft: level * 22 + 20 }}>
           {node.children.map((c) => (
             <OrgNode key={c.id} node={c} level={level + 1} onOpenFile={onOpenFile} />
           ))}
@@ -2051,6 +2099,7 @@ export default function GrhAdmin() {
   const [calMonth, setCalMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [leavesMonth, setLeavesMonth] = useState([]);
   const [error, setError] = useState('');
+  const [loaded, setLoaded] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -2066,8 +2115,11 @@ export default function GrhAdmin() {
       setLeaves(le);
       setOverview(ov);
       setOrgTree(og);
+      setError('');
     } catch (e) {
       setError(e.message);
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -2171,79 +2223,155 @@ export default function GrhAdmin() {
     }
   };
 
+  const visibleTabs = TABS.filter((t) => t.id !== 'payroll' || isSuper);
+  const activeId = visibleTabs.some((t) => t.id === tab) ? tab : 'overview';
+  const activeTab = visibleTabs.find((t) => t.id === activeId) || visibleTabs[0];
+  const groups = [...new Set(visibleTabs.map((t) => t.group))];
+
+  if (!loaded) return <PageTitle title="GRH" />;
+
   if (error)
     return (
-      <div className="mx-auto max-w-lg rounded-2xl bg-red-50 p-8 text-center">
-        <p className="text-sm font-bold text-red-700">{error}</p>
-        <p className="mt-2 text-sm text-red-600">
+      <div className="mx-auto max-w-lg overflow-hidden rounded-2xl bg-white p-8 text-center ring-1 ring-ink-950/5">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-red-50 text-red-600">
+          <TabIcon d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+        </span>
+        <p className="mt-4 text-sm font-bold text-ink-900">{error}</p>
+        <p className="mt-2 text-sm text-ink-500">
           Si le module GRH a été désactivé par le super administrateur, demandez-lui de le réactiver
           (Paramètres → Modules).
         </p>
-        <button className="btn-ghost mt-4 text-sm" onClick={loadAll}>Réessayer</button>
+        <button className="btn-ghost mt-5 text-sm" onClick={loadAll}>Réessayer</button>
       </div>
     );
 
   return (
     <div>
-      <PageTitle
-        title="Gestion RH"
-        subtitle="Équipe, départements et congés — module interne, activable par le super administrateur"
-      />
+      <div className="lg:grid lg:grid-cols-[240px_minmax(0,1fr)] lg:items-start lg:gap-8">
+        <aside className="mb-6 lg:sticky lg:top-24 lg:mb-0">
+          {groups.map((g) => (
+            <div key={g} className="mb-5 last:mb-0">
+              <p className="mb-2 px-1 text-xs font-bold uppercase tracking-wider text-ink-400">{g}</p>
+              <nav className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+                {visibleTabs.filter((t) => t.group === g).map((t) => {
+                  const on = activeId === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setTab(t.id)}
+                      className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors lg:w-full ${
+                        on ? 'bg-white text-brand-800 shadow-soft ring-1 ring-brand-100' : 'text-ink-600 hover:bg-white/70'
+                      }`}
+                    >
+                      <span className={`relative grid h-9 w-9 place-items-center rounded-lg ${on ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-100'}`}>
+                        <TabIcon d={t.icon} />
+                        {t.id === 'leaves' && overview?.leavesPending > 0 && (
+                          <span className="absolute -top-1 -right-1 grid h-4 min-w-4 place-items-center rounded-full bg-accent-400 px-1 text-[9px] font-black text-ink-950">
+                            {overview.leavesPending}
+                          </span>
+                        )}
+                      </span>
+                      <span className="hidden min-w-0 lg:block">
+                        <span className="block text-sm font-bold">{t.label}</span>
+                        <span className="block text-[11px] font-medium text-ink-400">{t.hint}</span>
+                      </span>
+                      <span className="text-sm font-bold lg:hidden">{t.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+          ))}
+        </aside>
 
-      <div className="mb-8 flex flex-wrap gap-2">
-        {TABS.filter(([id]) => id !== 'payroll' || isSuper).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`rounded-full px-5 py-2.5 text-sm font-bold transition-all ${
-              tab === id ? 'bg-brand-600 text-white shadow-soft' : 'bg-white text-ink-600 ring-1 ring-ink-200 hover:ring-brand-300'
-            }`}
-          >
-            {label}
-            {id === 'leaves' && (overview?.leavesPending > 0) && (
-              <span className="ml-2 rounded-full bg-accent-400 px-2 py-0.5 text-[10px] font-black text-ink-950">
-                {overview.leavesPending}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'overview' && (
-        <div className="space-y-6">
-          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard icon="👥" label="Employés actifs" value={overview?.active ?? '—'} sub={`${overview?.total ?? 0} au total`} />
-            <StatCard icon="🏢" label="Départements" value={departments.length} />
-            <StatCard icon="⏳" label="Congés en attente" value={overview?.leavesPending ?? '—'} sub="à valider dans l'onglet Congés" />
-            <StatCard icon="🌴" label="Congés en cours" value={overview?.leavesOngoing ?? '—'} sub="approuvés et en cours aujourd'hui" />
+        <div>
+          <div className="sticky top-16 z-20 -mx-4 mb-6 border-b border-ink-100 bg-[#f4f6fb]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:mx-0 lg:rounded-2xl lg:border lg:bg-white/90 lg:px-5 lg:shadow-soft">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="font-display text-lg font-bold text-ink-900">{activeTab.label}</h2>
+                <p className="text-sm text-ink-400">{activeTab.hint}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {activeId === 'employees' && (
+                  <button type="button" className="btn-primary !px-5 !py-2 text-sm" onClick={() => setEmpModal({ ...emptyEmployee })}>
+                    + Ajouter un employé
+                  </button>
+                )}
+                {activeId === 'leaves' && (
+                  <button type="button" className="btn-primary !px-5 !py-2 text-sm" onClick={() => setLeaveModal({ ...emptyLeave })}>
+                    + Demander un congé
+                  </button>
+                )}
+                {activeId === 'overview' && (
+                  <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setTab('employees')}>
+                    Voir l’équipe
+                  </button>
+                )}
+                {activeId === 'departments' && (
+                  <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setTab('employees')}>
+                    Voir l’équipe
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="card p-7">
-              <h3 className="mb-5 font-display text-lg font-bold text-ink-900">Effectif par département</h3>
+      {activeId === 'overview' && (
+        <div className="space-y-5">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              icon={TABS.find((t) => t.id === 'employees').icon}
+              label="Employés actifs"
+              value={overview?.active ?? '—'}
+              sub={`${overview?.total ?? 0} au total`}
+            />
+            <StatCard
+              icon={TABS.find((t) => t.id === 'departments').icon}
+              label="Départements"
+              value={departments.length}
+              tone="ink"
+            />
+            <StatCard
+              icon={TABS.find((t) => t.id === 'leaves').icon}
+              label="Congés en attente"
+              value={overview?.leavesPending ?? '—'}
+              sub="à valider dans Congés"
+              tone="warn"
+            />
+            <StatCard
+              icon="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+              label="Congés en cours"
+              value={overview?.leavesOngoing ?? '—'}
+              sub="approuvés et en cours aujourd'hui"
+              tone="accent"
+            />
+          </div>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <GrhSection title="Effectif par département" desc="Répartition des employés actifs.">
               {(overview?.byDept || []).length === 0 && <p className="text-sm text-ink-400">Aucun employé actif pour le moment.</p>}
               <div className="space-y-4">
                 {(overview?.byDept || []).map((d) => (
                   <div key={d.name}>
-                    <div className="mb-1 flex items-center justify-between text-sm">
+                    <div className="mb-1.5 flex items-center justify-between text-sm">
                       <span className="font-semibold text-ink-700">{d.name}</span>
                       <span className="font-bold text-brand-700">{d.n}</span>
                     </div>
-                    <div className="h-2.5 overflow-hidden rounded-full bg-ink-100">
+                    <div className="h-2 overflow-hidden rounded-full bg-ink-100">
                       <div className="h-full rounded-full bg-brand-500" style={{ width: `${(d.n / maxDept) * 100}%` }} />
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </GrhSection>
 
-            <div className="space-y-6">
-              <div className="card p-7">
-                <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Dernières embauches</h3>
+            <div className="space-y-5">
+              <GrhSection title="Dernières embauches">
                 {(overview?.recentHires || []).length === 0 && <p className="text-sm text-ink-400">Aucune embauche enregistrée.</p>}
-                <ul className="space-y-3">
+                <ul className="space-y-2">
                   {(overview?.recentHires || []).map((h, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 text-sm">
+                    <li key={i} className="flex items-center justify-between gap-3 rounded-xl bg-cream px-4 py-3 text-sm">
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-ink-800">{h.full_name}</p>
                         <p className="text-xs text-ink-400">{h.position || '—'}</p>
@@ -2252,13 +2380,12 @@ export default function GrhAdmin() {
                     </li>
                   ))}
                 </ul>
-              </div>
-              <div className="card p-7">
-                <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Prochains congés approuvés</h3>
+              </GrhSection>
+              <GrhSection title="Prochains congés approuvés">
                 {(overview?.upcomingLeaves || []).length === 0 && <p className="text-sm text-ink-400">Aucun congé à venir.</p>}
-                <ul className="space-y-3">
+                <ul className="space-y-2">
                   {(overview?.upcomingLeaves || []).map((l, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 text-sm">
+                    <li key={i} className="flex items-center justify-between gap-3 rounded-xl bg-cream px-4 py-3 text-sm">
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-ink-800">{l.full_name}</p>
                         <p className="text-xs text-ink-400">{LEAVE_TYPES[l.type] || l.type}</p>
@@ -2269,77 +2396,75 @@ export default function GrhAdmin() {
                     </li>
                   ))}
                 </ul>
-              </div>
+              </GrhSection>
             </div>
           </div>
         </div>
       )}
 
-      {tab === 'employees' && (
-        <div className="space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                className="input !w-56 !py-2.5 text-sm"
-                placeholder="Rechercher (nom, email, fonction)…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-              <select className="input !w-44 !py-2.5 text-sm" value={filterDept} onChange={(e) => setFilterDept(e.target.value)}>
-                <option value="">Tous les départements</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-              <select className="input !w-36 !py-2.5 text-sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-                <option value="">Tous statuts</option>
-                <option value="actif">Actifs</option>
-                <option value="inactif">Inactifs</option>
-              </select>
-            </div>
-            <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setEmpModal({ ...emptyEmployee })}>
-              + Ajouter un employé
-            </button>
+      {activeId === 'employees' && (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white p-3 ring-1 ring-ink-950/5">
+            <input
+              className="input !w-56 !py-2.5 text-sm"
+              placeholder="Rechercher (nom, email, fonction)…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <select className="input !w-44 !py-2.5 text-sm" value={filterDept} onChange={(e) => setFilterDept(e.target.value)}>
+              <option value="">Tous les départements</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+            <select className="input !w-36 !py-2.5 text-sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+              <option value="">Tous statuts</option>
+              <option value="actif">Actifs</option>
+              <option value="inactif">Inactifs</option>
+            </select>
+            <span className="ml-auto px-2 text-xs font-bold text-ink-400">{filteredEmployees.length} fiche{filteredEmployees.length > 1 ? 's' : ''}</span>
           </div>
 
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {filteredEmployees.map((e) => (
-              <div key={e.id} className="card flex gap-4 p-5">
-                {e.photo ? (
-                  <img src={e.photo} alt={e.full_name} className="h-16 w-16 shrink-0 rounded-2xl object-cover ring-1 ring-ink-100" />
-                ) : (
-                  <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-brand-100 font-display text-lg font-bold text-brand-700">
-                    {e.full_name.slice(0, 2).toUpperCase()}
-                  </span>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate font-display font-bold text-ink-900">{e.full_name}</p>
-                      <p className="truncate text-sm text-ink-500">{e.position || 'Fonction non renseignée'}</p>
-                    </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${e.status === 'actif' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
-                      {e.status === 'actif' ? 'Actif' : 'Inactif'}
+              <div key={e.id} className="flex flex-col overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5 transition-shadow hover:shadow-soft">
+                <div className="flex gap-4 p-5">
+                  {e.photo ? (
+                    <img src={e.photo} alt={e.full_name} className="h-14 w-14 shrink-0 rounded-full object-cover ring-2 ring-brand-50" />
+                  ) : (
+                    <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand-50 font-display text-lg font-bold text-brand-700">
+                      {e.full_name.slice(0, 2).toUpperCase()}
                     </span>
-                  </div>
-                  <div className="mt-2 space-y-1 text-xs text-ink-400">
-                    <p className="truncate">🏢 {e.department || 'Non affecté'}</p>
-                    <p>{CONTRACTS[e.contract_type] || e.contract_type}{e.hire_date ? ` · depuis le ${fmtDate(e.hire_date)}` : ''}</p>
-                    {(e.email || e.phone) && (
-                      <p className="truncate">{e.email}{e.email && e.phone ? ' · ' : ''}{e.phone}</p>
-                    )}
-                    {isSuper && e.salary != null && (
-                      <p className="font-bold text-accent-800">💰 {Number(e.salary).toLocaleString('fr-FR')} {e.salary_currency}/mois</p>
-                    )}
-                    <p>
-                      🌴 Congés restants :{' '}
-                      <span className={e.balance && e.balance.remaining < 0 ? 'font-bold text-red-600' : 'font-bold text-brand-700'}>
-                        {e.balance?.remaining ?? '—'} j
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-display font-bold text-ink-900">{e.full_name}</p>
+                        <p className="truncate text-sm text-ink-500">{e.position || 'Fonction non renseignée'}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${e.status === 'actif' ? 'bg-brand-50 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+                        {e.status === 'actif' ? 'Actif' : 'Inactif'}
                       </span>
-                    </p>
+                    </div>
+                    <div className="mt-3 space-y-1 text-xs text-ink-400">
+                      <p className="truncate">{e.department || 'Non affecté'} · {CONTRACTS[e.contract_type] || e.contract_type}</p>
+                      {e.hire_date && <p>Depuis le {fmtDate(e.hire_date)}</p>}
+                      {(e.email || e.phone) && (
+                        <p className="truncate">{e.email}{e.email && e.phone ? ' · ' : ''}{e.phone}</p>
+                      )}
+                      {isSuper && e.salary != null && (
+                        <p className="font-bold text-accent-800">{Number(e.salary).toLocaleString('fr-FR')} {e.salary_currency}/mois</p>
+                      )}
+                      <p>
+                        Congés restants :{' '}
+                        <span className={e.balance && e.balance.remaining < 0 ? 'font-bold text-red-600' : 'font-bold text-brand-700'}>
+                          {e.balance?.remaining ?? '—'} j
+                        </span>
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-col justify-end gap-2">
+                <div className="mt-auto flex gap-2 border-t border-ink-50 px-5 py-3">
                   <button
                     onClick={() => setFileModal(e)}
                     className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100"
@@ -2357,81 +2482,76 @@ export default function GrhAdmin() {
             ))}
           </div>
           {filteredEmployees.length === 0 && (
-            <p className="py-10 text-center text-ink-400">Aucun employé ne correspond aux filtres.</p>
+            <p className="rounded-2xl border border-dashed border-ink-200 bg-white py-12 text-center text-ink-400">
+              Aucun employé ne correspond aux filtres.
+            </p>
           )}
         </div>
       )}
 
-      {tab === 'orgchart' && (
-        <div className="space-y-6">
-          <p className="text-sm text-ink-500">
-            Arborescence par supérieur hiérarchique. Cliquez sur un nom pour ouvrir le dossier employé.
-            Renseignez le « Supérieur hiérarchique » dans la fiche de chaque employé pour construire l'organigramme.
-          </p>
-          <div className="card p-6">
-            {orgTree.length === 0 ? (
-              <p className="py-10 text-center text-ink-400">Aucun employé — ajoutez des membres dans l'onglet Équipe.</p>
-            ) : (
-              <ul className="space-y-2">
-                {orgTree.map((n) => (
-                  <OrgNode key={n.id} node={n} onOpenFile={setFileModal} />
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
+      {activeId === 'orgchart' && (
+        <GrhSection
+          title="Hiérarchie"
+          desc="Cliquez sur un nom pour ouvrir le dossier. Le supérieur se renseigne dans la fiche employé."
+        >
+          {orgTree.length === 0 ? (
+            <p className="py-8 text-center text-sm text-ink-400">Aucun employé — ajoutez des membres dans Équipe.</p>
+          ) : (
+            <ul className="space-y-2">
+              {orgTree.map((n) => (
+                <OrgNode key={n.id} node={n} onOpenFile={setFileModal} />
+              ))}
+            </ul>
+          )}
+        </GrhSection>
       )}
 
-      {tab === 'payroll' && isSuper && (
+      {activeId === 'payroll' && isSuper && (
         <PayrollTab employees={employees} onChanged={loadAll} />
       )}
 
-      {tab === 'recruit' && (
+      {activeId === 'recruit' && (
         <RecruitTab departments={departments} onChanged={loadAll} />
       )}
 
-      {tab === 'evaluations' && (
+      {activeId === 'evaluations' && (
         <EvaluationTab employees={employees} />
       )}
 
-      {tab === 'trainings' && (
+      {activeId === 'trainings' && (
         <TrainingTab employees={employees} />
       )}
 
-      {tab === 'announcements' && (
+      {activeId === 'announcements' && (
         <AnnouncementTab />
       )}
 
-      {tab === 'leaves' && (
-        <div className="space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-2">
-              {['', ...Object.keys(LEAVE_STATUS)].map((st) => (
-                <button
-                  key={st || 'all'}
-                  onClick={() => setFilterLeaveStatus(st)}
-                  className={`rounded-full px-4 py-2 text-sm font-bold transition-all ${
-                    filterLeaveStatus === st ? 'bg-brand-600 text-white shadow-soft' : 'bg-white text-ink-600 ring-1 ring-ink-200 hover:ring-brand-300'
-                  }`}
-                >
-                  {st ? LEAVE_STATUS[st] : 'Tous'}
-                </button>
-              ))}
-            </div>
-            <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setLeaveModal({ ...emptyLeave })}>
-              + Demander un congé
-            </button>
+      {activeId === 'leaves' && (
+        <div className="space-y-5">
+          <div className="flex flex-wrap gap-2">
+            {['', ...Object.keys(LEAVE_STATUS)].map((st) => (
+              <button
+                key={st || 'all'}
+                onClick={() => setFilterLeaveStatus(st)}
+                className={`rounded-full px-4 py-2 text-sm font-bold transition-all ${
+                  filterLeaveStatus === st ? 'bg-brand-600 text-white shadow-soft' : 'bg-white text-ink-600 ring-1 ring-ink-200 hover:ring-brand-300'
+                }`}
+              >
+                {st ? LEAVE_STATUS[st] : 'Tous'}
+              </button>
+            ))}
           </div>
 
-          <div className="card p-6">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h3 className="font-display text-lg font-bold text-ink-900">Calendrier — congés approuvés</h3>
+          <GrhSection
+            title="Calendrier — congés approuvés"
+            action={
               <div className="flex items-center gap-2">
-                <button onClick={() => shiftMonth(-1)} className="grid h-9 w-9 place-items-center rounded-lg bg-ink-50 font-bold text-ink-600 hover:bg-ink-100">←</button>
-                <span className="w-44 text-center text-sm font-bold text-ink-700 capitalize">{monthLabel(calMonth)}</span>
-                <button onClick={() => shiftMonth(1)} className="grid h-9 w-9 place-items-center rounded-lg bg-ink-50 font-bold text-ink-600 hover:bg-ink-100">→</button>
+                <button type="button" onClick={() => shiftMonth(-1)} className="grid h-9 w-9 place-items-center rounded-lg bg-ink-50 font-bold text-ink-600 hover:bg-ink-100">←</button>
+                <span className="w-40 text-center text-sm font-bold capitalize text-ink-700">{monthLabel(calMonth)}</span>
+                <button type="button" onClick={() => shiftMonth(1)} className="grid h-9 w-9 place-items-center rounded-lg bg-ink-50 font-bold text-ink-600 hover:bg-ink-100">→</button>
               </div>
-            </div>
+            }
+          >
             {(() => {
               const [y, m] = calMonth.split('-').map(Number);
               const offset = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
@@ -2476,20 +2596,20 @@ export default function GrhAdmin() {
                 </div>
               );
             })()}
-          </div>
+          </GrhSection>
 
-          <div className="card overflow-hidden">
+          <GrhSection title="Demandes de congé" desc={`${filteredLeaves.length} demande${filteredLeaves.length > 1 ? 's' : ''}`} padded={false}>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-sm">
-                <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+                <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
                   <tr>
-                    <th className="px-6 py-4">Employé</th>
-                    <th className="px-6 py-4">Type</th>
-                    <th className="px-6 py-4">Période</th>
-                    <th className="px-6 py-4">Jours</th>
-                    <th className="px-6 py-4">Motif</th>
-                    <th className="px-6 py-4">Statut</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
+                    <th className="px-6 py-3.5">Employé</th>
+                    <th className="px-6 py-3.5">Type</th>
+                    <th className="px-6 py-3.5">Période</th>
+                    <th className="px-6 py-3.5">Jours</th>
+                    <th className="px-6 py-3.5">Motif</th>
+                    <th className="px-6 py-3.5">Statut</th>
+                    <th className="px-6 py-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2536,14 +2656,13 @@ export default function GrhAdmin() {
               </table>
             </div>
             {filteredLeaves.length === 0 && <p className="py-12 text-center text-ink-400">Aucun congé enregistré.</p>}
-          </div>
+          </GrhSection>
         </div>
       )}
 
-      {tab === 'departments' && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="card p-7">
-            <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Nouveau département</h3>
+      {activeId === 'departments' && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <GrhSection title="Nouveau département" desc="Créer un service pour rattacher l’équipe.">
             <div className="flex gap-2">
               <input
                 className="input"
@@ -2556,15 +2675,14 @@ export default function GrhAdmin() {
                 Ajouter
               </button>
             </div>
-          </div>
-          <div className="card overflow-hidden">
-            <div className="border-b border-ink-100 bg-cream/70 px-6 py-4">
-              <h3 className="font-display text-lg font-bold text-ink-900">Départements ({departments.length})</h3>
-            </div>
+          </GrhSection>
+          <GrhSection title={`Départements (${departments.length})`} padded={false}>
             <ul>
               {departments.map((d) => (
                 <li key={d.id} className="flex items-center gap-3 border-b border-ink-50 px-6 py-3 last:border-0">
-                  <span className="text-xl">🏢</span>
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700">
+                    <TabIcon d={TABS.find((t) => t.id === 'departments').icon} className="h-4 w-4" />
+                  </span>
                   <input
                     className="input !w-56 !border-0 !bg-transparent !px-2 !py-1.5 font-semibold text-ink-800 focus:!ring-1"
                     defaultValue={d.name}
@@ -2585,9 +2703,11 @@ export default function GrhAdmin() {
               ))}
             </ul>
             {departments.length === 0 && <p className="py-10 text-center text-ink-400">Aucun département — ajoutez-en un à gauche.</p>}
-          </div>
+          </GrhSection>
         </div>
       )}
+        </div>
+      </div>
 
       <Modal open={!!empModal} onClose={() => setEmpModal(null)} title={empModal?.id ? `Modifier — ${empModal.full_name}` : 'Nouvel employé'} wide>
         {empModal && (

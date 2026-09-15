@@ -736,11 +736,13 @@ const memoryUpload = multer({
 });
 
 function uniqueMediaFilename(original) {
-  const base = path.basename(String(original || 'image')).replace(/[^\w.\-+() ]+/g, '_').slice(0, 180) || 'image';
-  if (!db.prepare('SELECT 1 FROM media WHERE filename = ?').get(base)) return base;
-  const ext = path.extname(base);
-  const stem = path.basename(base, ext);
-  return `${stem}-${Date.now()}${ext || '.jpg'}`;
+  const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const raw = path.basename(String(original || 'image')).replace(/[^\w.\-+() ]+/g, '_').slice(0, 160) || 'image';
+  const ext = path.extname(raw) || '.jpg';
+  const stem = path.basename(raw, ext).slice(0, 120) || 'image';
+  const candidate = `${stem}-${stamp}${ext}`;
+  if (!db.prepare('SELECT 1 FROM media WHERE filename = ?').get(candidate)) return candidate;
+  return `${stem}-${stamp}-${crypto.randomBytes(2).toString('hex')}${ext}`;
 }
 
 function scaleTo(image, maxW, maxH) {
@@ -919,6 +921,7 @@ app.delete('/api/admin/media/:id', authRequired, requireRole('content'), (req, r
     db.prepare('SELECT COUNT(*) n FROM campaigns WHERE image = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM users WHERE photo = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM partners WHERE logo = ?').get(m.url).n +
+    db.prepare('SELECT COUNT(*) n FROM grh_employees WHERE photo = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM articles WHERE content LIKE ?').get(`%${m.url}%`).n;
   const settingUsed = db.prepare('SELECT COUNT(*) n FROM settings WHERE value LIKE ?').get(`%${m.url}%`).n;
   if (used + settingUsed > 0)
@@ -1216,8 +1219,11 @@ app.post('/api/admin/grh/employees', ...GRH, (req, res) => {
       b.manager_id || null, Math.max(0, Number(b.annual_days) || 0), String(b.job_description || '').slice(0, 4000)
     );
     res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(info.lastInsertRowid));
-  } catch {
-    res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
+  } catch (e) {
+    console.error('[grh employees create]', e);
+    if (String(e.message || '').includes('UNIQUE'))
+      return res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
+    res.status(500).json({ error: e.message || 'Impossible de créer l\'employé' });
   }
 });
 
@@ -1244,8 +1250,11 @@ app.put('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
         .run(ex.id, ex.salary, salary ?? 0);
     }
     res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(ex.id));
-  } catch {
-    res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
+  } catch (e) {
+    console.error('[grh employees update]', e);
+    if (String(e.message || '').includes('UNIQUE'))
+      return res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
+    res.status(500).json({ error: e.message || 'Impossible de mettre à jour l\'employé' });
   }
 });
 
