@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { api, getSavedUser } from '../../api.js';
+import { api, getSavedUser, setMoneyCurrency } from '../../api.js';
+import { useSite } from '../../hooks/useSite.jsx';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
@@ -156,6 +157,7 @@ function ItemListEditor({ items, onChange, fields = [['title', 'Titre'], ['text'
 }
 
 export default function SettingsAdmin() {
+  const { reload } = useSite();
   const [s, setS] = useState(null);
   const [tab, setTab] = useState('identite');
   const [saving, setSaving] = useState(false);
@@ -170,7 +172,10 @@ export default function SettingsAdmin() {
   const visibleTabs = isSuper ? TABS : TABS.filter((t) => t.id !== 'modules');
 
   useEffect(() => {
-    api.adminSettings.get().then(setS).catch(() => {});
+    api.adminSettings.get().then((data) => {
+      setS(data);
+      setMoneyCurrency(data.currency);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -214,6 +219,8 @@ export default function SettingsAdmin() {
     try {
       const updated = await api.adminSettings.update(s);
       setS(updated);
+      setMoneyCurrency(updated.currency);
+      reload?.();
       setMsg('✓ Tous les changements sont enregistrés et visibles sur le site');
     } catch (e) {
       setMsg(`✗ ${e.message}`);
@@ -266,7 +273,7 @@ export default function SettingsAdmin() {
         </nav>
       </aside>
 
-      <div>
+    <div>
         <div className="sticky top-16 z-20 -mx-4 mb-6 border-b border-ink-100 bg-[#f4f6fb]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:mx-0 lg:rounded-2xl lg:border lg:bg-white/90 lg:px-5 lg:shadow-soft">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
@@ -276,45 +283,45 @@ export default function SettingsAdmin() {
             <div className="flex flex-wrap gap-2">
               <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setPwOpen(true)}>
                 Mot de passe
-              </button>
+            </button>
               <button type="button" className="btn-primary !px-5 !py-2 text-sm" onClick={save} disabled={saving}>
                 {saving ? 'Enregistrement…' : 'Enregistrer'}
-              </button>
+            </button>
             </div>
           </div>
-          {msg && (
+      {msg && (
             <p className={`mt-3 rounded-xl px-4 py-2.5 text-sm font-semibold ${msg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
-              {msg}
-            </p>
-          )}
-        </div>
+          {msg}
+        </p>
+      )}
+      </div>
 
       {tab === 'identite' && (
         <SettingsSection title="Identité & contact" desc="Coordonnées affichées dans le pied de page et la page Contact.">
           <div className="grid gap-5 sm:grid-cols-2">
-            <Field label="Nom du site"><input className="input" value={s.site_name || ''} onChange={set('site_name')} /></Field>
-            <Field label="Slogan (tagline)"><input className="input" value={s.site_tagline || ''} onChange={set('site_tagline')} /></Field>
-            <div className="sm:col-span-2">
-              <Field label="Adresse"><input className="input" value={s.address || ''} onChange={set('address')} /></Field>
-            </div>
-            <Field label="Téléphone 1"><input className="input" value={s.phone1 || ''} onChange={set('phone1')} /></Field>
-            <Field label="Téléphone 2"><input className="input" value={s.phone2 || ''} onChange={set('phone2')} /></Field>
-            <Field label="Email"><input className="input" value={s.email || ''} onChange={set('email')} /></Field>
-            <Field label="WhatsApp (format international)"><input className="input" value={s.whatsapp || ''} onChange={set('whatsapp')} /></Field>
-            <Field label="Lien Facebook"><input className="input" value={s.facebook || ''} onChange={set('facebook')} /></Field>
-            <Field label="Lien X / Twitter"><input className="input" value={s.twitter || ''} onChange={set('twitter')} /></Field>
-            <Field label="Lien Instagram"><input className="input" value={s.instagram || ''} onChange={set('instagram')} /></Field>
-            <Field label="Lien Pinterest"><input className="input" value={s.pinterest || ''} onChange={set('pinterest')} /></Field>
-            <Field label="Lien de la vidéo (bouton « Voir la vidéo » sur l'accueil, optionnel)"><input className="input" value={s.video_url || ''} onChange={set('video_url')} /></Field>
-            <div className="sm:col-span-2">
-              <Field label="Texte de copyright (pied de page)"><input className="input" value={s.copyright || ''} onChange={set('copyright')} /></Field>
-            </div>
+          <Field label="Nom du site"><input className="input" value={s.site_name || ''} onChange={set('site_name')} /></Field>
+          <Field label="Slogan (tagline)"><input className="input" value={s.site_tagline || ''} onChange={set('site_tagline')} /></Field>
+          <div className="sm:col-span-2">
+            <Field label="Adresse"><input className="input" value={s.address || ''} onChange={set('address')} /></Field>
+          </div>
+          <Field label="Téléphone 1"><input className="input" value={s.phone1 || ''} onChange={set('phone1')} /></Field>
+          <Field label="Téléphone 2"><input className="input" value={s.phone2 || ''} onChange={set('phone2')} /></Field>
+          <Field label="Email"><input className="input" value={s.email || ''} onChange={set('email')} /></Field>
+          <Field label="WhatsApp (format international)"><input className="input" value={s.whatsapp || ''} onChange={set('whatsapp')} /></Field>
+          <Field label="Lien Facebook"><input className="input" value={s.facebook || ''} onChange={set('facebook')} /></Field>
+          <Field label="Lien X / Twitter"><input className="input" value={s.twitter || ''} onChange={set('twitter')} /></Field>
+          <Field label="Lien Instagram"><input className="input" value={s.instagram || ''} onChange={set('instagram')} /></Field>
+          <Field label="Lien Pinterest"><input className="input" value={s.pinterest || ''} onChange={set('pinterest')} /></Field>
+          <Field label="Lien de la vidéo (bouton « Voir la vidéo » sur l'accueil, optionnel)"><input className="input" value={s.video_url || ''} onChange={set('video_url')} /></Field>
+          <div className="sm:col-span-2">
+            <Field label="Texte de copyright (pied de page)"><input className="input" value={s.copyright || ''} onChange={set('copyright')} /></Field>
+          </div>
             <div className="sm:col-span-2">
               <Field label="Mention à droite du copyright" hint="Écrivez {heart} pour afficher le cœur orange.">
                 <input className="input" value={s.footer_credit || ''} onChange={set('footer_credit')} placeholder="Fait avec {heart} pour l'inclusion" />
               </Field>
             </div>
-          </div>
+        </div>
         </SettingsSection>
       )}
 
@@ -510,7 +517,14 @@ export default function SettingsAdmin() {
       {tab === 'dons' && (
         <div className="space-y-5">
           <SettingsSection title="Page « Faire un don »">
-            <Field label="Montants proposés (USD)" hint="Les boutons de montants rapides sur le formulaire">
+            <Field label="Devise" hint="Utilisée pour les dons, collectes et montants affichés sur le site.">
+              <select className="input" value={s.currency || 'USD'} onChange={set('currency')}>
+                <option value="USD">Dollar américain (USD)</option>
+                <option value="EUR">Euro (EUR)</option>
+                <option value="CDF">Franc congolais (CDF)</option>
+              </select>
+            </Field>
+            <Field label={`Montants proposés (${s.currency || 'USD'})`} hint="Les boutons de montants rapides sur le formulaire">
               <FlatListEditor numeric items={s.donate_amounts || []} onChange={(v) => setS({ ...s, donate_amounts: v })} placeholder="Montant" />
             </Field>
             <Field label="Titre « Pourquoi donner »">

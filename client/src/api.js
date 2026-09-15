@@ -61,7 +61,7 @@ function httpErrorMessage(res, data, raw) {
 export const api = {
   site: () => req('/api/public/site'),
   articles: (params = '') => req(`/api/public/articles${params}`),
-  article: (slug) => req(`/api/public/articles/${slug}`),
+  article: (slug) => req(`/api/public/articles/${encodeURIComponent(slug)}`),
   causes: () => req('/api/public/causes'),
   cause: (slug) => req(`/api/public/causes/${slug}`),
   campaigns: () => req('/api/public/campaigns'),
@@ -431,8 +431,29 @@ export const api = {
   }
 };
 
-export const fmtMoney = (n) =>
-  new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
+const MONEY_CODES = new Set(['USD', 'EUR', 'CDF']);
+let defaultCurrency = 'USD';
+
+export function setMoneyCurrency(code) {
+  const c = String(code || '').toUpperCase();
+  if (MONEY_CODES.has(c)) defaultCurrency = c;
+}
+
+/** Affiche un montant dans la devise du site (Paramètres → Dons). */
+export const fmtMoney = (n, currency) => {
+  const code = MONEY_CODES.has(String(currency || '').toUpperCase())
+    ? String(currency).toUpperCase()
+    : defaultCurrency;
+  try {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: code,
+      maximumFractionDigits: 0
+    }).format(Number(n) || 0);
+  } catch {
+    return `${Math.round(Number(n) || 0).toLocaleString('fr-FR')}\u00a0${code}`;
+  }
+};
 
 export const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';

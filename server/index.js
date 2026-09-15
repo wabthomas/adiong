@@ -143,7 +143,7 @@ const setSetting = (key, value) =>
 const STRING_SETTINGS = [
   'grh_annual_leave_days',
   'site_name','site_tagline','logo','favicon','address','phone1','phone2','email','whatsapp','facebook','twitter',
-  'instagram','pinterest','video_url','copyright','footer_credit',
+  'instagram','pinterest','video_url','copyright','footer_credit','currency',
   'seo_title','seo_description','seo_keywords','og_image','twitter_handle',
   'hero_image','hero_kicker','hero_title','hero_text','hero_badge_title','hero_badge_sub','about_image',
   'mission_title','mission_text','home_mission_heading',
@@ -224,13 +224,22 @@ const requireModule = (name, label) => (req, res, next) => {
   next();
 };
 
+const slugify = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'item';
+
 const uniqueSlug = (table, desired, ignoreId = null) => {
-  let slug = desired;
+  const base = slugify(desired);
+  let slug = base;
   let i = 1;
   const check = ignoreId
     ? db.prepare(`SELECT id FROM ${table} WHERE slug = ? AND id != ?`)
     : db.prepare(`SELECT id FROM ${table} WHERE slug = ?`);
-  while ((ignoreId ? check.get(slug, ignoreId) : check.get(slug))) slug = `${desired}-${++i}`;
+  while ((ignoreId ? check.get(slug, ignoreId) : check.get(slug))) slug = `${base}-${++i}`;
   return slug;
 };
 
@@ -570,7 +579,7 @@ app.post('/api/admin/articles', authRequired, requireRole('content'), (req, res)
   const { title, slug, excerpt, content, category, image, author, date, published,
     seo_title, seo_description, seo_image, seo_noindex } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
-  const s = uniqueSlug('articles', slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
+  const s = uniqueSlug('articles', slug || title);
   const info = db.prepare(`INSERT INTO articles (slug, title, excerpt, content, category, image, author, date, published, seo_title, seo_description, seo_image, seo_noindex)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(s, title, excerpt || '', content || '', category || 'actualites', image || '', author || 'ADI ONG',
@@ -596,7 +605,7 @@ app.get('/api/admin/causes', authRequired, requireRole('any'), (req, res) => res
 app.post('/api/admin/causes', authRequired, requireRole('content'), (req, res) => {
   const { title, slug, tagline, description, long_content, icon, image, link, sort_order } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
-  const s = uniqueSlug('causes', slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
+  const s = uniqueSlug('causes', slug || title);
   const info = db.prepare(`INSERT INTO causes (slug, title, tagline, description, long_content, icon, image, link, sort_order, published)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
     .run(s, title, tagline || '', description || '', long_content || '', icon || 'megaphone', image || '', link || '', sort_order || 99);
@@ -617,7 +626,7 @@ app.get('/api/admin/campaigns', authRequired, requireRole('any'), (req, res) => 
 app.post('/api/admin/campaigns', authRequired, requireRole('content'), (req, res) => {
   const { title, slug, description, image, goal_amount, collected_amount, deadline, cause_slug } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
-  const s = uniqueSlug('campaigns', slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
+  const s = uniqueSlug('campaigns', slug || title);
   const info = db.prepare(`INSERT INTO campaigns (slug, title, description, image, goal_amount, collected_amount, deadline, cause_slug, published)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`)
     .run(s, title, description || '', image || '', Number(goal_amount) || 0, Number(collected_amount) || 0, deadline || '', cause_slug || '');
@@ -759,14 +768,68 @@ function storeRawMedia(buffer, originalName, folder) {
   return { folder, mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
 }
 
+function opaqueBounds(image) {
+  const { width, height, data } = image.bitmap;
+  let minX = width;
+  let minY = height;
+  let maxX = 0;
+  let maxY = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (data[(width * y + x) * 4 + 3] > 10) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < minX) return null;
+  const pad = Math.max(2, Math.round(Math.min(width, height) * 0.01));
+  const x = Math.max(0, minX - pad);
+  const y = Math.max(0, minY - pad);
+  return {
+    x,
+    y,
+    w: Math.min(width - x, maxX - minX + 1 + pad * 2),
+    h: Math.min(height - y, maxY - minY + 1 + pad * 2)
+  };
+}
+
+async function storeTrimmedPng(buffer) {
+  try {
+    const image = await Jimp.read(buffer);
+    const box = opaqueBounds(image);
+    const area = image.bitmap.width * image.bitmap.height;
+    if (box && (box.w * box.h) / area < 0.92) {
+      image.crop(box.x, box.y, box.w, box.h);
+    }
+    scaleTo(image, 1200, 800);
+    const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const mainName = `${stamp}.png`;
+    const mainPath = path.join(mediaDir, mainName);
+    await image.writeAsync(mainPath);
+    return {
+      folder: 'media',
+      mainName,
+      thumbName: mainName,
+      width: image.bitmap.width,
+      height: image.bitmap.height,
+      size: fs.statSync(mainPath).size
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function optimizeBuffer(buffer, originalName = 'image.jpg') {
   const origExt = path.extname(originalName).toLowerCase() || '.jpg';
   const looksPdf = origExt === '.pdf' || buffer.slice(0, 5).toString() === '%PDF-';
   if (looksPdf) return storeRawMedia(buffer, originalName, 'docs');
-  // Logos partenaires : PNG/SVG/GIF/AVIF — Jimp casse souvent la transparence
-  // (PNG indexé) et un crash coupe la requête (500 via le proxy Vite).
   if (['.svg', '.gif', '.avif'].includes(origExt)) return storeRawMedia(buffer, originalName, 'media');
-  if (origExt === '.png' && buffer.length <= 2 * 1024 * 1024) return storeRawMedia(buffer, originalName, 'media');
+  if (origExt === '.png' && buffer.length <= 2 * 1024 * 1024) {
+    return (await storeTrimmedPng(buffer)) || storeRawMedia(buffer, originalName, 'media');
+  }
   try {
     const image = await Jimp.read(buffer);
     const keepPng = origExt === '.png';

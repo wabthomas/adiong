@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS = {
   pinterest: 'https://pinterest.com/',
   video_url: '',
   copyright: '© 2026 ADI ONG — Tous droits réservés.',
+  currency: 'USD',
   footer_credit: "Fait avec {heart} pour l'inclusion",
 
   seo_title: 'ADI ONG — Inclusion des personnes handicapées à Goma',

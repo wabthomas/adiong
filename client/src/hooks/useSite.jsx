@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, setMoneyCurrency } from '../api.js';
 
 const Ctx = createContext(null);
 
@@ -11,6 +11,7 @@ export function SiteProvider({ children }) {
     Promise.all([api.site(), api.causes(), api.articles(''), api.campaigns(), api.partners()])
       .then(([site, causes, articles, campaigns, partners]) => {
         setData({ site, causes, articles, campaigns, partners });
+        setMoneyCurrency(site.currency);
         document.title = `${site.site_name || 'ADI ONG'} — ${site.site_tagline || 'Inclusion'}`;
       })
       .catch(() => {})
