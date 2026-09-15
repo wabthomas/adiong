@@ -197,6 +197,39 @@ export const api = {
       }
     },
     orgchart: () => req('/api/admin/grh/orgchart', { auth: true }),
+    jobs: {
+      list: () => req('/api/admin/grh/jobs', { auth: true }),
+      create: (b) => req('/api/admin/grh/jobs', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/jobs/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/jobs/${id}`, { method: 'DELETE', auth: true })
+    },
+    candidates: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        if (params.job_id) q.set('job_id', params.job_id);
+        if (params.stage) q.set('stage', params.stage);
+        const s = q.toString();
+        return req(`/api/admin/grh/candidates${s ? `?${s}` : ''}`, { auth: true });
+      },
+      create: (fd) => req('/api/admin/grh/candidates', { method: 'POST', body: fd, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/candidates/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/candidates/${id}`, { method: 'DELETE', auth: true }),
+      hire: (id) => req(`/api/admin/grh/candidates/${id}/hire`, { method: 'POST', body: {}, auth: true }),
+      downloadCv: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/grh/candidates/${id}/cv`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `cv-${id}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    },
     payroll: {
       list: (month) => req(`/api/admin/grh/payroll?month=${month}`, { auth: true }),
       create: (b) => req('/api/admin/grh/payroll', { method: 'POST', body: b, auth: true }),

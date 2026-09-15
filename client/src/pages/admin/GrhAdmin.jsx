@@ -9,6 +9,7 @@ const TABS = [
   ['orgchart', 'Organigramme'],
   ['leaves', 'Congés'],
   ['payroll', 'Paie'],
+  ['recruit', 'Recrutement'],
   ['departments', 'Départements']
 ];
 
@@ -832,6 +833,482 @@ function PayrollTab({ employees, onChanged }) {
   );
 }
 
+const STAGE_LABELS = { recu: 'Reçu', entretien: 'Entretien', retenu: 'Retenu', refuse: 'Refusé', retire: 'Retiré' };
+const STAGE_STYLES = {
+  recu: 'bg-ink-100 text-ink-600',
+  entretien: 'bg-accent-100 text-accent-800',
+  retenu: 'bg-emerald-100 text-emerald-700',
+  refuse: 'bg-red-100 text-red-700',
+  retire: 'bg-ink-50 text-ink-400'
+};
+
+function JobForm({ initial, departments, onSaved, onClose }) {
+  const [f, setF] = useState({
+    title: initial.title ?? '',
+    department_id: initial.department_id ?? '',
+    contract_type: initial.contract_type ?? 'permanent',
+    location: initial.location ?? '',
+    salary_min: initial.salary_min ?? '',
+    salary_max: initial.salary_max ?? '',
+    salary_currency: initial.salary_currency ?? 'USD',
+    deadline: initial.deadline ?? '',
+    published: initial.published ?? 1,
+    description: initial.description ?? '',
+    requirements: initial.requirements ?? ''
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        ...f,
+        department_id: f.department_id || null,
+        salary_min: f.salary_min === '' ? null : Number(f.salary_min) || null,
+        salary_max: f.salary_max === '' ? null : Number(f.salary_max) || null
+      };
+      if (initial.id) await api.grh.jobs.update(initial.id, payload);
+      else await api.grh.jobs.create(payload);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Intitulé *">
+          <input className="input" value={f.title} onChange={set('title')} placeholder="Ex. Enseignant en rééducation" />
+        </Field>
+        <Field label="Département">
+          <select className="input" value={f.department_id ?? ''} onChange={set('department_id')}>
+            <option value="">Non affecté</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Type de contrat">
+          <select className="input" value={f.contract_type} onChange={set('contract_type')}>
+            {Object.entries(CONTRACTS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Lieu">
+          <input className="input" value={f.location || ''} onChange={set('location')} placeholder="Ex. Goma, Bukavu (déplacement)…" />
+        </Field>
+        <Field label="Salaire min">
+          <input className="input" type="number" min="0" step="0.01" value={f.salary_min ?? ''} onChange={set('salary_min')} placeholder="Optionnel" />
+        </Field>
+        <Field label="Salaire max">
+          <input className="input" type="number" min="0" step="0.01" value={f.salary_max ?? ''} onChange={set('salary_max')} placeholder="Optionnel" />
+        </Field>
+        <Field label="Date limite de candidature">
+          <input className="input" type="date" value={f.deadline || ''} onChange={set('deadline')} />
+        </Field>
+        <Field label="Statut">
+          <select className="input" value={f.published} onChange={(e) => setF({ ...f, published: e.target.value === '1' ? 1 : 0 })}>
+            <option value="1">Publiée</option>
+            <option value="0">Masquée</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Description du poste">
+        <textarea className="input" rows={4} value={f.description || ''} onChange={set('description')} placeholder="Missions, contexte, conditions…" />
+      </Field>
+      <Field label="Profil recherché / exigences">
+        <textarea className="input" rows={3} value={f.requirements || ''} onChange={set('requirements')} placeholder="Compétences, diplôme, expérience…" />
+      </Field>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.title.trim()}>
+          {saving ? 'Enregistrement…' : 'Enregistrer l’offre'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CandidateForm({ initial, jobs, onSaved, onClose }) {
+  const [f, setF] = useState({
+    job_id: initial.job_id ?? '',
+    full_name: initial.full_name ?? '',
+    email: initial.email ?? '',
+    phone: initial.phone ?? '',
+    stage: initial.stage ?? 'recu',
+    interview_date: initial.interview_date ?? '',
+    notes: initial.notes ?? '',
+    cv: null
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      if (initial.id) {
+        await api.grh.candidates.update(initial.id, {
+          job_id: f.job_id || null,
+          full_name: f.full_name, email: f.email, phone: f.phone,
+          stage: f.stage, interview_date: f.interview_date, notes: f.notes
+        });
+      } else {
+        const fd = new FormData();
+        fd.append('job_id', f.job_id || '');
+        fd.append('full_name', f.full_name);
+        fd.append('email', f.email);
+        fd.append('phone', f.phone);
+        fd.append('stage', f.stage);
+        fd.append('interview_date', f.interview_date);
+        fd.append('notes', f.notes);
+        if (f.cv) fd.append('cv', f.cv);
+        await api.grh.candidates.create(fd);
+      }
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Nom complet *">
+          <input className="input" value={f.full_name} onChange={set('full_name')} placeholder="Prénom Nom" />
+        </Field>
+        <Field label="Offre liée">
+          <select className="input" value={f.job_id ?? ''} onChange={set('job_id')}>
+            <option value="">— Sans offre —</option>
+            {jobs.map((j) => (
+              <option key={j.id} value={j.id}>{j.title}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Email">
+          <input className="input" type="email" value={f.email || ''} onChange={set('email')} placeholder="candidat@exemple.org" />
+        </Field>
+        <Field label="Téléphone">
+          <input className="input" value={f.phone || ''} onChange={set('phone')} placeholder="+243 …" />
+        </Field>
+        <Field label="Étape">
+          <select className="input" value={f.stage} onChange={set('stage')}>
+            {Object.entries(STAGE_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Date d'entretien">
+          <input className="input" type="date" value={f.interview_date || ''} onChange={set('interview_date')} />
+        </Field>
+      </div>
+      {!initial.id && (
+        <Field label="CV (PDF, Word, image)">
+          <input
+            type="file"
+            className="input !py-2.5 text-sm"
+            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
+            onChange={(e) => setF({ ...f, cv: e.target.files?.[0] || null })}
+          />
+        </Field>
+      )}
+      <Field label="Notes">
+        <textarea className="input" rows={3} value={f.notes || ''} onChange={set('notes')} placeholder="Motivation, points forts, à vérifier…" />
+      </Field>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.full_name.trim()}>
+          {saving ? 'Enregistrement…' : 'Enregistrer le candidat'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RecruitTab({ departments, onChanged }) {
+  const [jobs, setJobs] = useState([]);
+  const [candidates, setCandidates] = useState([]);
+  const [jobModal, setJobModal] = useState(null);
+  const [candModal, setCandModal] = useState(null);
+  const [filterJob, setFilterJob] = useState('');
+  const [filterStage, setFilterStage] = useState('');
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const load = useCallback(() => {
+    Promise.all([api.grh.jobs.list(), api.grh.candidates.list()])
+      .then(([j, c]) => { setJobs(j); setCandidates(c); })
+      .catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const setStage = async (c, stage) => {
+    try {
+      await api.grh.candidates.update(c.id, { stage });
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const hire = async (c) => {
+    if (!confirm(`Convertir ${c.full_name} en employé ?\nUn dossier sera créé dans l'onglet Équipe${c.job_id ? " avec l'offre liée" : ''}.`)) return;
+    try {
+      await api.grh.candidates.hire(c.id);
+      setMsg(`✓ ${c.full_name} a été ajouté à l'équipe.`);
+      setError('');
+      load();
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const removeJob = async (j) => {
+    if (!confirm(`Supprimer l'offre « ${j.title} » ? Ses candidats seront conservés sans offre.`)) return;
+    try {
+      await api.grh.jobs.remove(j.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const removeCand = async (c) => {
+    if (!confirm(`Supprimer le candidat « ${c.full_name} » et son CV ?`)) return;
+    try {
+      await api.grh.candidates.remove(c.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const downloadCv = async (c) => {
+    try {
+      await api.grh.candidates.downloadCv(c.id, `cv-${c.full_name.replace(/\s+/g, '-').toLowerCase()}.pdf`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const stageCounts = Object.keys(STAGE_LABELS).map((s) => ({
+    stage: s,
+    n: candidates.filter((c) => c.stage === s).length
+  }));
+  const visibleCandidates = candidates.filter(
+    (c) => (!filterJob || String(c.job_id) === String(filterJob)) && (!filterStage || c.stage === filterStage)
+  );
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-display text-lg font-bold text-ink-900">Offres d'emploi ({jobs.length})</h3>
+          <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setJobModal({})}>
+            + Nouvelle offre
+          </button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {jobs.map((j) => (
+            <div key={j.id} className="card flex flex-col p-5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-display font-bold text-ink-900">{j.title}</p>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${j.published ? 'bg-emerald-100 text-emerald-700' : 'bg-ink-100 text-ink-500'}`}>
+                  {j.published ? 'Publiée' : 'Masquée'}
+                </span>
+              </div>
+              <div className="mt-2 space-y-1 text-xs text-ink-400">
+                <p>🏢 {j.department || 'Non affecté'} · {CONTRACTS[j.contract_type] || j.contract_type}</p>
+                {j.location && <p>📍 {j.location}</p>}
+                {(j.salary_min != null || j.salary_max != null) && (
+                  <p>💰 {fmtMoney(j.salary_min ?? 0, j.salary_currency)} — {fmtMoney(j.salary_max ?? 0, j.salary_currency)}</p>
+                )}
+                {j.deadline && <p>⏳ Jusqu'au {fmtDate(j.deadline)}</p>}
+                <p className="font-bold text-brand-700">{j.candidates} candidat(s)</p>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-ink-100 pt-3">
+                <button className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100" onClick={() => setJobModal({ ...j })}>
+                  Modifier
+                </button>
+                <button
+                  className="rounded-lg bg-ink-50 px-3 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100"
+                  onClick={async () => {
+                    try {
+                      await api.grh.jobs.update(j.id, { published: j.published ? 0 : 1 });
+                      load();
+                    } catch (e) {
+                      alert(e.message);
+                    }
+                  }}
+                >
+                  {j.published ? 'Masquer' : 'Publier'}
+                </button>
+                <button className="ml-auto rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" onClick={() => removeJob(j)}>
+                  Supprimer
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {jobs.length === 0 && (
+          <p className="rounded-2xl border border-dashed border-ink-200 py-10 text-center text-ink-400">
+            Aucune offre d'emploi — créez-en une pour structurer le recrutement.
+          </p>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-display text-lg font-bold text-ink-900">Candidats ({candidates.length})</h3>
+          <div className="flex flex-wrap gap-2">
+            <select className="input !w-48 !py-2.5 text-sm" value={filterJob} onChange={(e) => setFilterJob(e.target.value)}>
+              <option value="">Toutes les offres</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>{j.title}</option>
+              ))}
+            </select>
+            <select className="input !w-40 !py-2.5 text-sm" value={filterStage} onChange={(e) => setFilterStage(e.target.value)}>
+              <option value="">Toutes les étapes</option>
+              {Object.entries(STAGE_LABELS).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+            <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setCandModal({})}>
+              + Candidat
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {stageCounts.map(({ stage, n }) => (
+            <button
+              key={stage}
+              onClick={() => setFilterStage(filterStage === stage ? '' : stage)}
+              className={`rounded-full px-4 py-2 text-xs font-bold ring-1 transition-all ${
+                filterStage === stage ? 'bg-brand-600 text-white ring-brand-600' : `bg-white ring-ink-200 hover:ring-brand-300 ${STAGE_STYLES[stage]}`
+              }`}
+            >
+              {STAGE_LABELS[stage]} : {n}
+            </button>
+          ))}
+        </div>
+
+        {msg && <p className="mb-4 rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
+        {error && <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+                <tr>
+                  <th className="px-6 py-4">Candidat</th>
+                  <th className="px-6 py-4">Offre</th>
+                  <th className="px-6 py-4">Étape</th>
+                  <th className="px-6 py-4">Entretien</th>
+                  <th className="px-6 py-4">CV</th>
+                  <th className="px-6 py-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleCandidates.map((c) => (
+                  <tr key={c.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
+                    <td className="px-6 py-4">
+                      <p className="font-semibold text-ink-900">{c.full_name}</p>
+                      <p className="text-xs text-ink-400">{c.email}{c.email && c.phone ? ' · ' : ''}{c.phone}</p>
+                      {c.notes && <p className="mt-0.5 max-w-[220px] truncate text-xs text-ink-400" title={c.notes}>{c.notes}</p>}
+                    </td>
+                    <td className="px-6 py-4 text-ink-600">{c.job_title || '—'}</td>
+                    <td className="px-6 py-4">
+                      <select
+                        className="input !w-32 !py-1.5 text-xs font-bold"
+                        value={c.stage}
+                        onChange={(e) => setStage(c, e.target.value)}
+                        style={{ background: 'transparent' }}
+                      >
+                        {Object.entries(STAGE_LABELS).map(([v, l]) => (
+                          <option key={v} value={v}>{l}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-6 py-4 text-ink-600">{fmtDate(c.interview_date)}</td>
+                    <td className="px-6 py-4">
+                      {c.cv_file ? (
+                        <button className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100" onClick={() => downloadCv(c)}>
+                          📎 Télécharger
+                        </button>
+                      ) : (
+                        <span className="text-xs text-ink-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex justify-end gap-1.5">
+                        {c.stage !== 'retenu' && (
+                          <button
+                            onClick={() => hire(c)}
+                            className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100"
+                            title="Créer le dossier employé"
+                          >
+                            ✓ Embaucher
+                          </button>
+                        )}
+                        {c.stage === 'retenu' && (
+                          <span className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700">
+                            Embauché {c.hired_at ? fmtDate(c.hired_at) : ''}
+                          </span>
+                        )}
+                        <button onClick={() => setCandModal({ ...c })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                          Éditer
+                        </button>
+                        <button onClick={() => removeCand(c)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                          ✕
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {visibleCandidates.length === 0 && (
+            <p className="py-12 text-center text-ink-400">Aucun candidat{filterJob || filterStage ? ' pour ces filtres' : ''}.</p>
+          )}
+        </div>
+      </div>
+
+      <Modal open={!!jobModal} onClose={() => setJobModal(null)} title={jobModal?.id ? 'Modifier l’offre' : 'Nouvelle offre d’emploi'} wide>
+        {jobModal && (
+          <JobForm
+            initial={jobModal}
+            departments={departments}
+            onSaved={load}
+            onClose={() => setJobModal(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal open={!!candModal} onClose={() => setCandModal(null)} title={candModal?.id ? 'Modifier le candidat' : 'Nouveau candidat'} wide>
+        {candModal && (
+          <CandidateForm
+            initial={candModal}
+            jobs={jobs}
+            onSaved={load}
+            onClose={() => setCandModal(null)}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 function OrgNode({ node, level = 0, onOpenFile }) {
   return (
     <li className="relative">
@@ -1226,6 +1703,10 @@ export default function GrhAdmin() {
 
       {tab === 'payroll' && isSuper && (
         <PayrollTab employees={employees} onChanged={loadAll} />
+      )}
+
+      {tab === 'recruit' && (
+        <RecruitTab departments={departments} onChanged={loadAll} />
       )}
 
       {tab === 'leaves' && (

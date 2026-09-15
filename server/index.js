@@ -1515,6 +1515,189 @@ app.get('/api/admin/grh/payroll/:id/pdf', ...PAY, async (req, res) => {
   }
 });
 
+// ---------- Recrutement : offres + candidats ----------
+const cvDir = path.join(__dirname, 'data', 'cvs');
+if (!fs.existsSync(cvDir)) fs.mkdirSync(cvDir, { recursive: true });
+const cvUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, cvDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase().slice(0, 8) || '.bin';
+      cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const ok = isAllowedUpload(file) ||
+      mime === 'application/msword' ||
+      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (ok) cb(null, true);
+    else cb(new Error('Format non supporté (PDF, Word, image)'));
+  }
+});
+const STAGES = ['recu', 'entretien', 'retenu', 'refuse', 'retire'];
+
+app.get('/api/admin/grh/jobs', ...GRH, (req, res) => {
+  res.json(db.prepare(`
+    SELECT j.*, d.name AS department,
+      (SELECT COUNT(*) FROM grh_candidates c WHERE c.job_id = j.id) AS candidates
+    FROM grh_jobs j LEFT JOIN grh_departments d ON d.id = j.department_id
+    ORDER BY (j.deadline = ''), j.deadline, j.created_at DESC
+  `).all());
+});
+
+app.post('/api/admin/grh/jobs', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!String(b.title || '').trim()) return res.status(400).json({ error: 'Intitulé de l’offre requis' });
+  const info = db.prepare(`INSERT INTO grh_jobs
+    (title, department_id, description, requirements, contract_type, location, salary_min, salary_max, salary_currency, published, deadline)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    String(b.title).trim().slice(0, 200),
+    b.department_id || null,
+    String(b.description || '').slice(0, 8000),
+    String(b.requirements || '').slice(0, 8000),
+    b.contract_type || 'permanent',
+    String(b.location || '').slice(0, 200),
+    b.salary_min == null || b.salary_min === '' ? null : Number(b.salary_min) || null,
+    b.salary_max == null || b.salary_max === '' ? null : Number(b.salary_max) || null,
+    b.salary_currency || 'USD',
+    b.published === false || b.published === 0 ? 0 : 1,
+    b.deadline || ''
+  );
+  res.json(db.prepare('SELECT * FROM grh_jobs WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/grh/jobs/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_jobs WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Offre introuvable' });
+  const b = { ...ex, ...req.body };
+  db.prepare(`UPDATE grh_jobs SET
+    title = ?, department_id = ?, description = ?, requirements = ?, contract_type = ?,
+    location = ?, salary_min = ?, salary_max = ?, salary_currency = ?, published = ?, deadline = ?
+    WHERE id = ?`).run(
+    String(b.title).trim().slice(0, 200),
+    b.department_id || null,
+    String(b.description || '').slice(0, 8000),
+    String(b.requirements || '').slice(0, 8000),
+    b.contract_type || 'permanent',
+    String(b.location || '').slice(0, 200),
+    b.salary_min == null || b.salary_min === '' ? null : Number(b.salary_min) || null,
+    b.salary_max == null || b.salary_max === '' ? null : Number(b.salary_max) || null,
+    b.salary_currency || 'USD',
+    b.published === false || b.published === 0 || b.published === '0' ? 0 : 1,
+    b.deadline || '', ex.id
+  );
+  res.json(db.prepare('SELECT * FROM grh_jobs WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/grh/jobs/:id', ...GRH, (req, res) => {
+  db.prepare('UPDATE grh_candidates SET job_id = NULL WHERE job_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM grh_jobs WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/grh/candidates', ...GRH, (req, res) => {
+  const { job_id, stage } = req.query;
+  let sql = `
+    SELECT c.*, j.title AS job_title
+    FROM grh_candidates c LEFT JOIN grh_jobs j ON j.id = c.job_id
+  `;
+  const where = [];
+  const params = [];
+  if (job_id) { where.push('c.job_id = ?'); params.push(job_id); }
+  if (stage) { where.push('c.stage = ?'); params.push(stage); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY c.created_at DESC';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/admin/grh/candidates', ...GRH, cvUpload.single('cv'), (req, res) => {
+  const b = req.body || {};
+  if (!String(b.full_name || '').trim()) return res.status(400).json({ error: 'Nom du candidat requis' });
+  const stage = STAGES.includes(b.stage) ? b.stage : 'recu';
+  const cvFile = req.file ? req.file.filename : '';
+  const info = db.prepare(`INSERT INTO grh_candidates
+    (job_id, full_name, email, phone, stage, cv_file, interview_date, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    b.job_id || null,
+    String(b.full_name).trim().slice(0, 200),
+    String(b.email || '').trim().slice(0, 120),
+    String(b.phone || '').slice(0, 40),
+    stage,
+    cvFile,
+    b.interview_date || '',
+    String(b.notes || '').slice(0, 4000)
+  );
+  res.json(db.prepare('SELECT * FROM grh_candidates WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/grh/candidates/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_candidates WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Candidat introuvable' });
+  const b = { ...ex, ...req.body };
+  db.prepare(`UPDATE grh_candidates SET
+    job_id = ?, full_name = ?, email = ?, phone = ?, stage = ?, interview_date = ?, notes = ?
+    WHERE id = ?`).run(
+    b.job_id || null,
+    String(b.full_name).trim().slice(0, 200),
+    String(b.email || '').trim().slice(0, 120),
+    String(b.phone || '').slice(0, 40),
+    STAGES.includes(b.stage) ? b.stage : ex.stage,
+    b.interview_date || '',
+    String(b.notes || '').slice(0, 4000), ex.id
+  );
+  res.json(db.prepare('SELECT * FROM grh_candidates WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/grh/candidates/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_candidates WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Candidat introuvable' });
+  if (ex.cv_file) {
+    const full = path.join(cvDir, ex.cv_file);
+    if (fs.existsSync(full)) fs.unlink(full, () => {});
+  }
+  db.prepare('DELETE FROM grh_candidates WHERE id = ?').run(ex.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/grh/candidates/:id/cv', ...GRH, (req, res) => {
+  const c = db.prepare('SELECT * FROM grh_candidates WHERE id = ?').get(req.params.id);
+  if (!c || !c.cv_file) return res.status(404).json({ error: 'Aucun CV pour ce candidat' });
+  const full = path.join(cvDir, c.cv_file);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Fichier manquant' });
+  res.download(full, `cv-${c.full_name.replace(/\s+/g, '-').toLowerCase()}` + path.extname(c.cv_file));
+});
+
+// Conversion candidat → employé (pipeline terminé)
+app.post('/api/admin/grh/candidates/:id/hire', ...GRH, (req, res) => {
+  const c = db.prepare('SELECT * FROM grh_candidates WHERE id = ?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Candidat introuvable' });
+  if (c.stage === 'retenu' && c.hired_at) return res.status(409).json({ error: 'Ce candidat est déjà converti en employé.' });
+  if (c.email && db.prepare('SELECT id FROM grh_employees WHERE email IS NOT NULL AND lower(email) = ?').get(String(c.email).toLowerCase().trim()))
+    return res.status(409).json({ error: 'Un employé avec cette adresse email existe déjà.' });
+  const today = new Date().toISOString().slice(0, 10);
+  const contractType = c.job_id ? (db.prepare('SELECT contract_type FROM grh_jobs WHERE id = ?').get(c.job_id)?.contract_type || 'permanent') : 'permanent';
+  const deptId = c.job_id ? (db.prepare('SELECT department_id FROM grh_jobs WHERE id = ?').get(c.job_id)?.department_id || null) : null;
+  try {
+    const info = db.prepare(`INSERT INTO grh_employees
+      (full_name, email, phone, position, department_id, contract_type, hire_date, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'actif')`).run(
+      c.full_name,
+      c.email ? String(c.email).toLowerCase().trim() : null,
+      c.phone || '',
+      c.job_id ? (db.prepare('SELECT title FROM grh_jobs WHERE id = ?').get(c.job_id)?.title || '') : '',
+      deptId,
+      contractType,
+      today
+    );
+    db.prepare("UPDATE grh_candidates SET stage = 'retenu', hired_at = ? WHERE id = ?").run(today, c.id);
+    res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(info.lastInsertRowid));
+  } catch {
+    res.status(409).json({ error: 'Impossible de créer l’employé (email déjà utilisé ?)' });
+  }
+});
+
 // ---------- Auto-service employé (compte lié au dossier par email) ----------
 const LEAVE_TYPES_OK = ['conge', 'maladie', 'maternite', 'sans_solde', 'formation'];
 const selfEmployee = (req) => {

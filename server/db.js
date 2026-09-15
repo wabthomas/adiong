@@ -243,6 +243,36 @@ CREATE TABLE IF NOT EXISTS grh_salary_history (
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS grh_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  department_id INTEGER,
+  description TEXT NOT NULL DEFAULT '',
+  requirements TEXT NOT NULL DEFAULT '',
+  contract_type TEXT NOT NULL DEFAULT 'permanent',
+  location TEXT NOT NULL DEFAULT '',
+  salary_min REAL,
+  salary_max REAL,
+  salary_currency TEXT NOT NULL DEFAULT 'USD',
+  published INTEGER NOT NULL DEFAULT 1,
+  deadline TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id INTEGER,
+  full_name TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL DEFAULT 'recu',
+  cv_file TEXT NOT NULL DEFAULT '',
+  interview_date TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  hired_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
 migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAULT 0');
