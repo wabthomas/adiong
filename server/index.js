@@ -257,6 +257,10 @@ app.get('/api/public/campaigns/:slug', (req, res) => {
   res.json(c);
 });
 
+app.get('/api/public/partners', (req, res) => {
+  res.json(db.prepare('SELECT * FROM partners WHERE published = 1 ORDER BY sort_order, id').all());
+});
+
 const siteBaseUrl = (req) =>
   (process.env.BASE_URL || `${req.protocol}://${req.headers.host}`).replace(/\/+$/, '');
 const xmlEsc = (s) => String(s ?? '')
@@ -454,6 +458,33 @@ app.put('/api/admin/campaigns/:id', authRequired, requireRole('content'), (req, 
 });
 app.delete('/api/admin/campaigns/:id', authRequired, requireRole('content'), (req, res) => {
   db.prepare('DELETE FROM campaigns WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Partenaires (bandeau de logos au-dessus du footer)
+app.get('/api/admin/partners', authRequired, requireRole('any'), (req, res) =>
+  res.json(db.prepare('SELECT * FROM partners ORDER BY sort_order, id').all()));
+
+app.post('/api/admin/partners', authRequired, requireRole('content'), (req, res) => {
+  const b = req.body || {};
+  if (!String(b.name || '').trim() || !String(b.logo || '').trim())
+    return res.status(400).json({ error: 'Nom et logo du partenaire sont requis' });
+  const info = db.prepare('INSERT INTO partners (name, logo, link, sort_order, published) VALUES (?, ?, ?, ?, ?)')
+    .run(String(b.name).trim(), b.logo, b.link || '', Number(b.sort_order) || 0, b.published === false ? 0 : 1);
+  res.json(db.prepare('SELECT * FROM partners WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/partners/:id', authRequired, requireRole('content'), (req, res) => {
+  const ex = db.prepare('SELECT * FROM partners WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Partenaire introuvable' });
+  const b = { ...ex, ...req.body };
+  db.prepare('UPDATE partners SET name = ?, logo = ?, link = ?, sort_order = ?, published = ? WHERE id = ?')
+    .run(String(b.name).trim(), b.logo, b.link || '', Number(b.sort_order) || 0, b.published ? 1 : 0, ex.id);
+  res.json(db.prepare('SELECT * FROM partners WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/partners/:id', authRequired, requireRole('content'), (req, res) => {
+  db.prepare('DELETE FROM partners WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 

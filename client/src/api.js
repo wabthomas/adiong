@@ -42,6 +42,7 @@ export const api = {
   cause: (slug) => req(`/api/public/causes/${slug}`),
   campaigns: () => req('/api/public/campaigns'),
   campaign: (slug) => req(`/api/public/campaigns/${slug}`),
+  partners: () => req('/api/public/partners'),
   contact: (body) => req('/api/contact', { method: 'POST', body }),
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
@@ -64,6 +65,12 @@ export const api = {
     create: (b) => req('/api/admin/campaigns', { method: 'POST', body: b, auth: true }),
     update: (id, b) => req(`/api/admin/campaigns/${id}`, { method: 'PUT', body: b, auth: true }),
     remove: (id) => req(`/api/admin/campaigns/${id}`, { method: 'DELETE', auth: true })
+  },
+  adminPartners: {
+    list: () => req('/api/admin/partners', { auth: true }),
+    create: (b) => req('/api/admin/partners', { method: 'POST', body: b, auth: true }),
+    update: (id, b) => req(`/api/admin/partners/${id}`, { method: 'PUT', body: b, auth: true }),
+    remove: (id) => req(`/api/admin/partners/${id}`, { method: 'DELETE', auth: true })
   },
   adminDonations: {
     list: () => req('/api/admin/donations', { auth: true }),

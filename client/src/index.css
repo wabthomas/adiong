@@ -159,3 +159,13 @@
   content: attr(data-placeholder);
   @apply pointer-events-none float-left h-0 text-ink-300;
 }
+.partner-track {
+  animation: partner-scroll var(--partner-duration, 30s) linear infinite;
+}
+.partner-marquee:hover .partner-track {
+  animation-play-state: paused;
+}
+@keyframes partner-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}

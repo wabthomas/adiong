@@ -42,6 +42,10 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
     **Optimisation automatique** (Jimp) : redimensionnement max 1600px + compression + miniature 480px ;
     si l'original est déjà plus léger, il est conservé. Suppression bloquée si l'image est encore utilisée.
     Accessible aussi depuis tout champ image (« Bibliothèque ») et depuis l'éditeur d'articles.
+  - **Partenaires** : logos des partenaires affichés en **défilement automatique** (marquee infini,
+    pause au survol, niveaux de gris qui colorisent au survol) juste au-dessus du pied de page,
+    sur toutes les pages. Réordonnancement par boutons ↑↓, visibilité publiée/masquée par logo,
+    lien cliquable optionnel. Le bandeau disparaît automatiquement s'il n'y a aucun partenaire publié.
   - **Liens d'invitation** (page Utilisateurs) : générez un lien privé (`/inscription?token=…`) à
     envoyer à un employé pour qu'il **crée lui-même son compte** (nom, email, mot de passe).
     L'inscription n'est jamais ouverte au public : sans lien valide, la page refuse l'accès.

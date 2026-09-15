@@ -4,13 +4,13 @@ import { api } from '../api.js';
 const Ctx = createContext(null);
 
 export function SiteProvider({ children }) {
-  const [data, setData] = useState({ site: {}, causes: [], articles: [], campaigns: [] });
+  const [data, setData] = useState({ site: {}, causes: [], articles: [], campaigns: [], partners: [] });
   const [loading, setLoading] = useState(true);
 
   const load = () =>
-    Promise.all([api.site(), api.causes(), api.articles(''), api.campaigns()])
-      .then(([site, causes, articles, campaigns]) => {
-        setData({ site, causes, articles, campaigns });
+    Promise.all([api.site(), api.causes(), api.articles(''), api.campaigns(), api.partners()])
+      .then(([site, causes, articles, campaigns, partners]) => {
+        setData({ site, causes, articles, campaigns, partners });
         document.title = `${site.site_name || 'ADI ONG'} — ${site.site_tagline || 'Inclusion'}`;
       })
       .catch(() => {})

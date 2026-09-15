@@ -3,6 +3,7 @@ import { Routes, Route, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import Navbar from './components/Navbar.jsx';
 import Footer from './components/Footer.jsx';
+import PartnerSlider from './components/PartnerSlider.jsx';
 import Home from './pages/Home.jsx';
 import About from './pages/About.jsx';
 import Work from './pages/Work.jsx';
@@ -26,6 +27,7 @@ const MediaAdmin = lazy(() => import('./pages/admin/MediaAdmin.jsx'));
 const UsersAdmin = lazy(() => import('./pages/admin/UsersAdmin.jsx'));
 const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
 const GrhAdmin = lazy(() => import('./pages/admin/GrhAdmin.jsx'));
+const PartnersAdmin = lazy(() => import('./pages/admin/PartnersAdmin.jsx'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage.jsx'));
 
 function AdminFallback() {
@@ -69,6 +71,7 @@ function Shell() {
           </Routes>
         </AnimatePresence>
       </main>
+      <PartnerSlider />
       <Footer />
     </div>
   );
@@ -91,6 +94,7 @@ export default function App() {
           <Route path="medias" element={<MediaAdmin />} />
           <Route path="utilisateurs" element={<UsersAdmin />} />
           <Route path="grh" element={<GrhAdmin />} />
+          <Route path="partenaires" element={<PartnersAdmin />} />
           <Route path="parametres" element={<SettingsAdmin />} />
         </Route>
         <Route path="/*" element={<Shell />} />
