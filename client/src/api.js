@@ -34,12 +34,13 @@ async function req(path, { method = 'GET', body, auth = false, form = false } = 
   });
   const raw = await res.text();
   let data = {};
-  if (raw) {
+  const trimmed = raw.trim();
+  if (trimmed) {
     try {
-      data = JSON.parse(raw);
+      data = JSON.parse(trimmed);
     } catch {
       if (!res.ok) throw new Error(httpErrorMessage(res, null, raw));
-      throw new Error(`Réponse invalide (${res.status})`);
+      // 2xx with a non-JSON body (empty payload, "OK", etc.) is still a success.
     }
   }
   if (!res.ok) throw new Error(httpErrorMessage(res, data, raw));
