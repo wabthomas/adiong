@@ -22,6 +22,198 @@ const LEAVE_STATUS_STYLES = {
 const fmtDate = (d) =>
   d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
+const MY_TASK_STATUS = { a_faire: 'À faire', en_cours: 'En cours', terminee: 'Terminée' };
+const MY_TASK_STATUS_CLS = { a_faire: 'bg-ink-100 text-ink-600', en_cours: 'bg-accent-100 text-accent-800', terminee: 'bg-emerald-100 text-emerald-700' };
+const MY_TASK_PRIORITY_CLS = { basse: 'bg-ink-100 text-ink-500', normale: 'bg-brand-50 text-brand-700', haute: 'bg-accent-100 text-accent-800', urgente: 'bg-red-100 text-red-700' };
+
+function MyTasksCard() {
+  const [tasks, setTasks] = useState([]);
+  const [noteTask, setNoteTask] = useState(null);
+  const [note, setNote] = useState('');
+  const [detailId, setDetailId] = useState(null);
+  const [detailNotes, setDetailNotes] = useState([]);
+
+  const load = useCallback(() => {
+    api.me.employee.tasks().then(setTasks).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const setStatus = async (t, status) => {
+    try {
+      await api.me.employee.taskStatus(t.id, status);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const openNotes = async (t) => {
+    try {
+      const full = await api.me.employee.task(t.id);
+      setDetailId(t.id);
+      setDetailNotes(full.notes || []);
+      setNoteTask(t.id);
+      setNote('');
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const closeNotes = () => {
+    setNoteTask(null);
+    setDetailId(null);
+    setNote('');
+  };
+  const addNote = async () => {
+    if (!note.trim()) return;
+    try {
+      await api.me.employee.taskNote(detailId, note.trim());
+      const full = await api.me.employee.task(detailId);
+      setDetailNotes(full.notes || []);
+      setNote('');
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const downloadPdf = async (t) => {
+    try {
+      await api.me.employee.taskPdf(t.id, `tache-${t.id}.pdf`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const groups = Object.keys(MY_TASK_STATUS).map((s) => ({ s, items: tasks.filter((t) => t.status === s) }));
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center justify-between border-b border-ink-100 bg-cream/70 px-6 py-4">
+        <h3 className="font-display text-lg font-bold text-ink-900">📋 Mes tâches</h3>
+        <span className="rounded-full bg-brand-600 px-3 py-1 text-xs font-extrabold text-white">
+          {tasks.filter((t) => t.status !== 'terminee').length} en cours
+        </span>
+      </div>
+      {tasks.length === 0 && <p className="px-6 py-10 text-center text-sm text-ink-400">Aucune tâche ne vous est attribuée pour le moment.</p>}
+      <ul>
+        {groups.map(({ s, items }) =>
+          items.length === 0 ? null : (
+            <li key={s} className="border-b border-ink-50 last:border-0">
+              <p className="px-6 pt-4 text-[11px] font-bold tracking-wide text-ink-400 uppercase">{MY_TASK_STATUS[s]} ({items.length})</p>
+              <ul className="p-3">
+                {items.map((t) => {
+                  const overdue = t.due_date && t.status !== 'terminee' && t.due_date < today;
+                  return (
+                    <li key={t.id} className="mb-2 rounded-xl bg-cream p-4 last:mb-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-ink-900">{t.title}</p>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {t.project_name && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700">📁 {t.project_name}</span>}
+                            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${MY_TASK_PRIORITY_CLS[t.priority] || ''}`}>{t.priority}</span>
+                            {t.due_date && (
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${overdue ? 'bg-red-100 text-red-700' : 'bg-white text-ink-500'}`}>
+                                {overdue ? '⚠ Échue le ' : 'Échéance '}{fmtDate(t.due_date)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 gap-1.5">
+                          {t.status === 'a_faire' && (
+                            <button onClick={() => setStatus(t, 'en_cours')} className="rounded-lg bg-accent-50 px-2.5 py-1.5 text-xs font-bold text-accent-800 hover:bg-accent-100">Commencer</button>
+                          )}
+                          {t.status !== 'terminee' ? (
+                            <button onClick={() => setStatus(t, 'terminee')} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">✓ Terminer</button>
+                          ) : (
+                            <button onClick={() => setStatus(t, 'en_cours')} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">↻ Rouvrir</button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-2.5 flex gap-1.5">
+                        <button onClick={() => (noteTask === t.id ? closeNotes() : openNotes(t))} className="text-xs font-bold text-brand-700 hover:text-brand-800">
+                          {noteTask === t.id ? 'Masquer les échanges' : '💬 Échanges / avancement'}
+                        </button>
+                        <button onClick={() => downloadPdf(t)} className="text-xs font-bold text-ink-500 hover:text-ink-700">⬇ Fiche PDF</button>
+                      </div>
+                      {noteTask === t.id && (
+                        <div className="mt-3 space-y-2 border-t border-ink-100 pt-3">
+                          {detailNotes.map((n) => (
+                            <p key={n.id} className="rounded-lg bg-white px-3 py-2 text-xs text-ink-600">
+                              <span className="font-bold text-brand-700">{Number(n.author_id) === Number(getSavedUser()?.id) ? 'Moi' : n.author_name || 'RH'} · {fmtDate(n.created_at)}</span> — {n.body}
+                            </p>
+                          ))}
+                          {detailNotes.length === 0 && <p className="text-xs text-ink-400">Aucun échange pour le moment.</p>}
+                          <div className="flex gap-2">
+                            <input className="input !py-2 text-xs" placeholder="Signaler un avancement, une question…" value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} />
+                            <button className="btn-ghost shrink-0 !px-3 !py-2 text-xs" onClick={addNote} disabled={!note.trim()}>Envoyer</button>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
+          )
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function MyChatCard() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+
+  const load = useCallback(() => {
+    api.me.chat.list().then(setMessages).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const id = setInterval(load, 20000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const send = async () => {
+    if (!input.trim()) return;
+    try {
+      await api.me.chat.send(input.trim());
+      setInput('');
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="border-b border-ink-100 bg-cream/70 px-6 py-4">
+        <h3 className="font-display text-lg font-bold text-ink-900">💬 Messagerie</h3>
+        <p className="text-xs text-ink-400">Échangez directement avec les ressources humaines</p>
+      </div>
+      <div className="max-h-80 space-y-2.5 overflow-y-auto bg-cream/30 px-5 py-4">
+        {messages.map((m) => (
+          <div key={m.id} className={`flex ${m.sender === 'employee' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-sm ${m.sender === 'employee' ? 'rounded-br-md bg-brand-600 text-white' : 'rounded-bl-md bg-white text-ink-800 ring-1 ring-ink-100'}`}>
+              <p>{m.body}</p>
+              <p className={`mt-0.5 text-[10px] ${m.sender === 'employee' ? 'text-white/70' : 'text-ink-400'}`}>
+                {new Date(String(m.created_at).replace(' ', 'T') + 'Z').toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+              </p>
+            </div>
+          </div>
+        ))}
+        {messages.length === 0 && <p className="py-8 text-center text-sm text-ink-400">Aucun message — posez votre première question aux RH.</p>}
+      </div>
+      <div className="flex gap-2 border-t border-ink-100 p-4">
+        <input className="input" placeholder="Écrire un message…" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} />
+        <button className="btn-primary shrink-0 !px-4 text-sm" onClick={send} disabled={!input.trim()}>Envoyer</button>
+      </div>
+    </div>
+  );
+}
+
 export default function MyLeave() {
   const me = getSavedUser();
   const [employee, setEmployee] = useState(null);
@@ -77,7 +269,7 @@ export default function MyLeave() {
 
   return (
     <div>
-      <PageTitle title="Mon espace" subtitle="Vos congés, votre solde et les annonces de l'équipe — lié à votre compte par votre adresse email." />
+      <PageTitle title="Mon espace" subtitle="Vos congés, vos tâches, la messagerie RH et les annonces — lié à votre compte par votre adresse email." />
 
       {notLinked ? (
         <div className="mx-auto max-w-xl rounded-3xl border border-dashed border-ink-200 bg-white p-10 text-center">
@@ -142,6 +334,8 @@ export default function MyLeave() {
                 </div>
               </form>
             </div>
+
+            <MyTasksCard />
           </div>
 
           <div className="space-y-6">
@@ -193,6 +387,8 @@ export default function MyLeave() {
               <p className="px-6 py-10 text-center text-sm text-ink-400">Aucune annonce pour le moment.</p>
             )}
           </div>
+
+          <MyChatCard />
           </div>
         </div>
       ) : null}

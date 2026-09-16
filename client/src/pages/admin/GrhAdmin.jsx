@@ -13,7 +13,11 @@ const TABS = [
   { id: 'recruit', group: 'Développement', label: 'Recrutement', hint: 'Offres, pipeline et embauche', icon: 'M20.25 14.15v4.25c0 .414-.336.75-.75.75h-15a.75.75 0 0 1-.75-.75v-4.25m16.5 0a2.25 2.25 0 0 0 .75-1.661V8.706c0-1.081-.738-2.015-1.797-2.158a48.148 48.148 0 0 0-10.906 0C5.238 6.69 4.5 7.625 4.5 8.706v3.783c0 .655.269 1.25.75 1.661m16.5 0a2.25 2.25 0 0 1-2.25 2.25h-12a2.25 2.25 0 0 1-2.25-2.25m16.5 0V12a2.25 2.25 0 0 0-2.25-2.25h-12A2.25 2.25 0 0 0 4.5 12v2.15' },
   { id: 'evaluations', group: 'Développement', label: 'Évaluations', hint: 'Bilans et notes sur 5', icon: 'M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z' },
   { id: 'trainings', group: 'Développement', label: 'Formations', hint: 'Catalogue et participants', icon: 'M4.26 10.147a60.438 60.438 0 0 0-.491 6.347A48.627 48.627 0 0 1 12 20.904a48.627 48.627 0 0 1 8.232-4.41 60.46 60.46 0 0 0-.491-6.347m-15.482 0a50.57 50.57 0 0 0-2.658-.813A59.906 59.906 0 0 1 12 3.493a59.903 59.903 0 0 1 10.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0 1 12 13.489a50.702 50.702 0 0 1 7.74-3.342' },
-  { id: 'announcements', group: 'Développement', label: 'Annonces', hint: 'Messages internes de l’équipe', icon: 'M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 1 1 0-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38a.75.75 0 0 1-1.021-.24l-1.05-1.82a.87.87 0 0 1 .24-1.201l.657-.38c.523-.302.71-.961.463-1.511a24.11 24.11 0 0 1-.985-2.783Zm11.528 3.72a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Zm-1.5-4.5a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Zm-1.5-4.5a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Z' }
+  { id: 'announcements', group: 'Développement', label: 'Annonces', hint: 'Messages internes de l’équipe', icon: 'M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 1 1 0-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38a.75.75 0 0 1-1.021-.24l-1.05-1.82a.87.87 0 0 1 .24-1.201l.657-.38c.523-.302.71-.961.463-1.511a24.11 24.11 0 0 1-.985-2.783Zm11.528 3.72a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Zm-1.5-4.5a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Zm-1.5-4.5a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1 0-1.5h.008a.75.75 0 0 1 .75.75Z' },
+  { id: 'projects', group: 'Pilotage', label: 'Projets', hint: 'Équipes, échéances et avancement', icon: 'M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z' },
+  { id: 'tasks', group: 'Pilotage', label: 'Tâches', hint: 'Kanban, priorités et fiches PDF', icon: 'M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0 1 18 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3 1.5 1.5 3-3.75' },
+  { id: 'chat', group: 'Pilotage', label: 'Messagerie', hint: 'Échanges avec les employés', icon: 'M20.25 8.511c.884.284 1.5 1.123 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155' },
+  { id: 'admindocs', group: 'Pilotage', label: 'Docs admin', hint: 'Documents de l’organisation', icon: 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z' }
 ];
 
 function TabIcon({ d, className = 'h-5 w-5 shrink-0' }) {
@@ -2078,6 +2082,759 @@ function OrgNode({ node, level = 0, onOpenFile }) {
   );
 }
 
+const TASK_STATUS = { a_faire: 'À faire', en_cours: 'En cours', terminee: 'Terminée' };
+const TASK_STATUS_CLS = { a_faire: 'bg-ink-100 text-ink-600', en_cours: 'bg-accent-100 text-accent-800', terminee: 'bg-emerald-100 text-emerald-700' };
+const TASK_PRIORITY = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
+const TASK_PRIORITY_CLS = { basse: 'bg-ink-100 text-ink-500', normale: 'bg-brand-50 text-brand-700', haute: 'bg-accent-100 text-accent-800', urgente: 'bg-red-100 text-red-700' };
+const PROJECT_STATUS = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé', annule: 'Annulé' };
+const PROJECT_STATUS_CLS = { planifie: 'bg-ink-100 text-ink-600', en_cours: 'bg-accent-100 text-accent-800', cloture: 'bg-emerald-100 text-emerald-700', annule: 'bg-red-100 text-red-700' };
+const frTaskDate = (d) => {
+  if (!d) return '';
+  const dt = new Date(String(d).slice(0, 10) + 'T00:00:00Z');
+  if (isNaN(dt)) return String(d);
+  return dt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+};
+
+function ProjectFormModal({ initial, employees, onSaved, onClose }) {
+  const [f, setF] = useState({
+    name: initial.name ?? '',
+    client: initial.client ?? '',
+    deadline: initial.deadline ?? '',
+    status: initial.status ?? 'planifie',
+    description: initial.description ?? '',
+    member_ids: (initial.members || []).map((m) => m.id)
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const toggleMember = (id) =>
+    setF((cur) => ({ ...cur, member_ids: cur.member_ids.includes(id) ? cur.member_ids.filter((m) => m !== id) : [...cur.member_ids, id] }));
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = { ...f, deadline: f.deadline || null, member_ids: f.member_ids };
+      if (initial.id) await api.grh.projects.update(initial.id, payload);
+      else await api.grh.projects.create(payload);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Nom du projet *">
+          <input className="input" value={f.name} onChange={set('name')} placeholder="Ex. Programme alphabétisation 2026" />
+        </Field>
+        <Field label="Client / bailleur (optionnel)">
+          <input className="input" value={f.client} onChange={set('client')} placeholder="Ex. Mairie de Goma, PNUD…" />
+        </Field>
+        <Field label="Échéance">
+          <input className="input" type="date" value={f.deadline} onChange={set('deadline')} />
+        </Field>
+        <Field label="Statut">
+          <select className="input" value={f.status} onChange={set('status')}>
+            {Object.entries(PROJECT_STATUS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <Field label="Description">
+        <textarea className="input min-h-[90px]" value={f.description} onChange={set('description')} placeholder="Objectifs, livrables, périmètre…" />
+      </Field>
+      <Field label={`Équipe (${f.member_ids.length} membre(s))`}>
+        <div className="grid max-h-52 gap-1.5 overflow-y-auto rounded-xl bg-cream p-3 sm:grid-cols-2">
+          {employees.map((e) => (
+            <label key={e.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-white">
+              <input type="checkbox" checked={f.member_ids.includes(e.id)} onChange={() => toggleMember(e.id)} />
+              <span className="truncate text-ink-700">{e.full_name}</span>
+              <span className="ml-auto truncate text-xs text-ink-400">{e.position}</span>
+            </label>
+          ))}
+          {employees.length === 0 && <p className="text-sm text-ink-400">Aucun employé — créez d'abord l'équipe.</p>}
+        </div>
+      </Field>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end border-t border-ink-100 pt-4">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.name.trim()}>
+          {saving ? 'Enregistrement…' : 'Enregistrer le projet'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProjectsTab({ employees }) {
+  const [projects, setProjects] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    api.grh.projects.list().then(setProjects).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const removeProject = async (p) => {
+    if (!confirm(`Supprimer le projet « ${p.name} » ?\nSes tâches seront conservées, rattachées à aucun projet.`)) return;
+    try {
+      await api.grh.projects.remove(p.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-ink-500">Projets de l'organisation : équipe, échéance et suivi des tâches associées.</p>
+        <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setModal({})}>+ Nouveau projet</button>
+      </div>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <tr>
+                <th className="px-6 py-4">Projet</th>
+                <th className="px-6 py-4">Client</th>
+                <th className="px-6 py-4">Échéance</th>
+                <th className="px-6 py-4">Statut</th>
+                <th className="px-6 py-4">Équipe</th>
+                <th className="px-6 py-4">Tâches</th>
+                <th className="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((p) => (
+                <tr key={p.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
+                  <td className="px-6 py-4">
+                    <p className="font-semibold text-ink-900">{p.name}</p>
+                    {p.description && <p className="mt-0.5 max-w-[280px] truncate text-xs text-ink-400" title={p.description}>{p.description}</p>}
+                  </td>
+                  <td className="px-6 py-4 text-ink-600">{p.client || '—'}</td>
+                  <td className="px-6 py-4 text-ink-600">{p.deadline ? frTaskDate(p.deadline) : '—'}</td>
+                  <td className="px-6 py-4">
+                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${PROJECT_STATUS_CLS[p.status] || ''}`}>{PROJECT_STATUS[p.status] || p.status}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-1.5">
+                      {(p.members || []).slice(0, 4).map((m) => (
+                        <span key={m.id} title={`${m.full_name} — ${m.position || ''}`} className="grid h-7 w-7 place-items-center rounded-full bg-brand-100 text-[10px] font-extrabold text-brand-700">
+                          {m.full_name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+                        </span>
+                      ))}
+                      {(p.members || []).length > 4 && <span className="text-xs font-bold text-ink-400">+{p.members.length - 4}</span>}
+                      {(p.members || []).length === 0 && <span className="text-ink-400">—</span>}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-ink-600">
+                    <span className={p.open_count > 0 ? 'font-bold text-accent-800' : ''}>{p.open_count} en cours</span>
+                    <span className="text-ink-400"> / {p.tasks_count}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex justify-end gap-1.5">
+                      <button onClick={() => setModal({ ...p })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">Modifier</button>
+                      <button onClick={() => removeProject(p)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">✕</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {projects.length === 0 && <p className="py-12 text-center text-ink-400">Aucun projet — créez le premier.</p>}
+      </div>
+
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? `Modifier — ${modal.name}` : 'Nouveau projet'} wide>
+        {modal && <ProjectFormModal initial={modal} employees={employees} onSaved={load} onClose={() => setModal(null)} />}
+      </Modal>
+    </div>
+  );
+}
+
+function TaskFormModal({ initial, employees, projects, onSaved, onClose }) {
+  const [f, setF] = useState({
+    title: initial.title ?? '',
+    description: initial.description ?? '',
+    project_id: initial.project_id ?? '',
+    assignee_id: initial.assignee_id ?? '',
+    priority: initial.priority ?? 'normale',
+    due_date: initial.due_date ?? '',
+    status: initial.status ?? 'a_faire'
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = { ...f, project_id: f.project_id || null, assignee_id: f.assignee_id || null, due_date: f.due_date || null };
+      if (initial.id) await api.grh.tasks.update(initial.id, payload);
+      else await api.grh.tasks.create(payload);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <Field label="Intitulé *">
+        <input className="input" value={f.title} onChange={set('title')} placeholder="Ex. Rédiger le rapport d'avancement du projet" />
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Projet">
+          <select className="input" value={f.project_id ?? ''} onChange={set('project_id')}>
+            <option value="">Sans projet</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Assigné à">
+          <select className="input" value={f.assignee_id ?? ''} onChange={set('assignee_id')}>
+            <option value="">Non assigné</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>{e.full_name} — {e.position || 'sans poste'}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Priorité">
+          <select className="input" value={f.priority} onChange={set('priority')}>
+            {Object.entries(TASK_PRIORITY).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Échéance">
+          <input className="input" type="date" value={f.due_date ?? ''} onChange={set('due_date')} />
+        </Field>
+        {!initial.id && (
+          <Field label="Statut initial">
+            <select className="input" value={f.status} onChange={set('status')}>
+              {Object.entries(TASK_STATUS).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+      </div>
+      <Field label="Description">
+        <textarea className="input min-h-[100px]" value={f.description} onChange={set('description')} placeholder="Consignes, livrables attendus, contexte…" />
+      </Field>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end border-t border-ink-100 pt-4">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.title.trim()}>
+          {saving ? 'Enregistrement…' : 'Enregistrer la tâche'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TaskDetailModal({ taskId, onChanged, onEdit, onClose }) {
+  const [task, setTask] = useState(null);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    api.grh.tasks.get(taskId).then(setTask).catch((e) => setError(e.message));
+  }, [taskId]);
+  useEffect(() => { load(); }, [load]);
+
+  const setStatus = async (status) => {
+    try {
+      await api.grh.tasks.setStatus(taskId, status);
+      load();
+      onChanged();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const addNote = async () => {
+    if (!note.trim()) return;
+    try {
+      await api.grh.tasks.addNote(taskId, note.trim());
+      setNote('');
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const download = async () => {
+    try {
+      await api.grh.tasks.downloadPdf(taskId, `tache-${taskId}.pdf`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const remove = async () => {
+    if (!confirm('Supprimer cette tâche et son historique de commentaires ?')) return;
+    try {
+      await api.grh.tasks.remove(taskId);
+      onChanged();
+      onClose();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  if (!task) return <p className="py-8 text-center text-sm text-ink-400">Chargement…</p>;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-display text-xl font-bold text-ink-900">{task.title}</h3>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${TASK_STATUS_CLS[task.status] || ''}`}>{TASK_STATUS[task.status] || task.status}</span>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${TASK_PRIORITY_CLS[task.priority] || ''}`}>Priorité {TASK_PRIORITY[task.priority] || task.priority}</span>
+            {task.project_name && <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-bold text-brand-700">📁 {task.project_name}</span>}
+            {task.due_date && (
+              <span className={`rounded-full px-3 py-1 text-xs font-bold ${task.status !== 'terminee' && task.due_date < new Date().toISOString().slice(0, 10) ? 'bg-red-100 text-red-700' : 'bg-ink-100 text-ink-600'}`}>
+                Échéance {frTaskDate(task.due_date)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+        <p className="text-ink-500">👤 {task.assignee_name || 'Non assignée'}</p>
+        {task.assignee_position && <p className="text-ink-500">🏷 {task.assignee_position}</p>}
+        <p className="text-ink-500">📅 Créée le {frTaskDate(task.created_at)}</p>
+        <p className="text-ink-500">✅ {task.completed_at ? `Terminée le ${frTaskDate(task.completed_at)}` : 'Non terminée'}</p>
+      </div>
+      {task.description && (
+        <div className="rounded-xl bg-cream px-4 py-3 text-sm text-ink-700">{task.description}</div>
+      )}
+
+      <div>
+        <p className="mb-2 text-xs font-bold tracking-wide text-ink-400 uppercase">Historique des échanges ({task.notes.length})</p>
+        <ul className="max-h-56 space-y-2 overflow-y-auto">
+          {task.notes.map((n) => (
+            <li key={n.id} className="rounded-xl bg-cream px-4 py-2.5 text-sm">
+              <p className="text-xs font-bold text-brand-700">{n.author_name || 'Inconnu'} — {frTaskDate(n.created_at)}</p>
+              <p className="mt-0.5 text-ink-700">{n.body}</p>
+            </li>
+          ))}
+          {task.notes.length === 0 && <p className="text-sm text-ink-400">Aucun commentaire pour le moment.</p>}
+        </ul>
+        <div className="mt-2 flex gap-2">
+          <input className="input" placeholder="Ajouter un commentaire / point d'avancement…" value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} />
+          <button className="btn-ghost shrink-0 !px-4 text-sm" onClick={addNote} disabled={!note.trim()}>Ajouter</button>
+        </div>
+      </div>
+
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex flex-wrap gap-2 border-t border-ink-100 pt-4">
+        {task.status === 'a_faire' && <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => setStatus('en_cours')}>▶ Commencer</button>}
+        {task.status === 'en_cours' && <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => setStatus('a_faire')}>↩ Remettre à faire</button>}
+        {task.status !== 'terminee'
+          ? <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setStatus('terminee')}>✓ Marquer terminée</button>
+          : <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => setStatus('en_cours')}>↻ Rouvrir</button>}
+        <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={download}>⬇ Fiche PDF</button>
+        <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => onEdit(task)}>✎ Modifier</button>
+        <button className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={remove}>Supprimer</button>
+      </div>
+    </div>
+  );
+}
+
+function TasksTab({ employees }) {
+  const [tasks, setTasks] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [fProject, setFProject] = useState('');
+  const [fAssignee, setFAssignee] = useState('');
+  const [formModal, setFormModal] = useState(null);
+  const [detailId, setDetailId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    const p = {};
+    if (fProject) p.project_id = fProject;
+    if (fAssignee) p.assignee_id = fAssignee;
+    api.grh.tasks.list(p).then(setTasks).catch((e) => setError(e.message));
+  }, [fProject, fAssignee]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.grh.projects.list().then(setProjects).catch(() => {});
+  }, []);
+
+  const quickStatus = async (t, status) => {
+    try {
+      await api.grh.tasks.setStatus(t.id, status);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const columns = Object.keys(TASK_STATUS).map((status) => ({
+    status,
+    label: TASK_STATUS[status],
+    items: tasks.filter((t) => t.status === status)
+  }));
+  const today = new Date().toISOString().slice(0, 10);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <select className="input !w-56 !py-2.5 text-sm" value={fProject} onChange={(e) => setFProject(e.target.value)}>
+          <option value="">Tous les projets</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <select className="input !w-56 !py-2.5 text-sm" value={fAssignee} onChange={(e) => setFAssignee(e.target.value)}>
+          <option value="">Tous les employés</option>
+          {employees.map((e) => (
+            <option key={e.id} value={e.id}>{e.full_name}</option>
+          ))}
+        </select>
+        <button className="btn-primary ml-auto !px-5 !py-2.5 text-sm" onClick={() => setFormModal({})}>+ Nouvelle tâche</button>
+      </div>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {columns.map((col) => (
+          <div key={col.status} className="rounded-2xl bg-cream/70 p-3">
+            <div className="mb-3 flex items-center justify-between px-2">
+              <p className="font-display text-sm font-bold text-ink-700">
+                {col.label}
+              </p>
+              <span className={`rounded-full px-2.5 py-0.5 text-xs font-extrabold ${TASK_STATUS_CLS[col.status]}`}>{col.items.length}</span>
+            </div>
+            <div className="space-y-2.5">
+              {col.items.map((t) => {
+                const overdue = t.due_date && t.status !== 'terminee' && t.due_date < today;
+                return (
+                  <div key={t.id} className="card cursor-pointer p-4 transition-all hover:-translate-y-0.5 hover:shadow-soft" onClick={() => setDetailId(t.id)}>
+                    <p className="text-sm font-bold text-ink-900">{t.title}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {t.project_name && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700">📁 {t.project_name}</span>}
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${TASK_PRIORITY_CLS[t.priority] || ''}`}>{TASK_PRIORITY[t.priority] || t.priority}</span>
+                      {t.due_date && (
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${overdue ? 'bg-red-100 text-red-700' : 'bg-ink-100 text-ink-500'}`}>
+                          {overdue ? '⚠ ' : ''}{frTaskDate(t.due_date)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-3 flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
+                      <span className="truncate text-xs text-ink-500">
+                        {t.assignee_name || 'Non assignée'}
+                        {t.notes_count != null && t.notes_count > 0 && ` · 💬 ${t.notes_count}`}
+                      </span>
+                      <span className="flex gap-1">
+                        {t.status === 'a_faire' && (
+                          <button title="Passer en cours" onClick={() => quickStatus(t, 'en_cours')} className="rounded-lg bg-accent-50 px-2 py-1 text-xs font-bold text-accent-800 hover:bg-accent-100">▶</button>
+                        )}
+                        {t.status !== 'terminee' && (
+                          <button title="Marquer terminée" onClick={() => quickStatus(t, 'terminee')} className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-100">✓</button>
+                        )}
+                        {t.status === 'terminee' && (
+                          <button title="Rouvrir" onClick={() => quickStatus(t, 'en_cours')} className="rounded-lg bg-ink-50 px-2 py-1 text-xs font-bold text-ink-600 hover:bg-ink-100">↻</button>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {col.items.length === 0 && (
+                <p className="rounded-xl border border-dashed border-ink-200 py-6 text-center text-xs text-ink-400">Aucune tâche</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Modal open={!!formModal} onClose={() => setFormModal(null)} title={formModal?.id ? `Modifier — ${formModal.title}` : 'Nouvelle tâche'} wide>
+        {formModal && (
+          <TaskFormModal initial={formModal} employees={employees} projects={projects} onSaved={load} onClose={() => setFormModal(null)} />
+        )}
+      </Modal>
+
+      <Modal open={detailId != null} onClose={() => setDetailId(null)} title="Détail de la tâche" wide>
+        {detailId != null && (
+          <TaskDetailModal
+            taskId={detailId}
+            onChanged={load}
+            onEdit={(t) => { setDetailId(null); setFormModal({ ...t }); }}
+            onClose={() => setDetailId(null)}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function ChatTab() {
+  const [threads, setThreads] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [error, setError] = useState('');
+
+  const loadThreads = useCallback(() => {
+    api.grh.chat.threads().then(setThreads).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { loadThreads(); }, [loadThreads]);
+  useEffect(() => {
+    const id = setInterval(loadThreads, 20000);
+    return () => clearInterval(id);
+  }, [loadThreads]);
+  useEffect(() => {
+    if (selected == null) { setMessages([]); return; }
+    api.grh.chat.thread(selected).then((m) => { setMessages(m); loadThreads(); }).catch((e) => setError(e.message));
+  }, [selected]);
+
+  const send = async () => {
+    if (!input.trim() || selected == null) return;
+    try {
+      await api.grh.chat.send(selected, input.trim());
+      setInput('');
+      const m = await api.grh.chat.thread(selected);
+      setMessages(m);
+      loadThreads();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="card overflow-hidden">
+        <div className="border-b border-ink-100 bg-cream/70 px-5 py-4">
+          <h3 className="font-display text-base font-bold text-ink-900">Messagerie</h3>
+          <p className="text-xs text-ink-400">Échanges avec chaque employé</p>
+        </div>
+        <ul className="max-h-[560px] overflow-y-auto">
+          {threads.map((t) => (
+            <li key={t.id}>
+              <button
+                onClick={() => setSelected(t.id)}
+                className={`flex w-full items-start gap-3 border-b border-ink-50 px-4 py-3 text-left transition-colors ${selected === t.id ? 'bg-brand-50' : 'hover:bg-cream/60'}`}
+              >
+                <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-100 text-xs font-extrabold text-brand-700">
+                  {t.full_name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-bold text-ink-900">{t.full_name}</span>
+                    {t.unread > 0 && <span className="rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-extrabold text-white">{t.unread}</span>}
+                  </span>
+                  <span className="block truncate text-xs text-ink-400">{t.position || 'Employé(e)'}</span>
+                  {t.last_body && <span className="mt-0.5 block truncate text-xs text-ink-500">{t.last_body}</span>}
+                </span>
+              </button>
+            </li>
+          ))}
+          {threads.length === 0 && <p className="px-4 py-10 text-center text-sm text-ink-400">Aucun employé.</p>}
+        </ul>
+      </div>
+
+      <div className="card flex min-h-[420px] flex-col overflow-hidden">
+        {selected == null ? (
+          <div className="grid flex-1 place-items-center p-8 text-center">
+            <div>
+              <span className="text-4xl">💬</span>
+              <p className="mt-3 text-sm font-semibold text-ink-500">Sélectionnez un employé pour ouvrir la conversation.</p>
+              <p className="text-xs text-ink-400">Les employés voient leurs messages dans leur espace membre.</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="border-b border-ink-100 bg-cream/70 px-5 py-3.5">
+              <h3 className="font-display text-base font-bold text-ink-900">{threads.find((t) => t.id === selected)?.full_name}</h3>
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto bg-cream/30 px-5 py-4">
+              {messages.map((m) => (
+                <div key={m.id} className={`flex ${m.sender === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm ${m.sender === 'admin' ? 'rounded-br-md bg-brand-600 text-white' : 'rounded-bl-md bg-white text-ink-800 ring-1 ring-ink-100'}`}>
+                    <p>{m.body}</p>
+                    <p className={`mt-1 text-[10px] ${m.sender === 'admin' ? 'text-white/70' : 'text-ink-400'}`}>
+                      {m.sender === 'admin' ? (m.sender_name || 'Administration') : 'Employé(e)'} · {new Date(String(m.created_at).replace(' ', 'T') + 'Z').toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {messages.length === 0 && <p className="py-10 text-center text-sm text-ink-400">Aucun message — démarrez la conversation.</p>}
+            </div>
+            <div className="flex gap-2 border-t border-ink-100 p-4">
+              <input
+                className="input"
+                placeholder="Écrire un message…"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && send()}
+              />
+              <button className="btn-primary shrink-0 !px-5 text-sm" onClick={send} disabled={!input.trim()}>Envoyer</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminDocsTab() {
+  const [docs, setDocs] = useState([]);
+  const [form, setForm] = useState({ name: '', category: 'autre', expires_on: '' });
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    api.grh.adminDocs.list().then(setDocs).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const fmtSize = (n) => {
+    if (n == null) return '';
+    if (n < 1024) return `${n} o`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} Ko`;
+    return `${(n / 1024 / 1024).toFixed(1)} Mo`;
+  };
+
+  const upload = async () => {
+    if (!file) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.grh.adminDocs.upload(file, form);
+      setFile(null);
+      setForm({ name: '', category: 'autre', expires_on: '' });
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const download = async (d) => {
+    try {
+      await api.grh.adminDocs.download(d.id, d.name + pathExt(d.file));
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const removeDoc = async (d) => {
+    if (!confirm(`Supprimer le document « ${d.name} » ?`)) return;
+    try {
+      await api.grh.adminDocs.remove(d.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const pathExt = (f) => {
+    const i = String(f || '').lastIndexOf('.');
+    return i >= 0 ? String(f).slice(i) : '';
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const expSoon = (d) => {
+    if (!d.expires_on) return '';
+    if (d.expires_on < today) return 'bg-red-100 text-red-700';
+    const limit = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    if (d.expires_on <= limit) return 'bg-accent-100 text-accent-800';
+    return 'bg-ink-100 text-ink-600';
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="card p-6">
+        <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Déposer un document administratif</h3>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Fichier *">
+            <input className="input" type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          </Field>
+          <Field label="Nom (affiché)">
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex. Statuts de l'ONG" />
+          </Field>
+          <Field label="Catégorie">
+            <select className="input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              <option value="statut">Statuts / actes officiels</option>
+              <option value="contrat">Contrats</option>
+              <option value="decision">Décisions</option>
+              <option value="rapport">Rapports</option>
+              <option value="certificat">Certificats / autorisations</option>
+              <option value="autre">Autre</option>
+            </select>
+          </Field>
+          <Field label="Date d'expiration (optionnel)">
+            <input className="input" type="date" value={form.expires_on} onChange={(e) => setForm({ ...form, expires_on: e.target.value })} />
+          </Field>
+        </div>
+        {error && <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+        <div className="mt-4 flex justify-end">
+          <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={upload} disabled={busy || !file}>
+            {busy ? 'Dépôt…' : '⬆ Déposer le document'}
+          </button>
+        </div>
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <tr>
+                <th className="px-6 py-4">Document</th>
+                <th className="px-6 py-4">Catégorie</th>
+                <th className="px-6 py-4">Taille</th>
+                <th className="px-6 py-4">Expiration</th>
+                <th className="px-6 py-4">Déposé par</th>
+                <th className="px-6 py-4">Date</th>
+                <th className="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {docs.map((d) => (
+                <tr key={d.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
+                  <td className="px-6 py-4 font-semibold text-ink-900">
+                    <span className="mr-2">{d.mime?.includes('pdf') ? '📄' : d.mime?.startsWith('image/') ? '🖼' : '📁'}</span>
+                    {d.name}
+                  </td>
+                  <td className="px-6 py-4 text-ink-600">{d.category}</td>
+                  <td className="px-6 py-4 text-ink-600">{fmtSize(d.size)}</td>
+                  <td className="px-6 py-4">
+                    {d.expires_on
+                      ? <span className={`rounded-full px-3 py-1 text-xs font-bold ${expSoon(d)}`}>{frTaskDate(d.expires_on)}</span>
+                      : <span className="text-ink-400">—</span>}
+                  </td>
+                  <td className="px-6 py-4 text-ink-600">{d.created_by_name || '—'}</td>
+                  <td className="px-6 py-4 text-ink-600">{frTaskDate(d.created_at)}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex justify-end gap-1.5">
+                      <button onClick={() => download(d)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">⬇ Télécharger</button>
+                      <button onClick={() => removeDoc(d)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">✕</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {docs.length === 0 && <p className="py-12 text-center text-ink-400">Aucun document administratif déposé.</p>}
+      </div>
+    </div>
+  );
+}
+
+
 export default function GrhAdmin() {
   const isSuper = getSavedUser()?.role === 'super_admin';
   const [tab, setTab] = useState('overview');
@@ -2658,6 +3415,22 @@ export default function GrhAdmin() {
             {filteredLeaves.length === 0 && <p className="py-12 text-center text-ink-400">Aucun congé enregistré.</p>}
           </GrhSection>
         </div>
+      )}
+
+      {activeId === 'projects' && (
+        <ProjectsTab employees={employees.filter((e) => e.status === 'actif')} />
+      )}
+
+      {activeId === 'tasks' && (
+        <TasksTab employees={employees.filter((e) => e.status === 'actif')} />
+      )}
+
+      {activeId === 'chat' && (
+        <ChatTab />
+      )}
+
+      {activeId === 'admindocs' && (
+        <AdminDocsTab />
       )}
 
       {activeId === 'departments' && (

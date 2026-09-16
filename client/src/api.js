@@ -254,6 +254,71 @@ export const api = {
       updateAttendee: (aid, b) => req(`/api/admin/grh/trainings/attendees/${aid}`, { method: 'PUT', body: b, auth: true }),
       removeAttendee: (aid) => req(`/api/admin/grh/trainings/attendees/${aid}`, { method: 'DELETE', auth: true })
     },
+    projects: {
+      list: () => req('/api/admin/grh/projects', { auth: true }),
+      create: (b) => req('/api/admin/grh/projects', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/projects/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/projects/${id}`, { method: 'DELETE', auth: true })
+    },
+    tasks: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        for (const k of ['project_id', 'assignee_id', 'status', 'q']) if (params[k]) q.set(k, params[k]);
+        const s = q.toString();
+        return req(`/api/admin/grh/tasks${s ? `?${s}` : ''}`, { auth: true });
+      },
+      get: (id) => req(`/api/admin/grh/tasks/${id}`, { auth: true }),
+      create: (b) => req('/api/admin/grh/tasks', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/grh/tasks/${id}`, { method: 'PUT', body: b, auth: true }),
+      setStatus: (id, status, note) => req(`/api/admin/grh/tasks/${id}/status`, { method: 'PATCH', body: { status, note }, auth: true }),
+      addNote: (id, body) => req(`/api/admin/grh/tasks/${id}/notes`, { method: 'POST', body: { body }, auth: true }),
+      remove: (id) => req(`/api/admin/grh/tasks/${id}`, { method: 'DELETE', auth: true }),
+      downloadPdf: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/grh/tasks/${id}/pdf`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `tache-${id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    },
+    chat: {
+      threads: () => req('/api/admin/grh/chat', { auth: true }),
+      thread: (employeeId) => req(`/api/admin/grh/chat/${employeeId}`, { auth: true }),
+      send: (employeeId, body) => req(`/api/admin/grh/chat/${employeeId}`, { method: 'POST', body: { body }, auth: true })
+    },
+    adminDocs: {
+      list: () => req('/api/admin/grh/admin-docs', { auth: true }),
+      upload: async (file, meta = {}) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        if (meta.name) fd.append('name', meta.name);
+        if (meta.category) fd.append('category', meta.category);
+        if (meta.expires_on) fd.append('expires_on', meta.expires_on);
+        return req('/api/admin/grh/admin-docs', { method: 'POST', body: fd, auth: true });
+      },
+      download: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/grh/admin-docs/${id}/download`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `document-${id}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      },
+      remove: (id) => req(`/api/admin/grh/admin-docs/${id}`, { method: 'DELETE', auth: true })
+    },
     announcements: {
       list: () => req('/api/admin/grh/announcements', { auth: true }),
       create: (b) => req('/api/admin/grh/announcements', { method: 'POST', body: b, auth: true }),
@@ -422,7 +487,29 @@ export const api = {
       leaves: () => req('/api/me/employee/leaves', { auth: true }),
       announcements: () => req('/api/me/employee/announcements', { auth: true }),
       request: (b) => req('/api/me/employee/leaves', { method: 'POST', body: b, auth: true }),
-      remove: (id) => req(`/api/me/employee/leaves/${id}`, { method: 'DELETE', auth: true })
+      remove: (id) => req(`/api/me/employee/leaves/${id}`, { method: 'DELETE', auth: true }),
+      tasks: () => req('/api/me/grh/tasks', { auth: true }),
+      task: (id) => req(`/api/me/grh/tasks/${id}`, { auth: true }),
+      taskStatus: (id, status, note) => req(`/api/me/grh/tasks/${id}/status`, { method: 'PATCH', body: { status, note }, auth: true }),
+      taskNote: (id, body) => req(`/api/me/grh/tasks/${id}/notes`, { method: 'POST', body: { body }, auth: true }),
+      taskPdf: async (id, filename) => {
+        const t = getToken();
+        const res = await fetch(`/api/me/grh/tasks/${id}/pdf`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || `tache-${id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    },
+    chat: {
+      list: () => req('/api/me/chat', { auth: true }),
+      send: (body) => req('/api/me/chat', { method: 'POST', body: { body }, auth: true })
     }
   },
   async upload(file) {
