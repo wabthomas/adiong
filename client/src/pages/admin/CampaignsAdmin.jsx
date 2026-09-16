@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api, fmtMoney, fmtDate } from '../../api.js';
+import { useSite } from '../../hooks/useSite.jsx';
 import { PageTitle, Modal, Field, ImageInput, Toggle, DeleteButton } from './AdminUI.jsx';
 
 const empty = {
@@ -15,6 +16,8 @@ const empty = {
 };
 
 export default function CampaignsAdmin() {
+  const { site } = useSite();
+  const currency = site?.currency || 'USD';
   const [items, setItems] = useState([]);
   const [causes, setCauses] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -126,10 +129,10 @@ export default function CampaignsAdmin() {
               <textarea className="input min-h-[100px]" value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} />
             </Field>
             <div className="grid gap-5 sm:grid-cols-3">
-              <Field label="Objectif (USD)">
+              <Field label={`Objectif (${currency})`}>
                 <input type="number" min="0" className="input" value={editing.goal_amount} onChange={(e) => setEditing({ ...editing, goal_amount: e.target.value })} />
               </Field>
-              <Field label="Déjà collecté (USD)">
+              <Field label={`Déjà collecté (${currency})`}>
                 <input type="number" min="0" className="input" value={editing.collected_amount} onChange={(e) => setEditing({ ...editing, collected_amount: e.target.value })} />
               </Field>
               <Field label="Échéance">

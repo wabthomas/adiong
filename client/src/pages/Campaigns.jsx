@@ -38,7 +38,7 @@ export default function Campaigns() {
             <div>
               <p className="text-sm font-bold tracking-wide text-ink-400 uppercase">Déjà collecté</p>
               <p className="mt-1 font-display text-3xl font-extrabold text-brand-600">
-                <Counter value={Math.round(totalCollected)} /> USD
+                {fmtMoney(totalCollected)}
               </p>
             </div>
             <div className="sm:pl-6 sm:border-l border-ink-100">

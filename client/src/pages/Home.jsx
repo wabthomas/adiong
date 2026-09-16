@@ -7,6 +7,7 @@ import { usePageSeo } from '../hooks/useSeo.js';
 import { CauseCard, ArticleCard, CampaignCard, ProgressBar } from '../components/Cards.jsx';
 import CTABanner from '../components/CTABanner.jsx';
 import { useSite } from '../hooks/useSite.jsx';
+import { fmtMoney } from '../api.js';
 import { IconArrow, IconCheck, IconPlay, IconHeart, IconPhone, IconMail, IconPin, causeIcons } from '../components/Icons.jsx';
 
 const DEFAULT_MARQUEE = [
@@ -52,7 +53,10 @@ export default function Home() {
           <div className="absolute inset-0 bg-gradient-to-t from-ink-950/70 via-transparent to-ink-950/40" />
         </motion.div>
 
-        <div className="container-x relative pt-24 pb-10 sm:pt-28 sm:pb-12" style={reduce ? undefined : { opacity }}>
+        <motion.div
+          className="container-x relative pt-24 pb-10 sm:pt-28 sm:pb-12"
+          style={reduce ? undefined : { opacity }}
+        >
           <div className="max-w-2xl">
             <motion.p
               initial={reduce ? false : { opacity: 0, y: 24 }}
@@ -122,7 +126,7 @@ export default function Home() {
               )}
             </motion.div>
           </div>
-        </div>
+        </motion.div>
 
         <motion.div
           initial={reduce ? false : { opacity: 0, y: 24 }}
@@ -253,8 +257,8 @@ export default function Home() {
               <Reveal delay={0.15} className="mt-10">
                 <div className="space-y-2 text-sm font-semibold text-ink-600">
                   <div className="flex justify-between">
-                    <span>Collecté : {Math.round(topCampaign.collected_amount)} USD</span>
-                    <span>Objectif : {Math.round(topCampaign.goal_amount)} USD</span>
+                    <span>Collecté : {fmtMoney(topCampaign.collected_amount)}</span>
+                    <span>Objectif : {fmtMoney(topCampaign.goal_amount)}</span>
                   </div>
                 </div>
                 <ProgressBar

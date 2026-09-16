@@ -170,9 +170,9 @@ export default function UsersAdmin() {
                       {u.photo ? (
                         <img src={u.photo} alt="" className="h-10 w-10 rounded-full object-cover ring-1 ring-brand-100" />
                       ) : (
-                        <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-100 font-display text-sm font-bold text-brand-700">
-                          {(u.full_name || u.email).slice(0, 2).toUpperCase()}
-                        </span>
+                      <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-100 font-display text-sm font-bold text-brand-700">
+                        {(u.full_name || u.email).slice(0, 2).toUpperCase()}
+                      </span>
                       )}
                       <div>
                         <p className="font-semibold text-ink-900">
