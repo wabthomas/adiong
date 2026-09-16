@@ -10,6 +10,7 @@ const TABS = [
   { id: 'departments', group: 'Équipe', label: 'Départements', hint: 'Services et effectifs', icon: 'M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12v6H3V3Z' },
   { id: 'leaves', group: 'Temps & paie', label: 'Congés', hint: 'Demandes, validation et calendrier', icon: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5' },
   { id: 'payroll', group: 'Temps & paie', label: 'Paie', hint: 'Bulletins, PDF et export CSV', icon: 'M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z' },
+  { id: 'attendance', group: 'Temps & paie', label: 'Présences', hint: 'Pointage automatique, heures et corrections', icon: 'M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z' },
   { id: 'recruit', group: 'Développement', label: 'Recrutement', hint: 'Offres, pipeline et embauche', icon: 'M20.25 14.15v4.25c0 .414-.336.75-.75.75h-15a.75.75 0 0 1-.75-.75v-4.25m16.5 0a2.25 2.25 0 0 0 .75-1.661V8.706c0-1.081-.738-2.015-1.797-2.158a48.148 48.148 0 0 0-10.906 0C5.238 6.69 4.5 7.625 4.5 8.706v3.783c0 .655.269 1.25.75 1.661m16.5 0a2.25 2.25 0 0 1-2.25 2.25h-12a2.25 2.25 0 0 1-2.25-2.25m16.5 0V12a2.25 2.25 0 0 0-2.25-2.25h-12A2.25 2.25 0 0 0 4.5 12v2.15' },
   { id: 'evaluations', group: 'Développement', label: 'Évaluations', hint: 'Bilans et notes sur 5', icon: 'M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z' },
   { id: 'trainings', group: 'Développement', label: 'Formations', hint: 'Catalogue et participants', icon: 'M4.26 10.147a60.438 60.438 0 0 0-.491 6.347A48.627 48.627 0 0 1 12 20.904a48.627 48.627 0 0 1 8.232-4.41 60.46 60.46 0 0 0-.491-6.347m-15.482 0a50.57 50.57 0 0 0-2.658-.813A59.906 59.906 0 0 1 12 3.493a59.903 59.903 0 0 1 10.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0 1 12 13.489a50.702 50.702 0 0 1 7.74-3.342' },
@@ -2835,6 +2836,209 @@ function AdminDocsTab() {
 }
 
 
+function AttendanceForm({ initial, onSaved, onClose }) {
+  const [f, setF] = useState({
+    date: initial.date ?? '',
+    clock_in: initial.clock_in ? String(initial.clock_in).slice(11, 16) : '',
+    clock_out: initial.clock_out ? String(initial.clock_out).slice(11, 16) : ''
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.grh.attendance.update(initial.id, {
+        date: f.date,
+        clock_in: f.clock_in,
+        clock_out: f.clock_out
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-ink-500">
+        Corriger le pointage de <strong>{initial.employee_name}</strong> (ex. oubli de présence, horaires particuliers).
+        Les pointages corrigés sont signalés dans le tableau.
+      </p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Date *">
+          <input className="input" type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />
+        </Field>
+        <Field label="Heure de début *">
+          <input className="input" type="time" value={f.clock_in} onChange={(e) => setF({ ...f, clock_in: e.target.value })} />
+        </Field>
+        <Field label="Heure de fin">
+          <input className="input" type="time" value={f.clock_out} onChange={(e) => setF({ ...f, clock_out: e.target.value })} />
+        </Field>
+      </div>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={saving || !f.date || !f.clock_in}>
+          {saving ? 'Enregistrement…' : 'Enregistrer la correction'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const attHm = (v) => String(v || '').slice(11, 16);
+const attDuration = (a) => {
+  const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+  const e = new Date(String(a.clock_out || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+  if (isNaN(s) || isNaN(e) || e < s) return '';
+  const m = Math.round((e - s) / 60000);
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return h > 0 ? `${h} h ${String(r).padStart(2, '0')}` : `${r} min`;
+};
+
+function AttendanceTab({ employees }) {
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [fEmp, setFEmp] = useState('');
+  const [rows, setRows] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const load = useCallback(() => {
+    const p = {};
+    if (/^\d{4}-\d{2}$/.test(month)) p.month = month;
+    if (fEmp) p.employee_id = fEmp;
+    api.grh.attendance.list(p).then(setRows).catch((e) => setError(e.message));
+  }, [month, fEmp]);
+  useEffect(() => { load(); }, [load]);
+
+  const removeRow = async (r) => {
+    if (!confirm(`Supprimer le pointage de ${r.employee_name} du ${fmtDate(r.date)} ?`)) return;
+    try {
+      await api.grh.attendance.remove(r.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const exportCsv = async () => {
+    try {
+      setMsg('');
+      await api.grh.attendance.exportCsv(month);
+      setMsg('✓ Export CSV téléchargé.');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const distinctEmps = new Set(rows.map((r) => r.employee_id)).size;
+  const totalMin = rows.reduce((acc, r) => {
+    const s = new Date(String(r.clock_in || r.last_seen).replace(' ', 'T') + 'Z').getTime();
+    const e = new Date(String(r.clock_out || r.last_seen).replace(' ', 'T') + 'Z').getTime();
+    return acc + (isNaN(s) || isNaN(e) || e < s ? 0 : Math.round((e - s) / 60000));
+  }, 0);
+
+  return (
+    <div className="space-y-5">
+      <p className="rounded-2xl border border-accent-200 bg-accent-50 px-5 py-3.5 text-sm font-semibold text-accent-900">
+        Pointage automatique : l’heure de début est la première activité de la journée dans « Mon espace » de l’employé ;
+        l’heure de fin est sa dernière activité. Vous pouvez corriger chaque pointage ou l’exporter.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white p-3 ring-1 ring-ink-950/5">
+        <label className="px-1 text-sm font-bold text-ink-500">Mois</label>
+        <input type="month" className="input !w-44 !py-2.5" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <select className="input !w-56 !py-2.5 text-sm" value={fEmp} onChange={(e) => setFEmp(e.target.value)}>
+          <option value="">Tous les employés</option>
+          {employees.map((e) => (
+            <option key={e.id} value={e.id}>{e.full_name}</option>
+          ))}
+        </select>
+        <button className="btn-ghost !px-4 !py-2 text-sm" onClick={exportCsv} disabled={rows.length === 0}>Export CSV</button>
+        <div className="ml-auto flex flex-wrap gap-2 text-xs font-bold text-ink-500">
+          <span className="rounded-full bg-brand-50 px-3 py-1.5 text-brand-700">{rows.length} jour(s) pointé(s)</span>
+          <span className="rounded-full bg-brand-50 px-3 py-1.5 text-brand-700">{distinctEmps} employé(s)</span>
+          <span className="rounded-full bg-accent-100 px-3 py-1.5 text-accent-800">
+            Total : {Math.floor(totalMin / 60)} h {String(totalMin % 60).padStart(2, '0')}
+          </span>
+        </div>
+      </div>
+
+      {msg && <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+
+      <GrhSection title={`Pointages — ${monthLabelFr(month)}`} padded={false}>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
+              <tr>
+                <th className="px-6 py-3.5">Date</th>
+                <th className="px-6 py-3.5">Employé</th>
+                <th className="px-6 py-3.5">Début</th>
+                <th className="px-6 py-3.5">Fin</th>
+                <th className="px-6 py-3.5">Durée</th>
+                <th className="px-6 py-3.5">Type</th>
+                <th className="px-6 py-3.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const ongoing = r.date === today && !r.clock_out;
+                return (
+                  <tr key={r.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
+                    <td className="px-6 py-4 font-bold text-ink-700">{fmtDate(r.date)}</td>
+                    <td className="px-6 py-4">
+                      <p className="font-semibold text-ink-900">{r.employee_name}</p>
+                      <p className="text-xs text-ink-400">{r.employee_position || ''}</p>
+                    </td>
+                    <td className="px-6 py-4 font-mono text-ink-700">{attHm(r.clock_in) || '—'}</td>
+                    <td className="px-6 py-4 font-mono text-ink-700">
+                      {ongoing
+                        ? <span className="font-bold text-accent-800">{attHm(r.last_seen)} (en cours)</span>
+                        : attHm(r.clock_out || r.last_seen) || '—'}
+                    </td>
+                    <td className="px-6 py-4 font-bold text-brand-700">{attDuration(r) || '—'}</td>
+                    <td className="px-6 py-4">
+                      {r.corrected
+                        ? <span className="rounded-full bg-accent-100 px-3 py-1 text-xs font-bold text-accent-800">Corrigé</span>
+                        : <span className="rounded-full bg-ink-100 px-3 py-1 text-xs font-bold text-ink-500">Automatique</span>}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex justify-end gap-1.5">
+                        <button onClick={() => setModal(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                          Corriger
+                        </button>
+                        <button onClick={() => removeRow(r)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                          ✕
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {rows.length === 0 && (
+          <p className="py-12 text-center text-ink-400">
+            Aucun pointage pour {monthLabelFr(month)} — les présences apparaissent dès qu’un employé utilise son espace de travail.
+          </p>
+        )}
+      </GrhSection>
+
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal ? `Corriger le pointage — ${modal.employee_name}` : ''}>
+        {modal && <AttendanceForm initial={modal} onSaved={load} onClose={() => setModal(null)} />}
+      </Modal>
+    </div>
+  );
+}
+
 export default function GrhAdmin() {
   const isSuper = getSavedUser()?.role === 'super_admin';
   const [tab, setTab] = useState('overview');
@@ -3265,6 +3469,10 @@ export default function GrhAdmin() {
 
       {activeId === 'payroll' && isSuper && (
         <PayrollTab employees={employees} onChanged={loadAll} />
+      )}
+
+      {activeId === 'attendance' && (
+        <AttendanceTab employees={employees} />
       )}
 
       {activeId === 'recruit' && (

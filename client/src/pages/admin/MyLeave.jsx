@@ -214,6 +214,94 @@ function MyChatCard() {
   );
 }
 
+const attHm = (v) => String(v || '').slice(11, 16);
+const attDuration = (a) => {
+  const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+  const e = new Date(String(a.clock_out || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+  if (isNaN(s) || isNaN(e) || e < s) return '';
+  const m = Math.round((e - s) / 60000);
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return h > 0 ? `${h} h ${String(r).padStart(2, '0')}` : `${r} min`;
+};
+
+function MyPresenceCard() {
+  const [rows, setRows] = useState([]);
+
+  const load = useCallback(() => {
+    api.me.employee.attendance().then(setRows).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const todayRow = rows.find((r) => r.date === today);
+  const ongoing = todayRow && !todayRow.clock_out;
+  const recent = rows.slice(1, 15);
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 bg-cream/70 px-6 py-4">
+        <div>
+          <h3 className="font-display text-lg font-bold text-ink-900">⏱ Ma présence</h3>
+          <p className="text-xs text-ink-400">
+            Pointée automatiquement pendant votre temps dans cet espace de travail.
+          </p>
+        </div>
+        {todayRow && (
+          <span className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${ongoing ? 'bg-brand-600 text-white' : 'bg-brand-100 text-brand-700'}`}>
+            {ongoing ? '● En poste' : 'Journée terminée'}
+          </span>
+        )}
+      </div>
+
+      {todayRow ? (
+        <div className="grid grid-cols-3 divide-x divide-ink-100 border-b border-ink-100 bg-white text-center">
+          <div className="px-3 py-4">
+            <p className="font-display text-xl font-extrabold text-brand-700">{attHm(todayRow.clock_in)}</p>
+            <p className="mt-0.5 text-[11px] font-bold tracking-wide text-ink-400 uppercase">Début</p>
+          </div>
+          <div className="px-3 py-4">
+            <p className={`font-display text-xl font-extrabold ${ongoing ? 'text-accent-800' : 'text-brand-700'}`}>
+              {ongoing ? attHm(todayRow.last_seen) : attHm(todayRow.clock_out || todayRow.last_seen)}
+            </p>
+            <p className="mt-0.5 text-[11px] font-bold tracking-wide text-ink-400 uppercase">
+              {ongoing ? 'Dernière activité' : 'Fin'}
+            </p>
+          </div>
+          <div className="px-3 py-4">
+            <p className="font-display text-xl font-extrabold text-ink-900">{attDuration(todayRow) || '—'}</p>
+            <p className="mt-0.5 text-[11px] font-bold tracking-wide text-ink-400 uppercase">
+              {ongoing ? 'Temps passé' : 'Durée'}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="border-b border-ink-100 px-6 py-6 text-center text-sm text-ink-400">
+          Aucun pointage aujourd'hui — votre première activité dans cet espace marquera votre début de journée.
+        </p>
+      )}
+
+      {recent.length > 0 && (
+        <ul>
+          {recent.map((r) => (
+            <li key={r.id} className="flex items-center justify-between gap-3 border-b border-ink-50 px-6 py-3 last:border-0">
+              <span className="text-sm font-semibold text-ink-700">{fmtDate(r.date)}</span>
+              <span className="font-mono text-xs text-ink-500">
+                {attHm(r.clock_in)} → {attHm(r.clock_out || r.last_seen)}
+              </span>
+              <span className="rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-bold text-brand-700">{attDuration(r) || '—'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function MyLeave() {
   const me = getSavedUser();
   const [employee, setEmployee] = useState(null);
@@ -239,6 +327,19 @@ export default function MyLeave() {
       });
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Battement de présence : renouvelle l'heure de fin pendant le temps passé dans l'espace
+  useEffect(() => {
+    if (!employee) return;
+    const ping = () => api.me.employee.attendancePing().catch(() => {});
+    ping();
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') ping();
+    }, 5 * 60 * 1000);
+    const onVis = () => { if (document.visibilityState === 'visible') ping(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [employee]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -269,7 +370,7 @@ export default function MyLeave() {
 
   return (
     <div>
-      <PageTitle title="Mon espace" subtitle="Vos congés, vos tâches, la messagerie RH et les annonces — lié à votre compte par votre adresse email." />
+      <PageTitle title="Mon espace" subtitle="Votre présence, vos congés, vos tâches, la messagerie RH et les annonces — lié à votre compte par votre adresse email." />
 
       {notLinked ? (
         <div className="mx-auto max-w-xl rounded-3xl border border-dashed border-ink-200 bg-white p-10 text-center">
@@ -300,6 +401,8 @@ export default function MyLeave() {
                 {employee.department && <p className="mt-1 text-xs font-semibold text-ink-400">🏢 {employee.department}</p>}
               </div>
             </div>
+
+            <MyPresenceCard />
 
             <div className="card p-7">
               <h3 className="mb-5 font-display text-lg font-bold text-ink-900">Nouvelle demande de congé</h3>

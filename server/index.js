@@ -1583,6 +1583,78 @@ app.delete('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Présences : pointage automatique (début/fin depuis l'activité dans « Mon espace ») ----------
+const ATTENDANCE_SQL = `
+  SELECT a.*, e.full_name AS employee_name, e.position AS employee_position, e.status AS employee_status
+  FROM grh_attendance a
+  JOIN grh_employees e ON e.id = a.employee_id
+`;
+const parseHm = (v) => /^\d{1,2}:\d{2}$/.test(String(v || '')) ? String(v).padStart(5, '0') : null;
+
+app.get('/api/admin/grh/attendance', ...GRH, (req, res) => {
+  const { month, employee_id, q } = req.query;
+  let sql = ATTENDANCE_SQL;
+  const where = [];
+  const params = [];
+  if (month && /^\d{4}-\d{2}$/.test(month)) { where.push('a.date >= ? AND a.date < ?'); params.push(`${month}-01`, `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)) , 1)).toISOString().slice(0, 7)}`); }
+  else { const today = new Date().toISOString().slice(0, 10); where.push('a.date >= ?'); params.push(today.slice(0, 8) + '01'); }
+  if (employee_id) { where.push('a.employee_id = ?'); params.push(employee_id); }
+  if (q) { where.push('e.full_name LIKE ?'); params.push(`%${q}%`); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY a.date DESC, e.full_name';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.put('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
+  const a = db.prepare('SELECT * FROM grh_attendance WHERE id = ?').get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Pointage introuvable' });
+  const b = req.body || {};
+  let date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? String(b.date) : a.date;
+  let clockIn = a.clock_in, clockOut = a.clock_out, corrected = a.corrected;
+  if (date !== a.date) {
+    clockIn = clockIn ? `${date} ${String(clockIn).slice(11, 19)}` : clockIn;
+    clockOut = clockOut ? `${date} ${String(clockOut).slice(11, 19)}` : clockOut;
+  }
+  if (b.clock_in !== undefined || b.clock_out !== undefined) {
+    const inT = parseHm(b.clock_in);
+    const outT = b.clock_out === '' || b.clock_out == null ? null : parseHm(b.clock_out);
+    if (!inT) return res.status(400).json({ error: 'Heure de début invalide (format HH:MM)' });
+    if (outT && outT <= inT) return res.status(400).json({ error: 'L’heure de fin doit être postérieure à l’heure de début' });
+    clockIn = `${date} ${inT}:00`;
+    clockOut = outT ? `${date} ${outT}:00` : (a.clock_out || `${date} ${inT}:00`);
+    corrected = 1;
+  }
+  const dup = db.prepare('SELECT id FROM grh_attendance WHERE employee_id = ? AND date = ? AND id != ?').get(a.employee_id, date, a.id);
+  if (dup) return res.status(409).json({ error: 'Cet employé a déjà un pointage pour cette date' });
+  db.prepare('UPDATE grh_attendance SET date = ?, clock_in = ?, clock_out = ?, corrected = ? WHERE id = ?')
+    .run(date, clockIn, clockOut, corrected, a.id);
+  res.json(db.prepare(`${ATTENDANCE_SQL} WHERE a.id = ?`).get(a.id));
+});
+
+app.delete('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_attendance WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/grh/attendance/export', ...GRH, (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : new Date().toISOString().slice(0, 7);
+  const end = `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 7)}`;
+  const rows = db.prepare(`${ATTENDANCE_SQL} WHERE a.date >= ? AND a.date < ? ORDER BY a.date, e.full_name`).all(`${month}-01`, end);
+  const hm = (v) => String(v || '').slice(11, 16);
+  const dur = (a) => {
+    const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+    const e = new Date(String(a.clock_out || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+    const m = Math.max(0, Math.round((e - s) / 60000));
+    return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+  };
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = ['Date;Employé;Fonction;Début;Fin;Durée;Corrigé'];
+  rows.forEach((r) => lines.push([r.date, r.employee_name, r.employee_position || '', hm(r.clock_in), hm(r.clock_out || r.last_seen), dur(r), r.corrected ? 'Oui' : 'Non'].map(esc).join(';')));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="presences-${month}.csv"`);
+  res.send('\uFEFF' + lines.join('\n'));
+});
+
 // ---------- Paie (super admin uniquement : les salaires sont confidentiels) ----------
 const PAY = [authRequired, requireRole('super'), requireModule('grh_enabled', 'GRH')];
 const validMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
@@ -2755,7 +2827,19 @@ const selfEmployeeGuard = (req, res, next) => {
   const emp = selfEmployee(req);
   if (!emp) return res.status(404).json({ error: 'Aucun dossier employé n’est lié à votre adresse email.' });
   req.employee = emp;
+  recordPresence(emp);
   next();
+};
+
+// Pointage automatique : 1ʳᵉ activité de la journée = début, dernière activité = fin (heure locale serveur, UTC)
+const recordPresence = (emp) => {
+  try {
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    db.prepare(`INSERT INTO grh_attendance (employee_id, date, clock_in, last_seen)
+      VALUES (?, date('now'), ?, ?)
+      ON CONFLICT(employee_id, date) DO UPDATE SET last_seen = excluded.last_seen`)
+      .run(emp.id, now, now);
+  } catch { /* non bloquant */ }
 };
 app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
   const emp = req.employee;
@@ -2765,6 +2849,19 @@ app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), s
 app.get('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
   res.json(db.prepare('SELECT * FROM grh_leaves WHERE employee_id = ? ORDER BY start_date DESC').all(req.employee.id));
 });
+app.get('/api/me/employee/attendance', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  res.json(db.prepare(`SELECT * FROM grh_attendance
+    WHERE employee_id = ? AND date >= date('now', '-60 days')
+    ORDER BY date DESC`).all(req.employee.id));
+});
+
+// Battement de « Mon espace » : renouvelle l'heure de fin tant que l'employé est dans son espace de travail
+app.post('/api/me/attendance/ping', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  recordPresence(req.employee);
+  const row = db.prepare('SELECT * FROM grh_attendance WHERE employee_id = ? AND date = date(\'now\')').get(req.employee.id);
+  res.json({ ok: true, ...row });
+});
+
 app.get('/api/me/employee/announcements', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   res.json(db.prepare(`

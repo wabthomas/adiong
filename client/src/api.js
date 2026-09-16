@@ -399,6 +399,30 @@ export const api = {
       create: (b) => req('/api/admin/grh/leaves', { method: 'POST', body: b, auth: true }),
       update: (id, b) => req(`/api/admin/grh/leaves/${id}`, { method: 'PUT', body: b, auth: true }),
       remove: (id) => req(`/api/admin/grh/leaves/${id}`, { method: 'DELETE', auth: true })
+    },
+    attendance: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        for (const k of ['month', 'employee_id', 'q']) if (params[k]) q.set(k, params[k]);
+        const s = q.toString();
+        return req(`/api/admin/grh/attendance${s ? `?${s}` : ''}`, { auth: true });
+      },
+      update: (id, b) => req(`/api/admin/grh/attendance/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/grh/attendance/${id}`, { method: 'DELETE', auth: true }),
+      exportCsv: async (month) => {
+        const t = getToken();
+        const res = await fetch(`/api/admin/grh/attendance/export?month=${encodeURIComponent(month)}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Export impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `presences-${month}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
     }
   },
   pos: {
@@ -513,7 +537,9 @@ export const api = {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 4000);
-      }
+      },
+      attendance: () => req('/api/me/employee/attendance', { auth: true }),
+      attendancePing: () => req('/api/me/attendance/ping', { method: 'POST', body: {}, auth: true })
     },
     chat: {
       list: () => req('/api/me/chat', { auth: true }),

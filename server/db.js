@@ -487,5 +487,17 @@ migrate("ALTER TABLE donations ADD COLUMN proof TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE donations ADD COLUMN proof_name TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE donations ADD COLUMN tx_ref TEXT NOT NULL DEFAULT ''");
 migrate("CREATE UNIQUE INDEX IF NOT EXISTS idx_donations_reference ON donations(reference) WHERE reference != ''");
+migrate(`CREATE TABLE IF NOT EXISTS grh_attendance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  date TEXT NOT NULL,
+  clock_in TEXT NOT NULL DEFAULT '',
+  last_seen TEXT NOT NULL DEFAULT '',
+  clock_out TEXT NOT NULL DEFAULT '',
+  corrected INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(employee_id, date)
+)`);
+migrate("CREATE INDEX IF NOT EXISTS idx_grh_attendance_date ON grh_attendance(date)");
 
 export default db;
