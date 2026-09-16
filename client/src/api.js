@@ -152,6 +152,10 @@ export const api = {
     get: () => req('/api/admin/modules', { auth: true }),
     update: (b) => req('/api/admin/modules', { method: 'PUT', body: b, auth: true })
   },
+  permissions: {
+    get: () => req('/api/admin/permissions', { auth: true }),
+    save: (matrix) => req('/api/admin/permissions', { method: 'PUT', body: { matrix }, auth: true })
+  },
   adminSecurity: {
     events: () => req('/api/admin/security', { auth: true })
   },

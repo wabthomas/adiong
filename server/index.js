@@ -256,9 +256,31 @@ const ROLES = {
   pos: ['super_admin', 'admin', 'cashier'],
   any: ['super_admin', 'admin', 'editor', 'viewer', 'cashier']
 };
+// Droits configurables par rôle (matrice super admin) — le super admin conserve toujours tout
+const PERM_AREAS = [
+  { id: 'backoffice', label: 'Back office', desc: 'Tableau de bord, dons, messages, mon espace' },
+  { id: 'content', label: 'Contenu', desc: 'Articles, causes, campagnes, partenaires, médiathèque' },
+  { id: 'settings', label: 'Paramètres & utilisateurs', desc: 'Paramètres du site, comptes et invitations' },
+  { id: 'grh', label: 'GRH (Ressources humaines)', desc: 'Équipe, congés, présences, projets, tâches, paie' },
+  { id: 'pos', label: 'Point de vente', desc: 'Produits, ventes, stock et boutique' }
+];
+const AREA_GROUP = { backoffice: 'any', content: 'content', settings: 'admin', grh: 'hr', pos: 'pos' };
+const GROUP_AREA = Object.fromEntries(Object.entries(AREA_GROUP).map(([a, g]) => [g, a]));
+const ROLE_LIST = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
+const permEnabled = (role, area) => {
+  if (role === 'super_admin') return true;
+  const row = db.prepare('SELECT enabled FROM role_permissions WHERE role = ? AND area = ?').get(role, area);
+  return row ? row.enabled === 1 : false;
+};
 const requireRole = (group) => (req, res, next) => {
-  if (!ROLES[group].includes(req.user?.role))
+  const area = GROUP_AREA[group];
+  const inGroup = ROLES[group].includes(req.user?.role);
+  // Hors groupe : accès possible uniquement si la matrice du super admin l'accorde
+  if (!inGroup && !(area && permEnabled(req.user.role, area)))
     return res.status(403).json({ error: 'Accès refusé : rôle insuffisant' });
+  // Dans le groupe : la matrice peut retirer le droit
+  if (inGroup && area && !permEnabled(req.user.role, area))
+    return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle (paramétrage du super admin)' });
   next();
 };
 // Garde d'un module optionnel (activé/désactivé par le super admin)
@@ -708,7 +730,7 @@ app.post('/api/donations/proof', proofLimiter, proofUpload.single('file'), (req,
   res.json({ ok: true, status: 'preuve', reference: d.reference });
 });
 
-app.get('/api/admin/dashboard', authRequired, (req, res) => {
+app.get('/api/admin/dashboard', authRequired, requireRole('any'), (req, res) => {
   const q = (s) => db.prepare(s).get();
   res.json({
     articles: q('SELECT COUNT(*) n FROM articles').n,
@@ -1243,6 +1265,37 @@ app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => 
     maintenance_message: getSetting('maintenance_message') || '',
     is_super: true
   });
+});
+
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
+app.get('/api/admin/permissions', authRequired, (req, res) => {
+  res.json({
+    areas: PERM_AREAS,
+    matrix: ROLE_LIST.map((role) => ({
+      role,
+      locked: role === 'super_admin',
+      permissions: PERM_AREAS.map((a) => ({ area: a.id, enabled: permEnabled(role, a.id) }))
+    })),
+    is_super: req.user.role === 'super_admin'
+  });
+});
+
+app.put('/api/admin/permissions', authRequired, requireRole('super'), (req, res) => {
+  const m = req.body?.matrix;
+  if (!m || typeof m !== 'object') return res.status(400).json({ error: 'Permission(s) invalide(s)' });
+  const stmt = db.prepare('INSERT INTO role_permissions (role, area, enabled) VALUES (?, ?, ?) ON CONFLICT(role, area) DO UPDATE SET enabled = excluded.enabled');
+  let changed = 0;
+  for (const [role, areas] of Object.entries(m)) {
+    if (role === 'super_admin') return res.status(400).json({ error: 'Le super administrateur conserve toujours tous les droits' });
+    if (!ROLES.any.includes(role)) return res.status(400).json({ error: `Rôle inconnu : ${role}` });
+    if (!areas || typeof areas !== 'object') continue;
+    for (const [area, on] of Object.entries(areas)) {
+      if (!PERM_AREAS.some((a) => a.id === area)) return res.status(400).json({ error: `Zone inconnue : ${area}` });
+      stmt.run(role, area, on ? 1 : 0);
+      changed++;
+    }
+  }
+  res.json({ ok: true, changed });
 });
 
 // ---------- GRH (rôles admin+super, module activable) ----------

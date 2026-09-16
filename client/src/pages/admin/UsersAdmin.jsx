@@ -15,6 +15,126 @@ const INVITE_STATE = {
 };
 const emptyInvite = { email: '', role: 'editor', label: '', days: 7 };
 
+function PermissionsCard() {
+  const me = getSavedUser();
+  const isSuper = me?.role === 'super_admin';
+  const [areas, setAreas] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [draft, setDraft] = useState(null);
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    api.permissions.get().then((d) => {
+      setAreas(d.areas);
+      setRows(d.matrix);
+      setDraft(d.matrix.map((r) => ({ ...r, permissions: r.permissions.map((p) => ({ ...p })) })));
+    }).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = (role, area) =>
+    setDraft((cur) => cur.map((r) =>
+      r.role !== role || r.locked
+        ? r
+        : { ...r, permissions: r.permissions.map((p) => (p.area === area ? { ...p, enabled: !p.enabled } : p)) }
+    ));
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    setMsg('');
+    try {
+      const matrix = {};
+      draft.filter((r) => !r.locked).forEach((r) => {
+        matrix[r.role] = Object.fromEntries(r.permissions.map((p) => [p.area, p.enabled]));
+      });
+      await api.permissions.save(matrix);
+      setMsg('✓ Permissions enregistrées — appliquées immédiatement.');
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const reset = () => {
+    setDraft(rows.map((r) => ({ ...r, permissions: r.permissions.map((p) => ({ ...p })) })));
+    setMsg('');
+    setError('');
+  };
+
+  if (!draft) return null;
+
+  return (
+    <div className="card mt-6 overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-cream/70 px-6 py-4">
+        <div>
+          <h3 className="font-display text-lg font-bold text-ink-900">Droits d'accès par rôle</h3>
+          <p className="mt-0.5 text-sm text-ink-400">
+            Cochez les zones accessibles à chaque rôle. Le super admin conserve toujours tous les droits.
+          </p>
+        </div>
+        {isSuper && (
+          <div className="flex gap-2">
+            <button className="btn-ghost !px-4 !py-2 text-sm" onClick={reset}>Réinitialiser</button>
+            <button className="btn-primary !px-5 !py-2 text-sm" onClick={save} disabled={saving}>
+              {saving ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        )}
+      </div>
+      {!isSuper && (
+        <p className="border-b border-ink-100 bg-accent-50 px-6 py-3 text-sm font-semibold text-accent-900">
+          Lecture seule — seul le super administrateur peut modifier les permissions.
+        </p>
+      )}
+      {msg && <p className="border-b border-ink-100 bg-brand-50 px-6 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
+      {error && <p className="border-b border-ink-100 bg-red-50 px-6 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] text-left text-sm">
+          <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
+            <tr>
+              <th className="px-6 py-3.5">Rôle</th>
+              {areas.map((a) => (
+                <th key={a.id} className="px-4 py-3.5 text-center" title={a.desc}>{a.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {draft.map((r) => (
+              <tr key={r.role} className="border-b border-ink-50 last:border-0">
+                <td className="px-6 py-3.5">
+                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${ROLE_STYLES[r.role] || 'bg-ink-100 text-ink-600'}`}>
+                    {ROLE_LABELS[r.role] || r.role}
+                  </span>
+                  {r.locked && (
+                    <span className="ml-2 rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-bold text-ink-500">accès complet</span>
+                  )}
+                </td>
+                {areas.map((a) => {
+                  const p = r.permissions.find((x) => x.area === a.id);
+                  return (
+                    <td key={a.id} className="px-4 py-3.5 text-center">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5 accent-[#0f3a88]"
+                        checked={!!p?.enabled}
+                        disabled={r.locked || !isSuper}
+                        onChange={() => toggle(r.role, a.id)}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function UsersAdmin() {
   const [users, setUsers] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -229,6 +349,8 @@ export default function UsersAdmin() {
           </table>
         </div>
       </div>
+
+      <PermissionsCard />
 
       <div className="card mt-6 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-cream/70 px-6 py-4">

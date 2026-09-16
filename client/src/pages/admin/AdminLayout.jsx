@@ -33,6 +33,23 @@ function MiniIcon({ d, className = 'h-5 w-5' }) {
 
 const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation', cashier: 'Caissier' };
 
+const ITEM_AREAS = {
+  '/admin': 'backoffice',
+  '/admin/articles': 'content',
+  '/admin/causes': 'content',
+  '/admin/campagnes': 'content',
+  '/admin/partenaires': 'content',
+  '/admin/medias': 'content',
+  '/admin/dons': 'backoffice',
+  '/admin/messages': 'backoffice',
+  '/admin/mon-espace': 'backoffice',
+  '/admin/profil': 'backoffice',
+  '/admin/grh': 'grh',
+  '/admin/pos': 'pos',
+  '/admin/utilisateurs': 'settings',
+  '/admin/parametres': 'settings'
+};
+
 function currentPage(pathname) {
   if (pathname === '/admin/profil') return { label: 'Mon profil' };
   return [...items]
@@ -49,6 +66,7 @@ export default function AdminLayout() {
   const [savedUser, setMe] = useState(getSavedUser);
   const [grhEnabled, setGrhEnabled] = useState(false);
   const [posEnabled, setPosEnabled] = useState(false);
+  const [permMap, setPermMap] = useState(null);
   const menuRef = useRef(null);
   const role = savedUser?.role || 'admin';
   const page = currentPage(pathname);
@@ -77,6 +95,15 @@ export default function AdminLayout() {
   }, [role]);
 
   useEffect(() => {
+    api.permissions.get()
+      .then((d) => {
+        const mine = d.matrix.find((r) => r.role === role);
+        setPermMap(mine ? Object.fromEntries(mine.permissions.map((p) => [p.area, p.enabled])) : null);
+      })
+      .catch(() => setPermMap(null));
+  }, [role]);
+
+  useEffect(() => {
     setOpen(false);
     setMenu(false);
   }, [pathname]);
@@ -92,7 +119,8 @@ export default function AdminLayout() {
   const visibleItems = items
     .filter((it) => (it.roles || ALL_ROLES).includes(role))
     .filter((it) => !it.grh || grhEnabled)
-    .filter((it) => !it.pos || posEnabled);
+    .filter((it) => !it.pos || posEnabled)
+    .filter((it) => permMap === null || permMap[ITEM_AREAS[it.to]] !== false);
 
   if (!authed) return null;
 
@@ -128,6 +156,11 @@ export default function AdminLayout() {
             {it.label}
           </NavLink>
         ))}
+        {visibleItems.length === 0 && permMap !== null && (
+          <p className="px-3 py-4 text-xs font-semibold leading-relaxed text-ink-400">
+            Aucun accès accordé à votre rôle — contactez le super administrateur.
+          </p>
+        )}
       </nav>
     </div>
   );

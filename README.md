@@ -59,9 +59,13 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
   - **Utilisateurs & rôles** : création/édition/suppression de comptes. Rôles :
     `super_admin` (tout + modules + salaires), `admin` (tout sauf modules/salaires),
     `editor` (articles, causes, campagnes, médiathèque), `viewer` (consultation).
+    **Droits d'accès par rôle** : matrice configurable par le super admin (rôles × zones
+    *Back office / Contenu / Paramètres & utilisateurs / GRH / Point de vente*) — elle peut retirer
+    ou accorder finement l'accès à chaque zone (le menu et l'API s'adaptent ; le super admin conserve
+    toujours tous les droits et seul lui peut modifier la matrice).
     Garde-fous : impossible de supprimer/rétrograder le dernier compte privilégié, ni de supprimer son
     propre compte ; seul un super admin peut donner le rôle super admin.
-    Le menu s'adapte au rôle et le rôle est re-vérifié côté API à chaque requête.
+    Le menu s'adapte au rôle + aux permissions et le rôle est re-vérifié côté API à chaque requête.
   - **Paramètres** : **100 % du contenu du site est éditable** — 7 onglets :
     - *Identité & contact* : nom, slogan, adresse, téléphones, email, réseaux sociaux, copyright
     - *Logo, favicone & SEO* : logo du site (nav + footer), favicone (onglet navigateur), SEO global
@@ -140,12 +144,16 @@ Module **interne** (jamais visible sur le site public) de gestion des ressources
 
 **Activation / désactivation** : réservée au **super administrateur** via
 *Admin → Paramètres → Modules (super admin)*. La désactivation masque le menu et ferme l'API GRH
-(les données sont conservées). Le menu GRH s'affiche pour les rôles super admin et administrateur.
+(les données sont conservées). Le menu GRH s'affiche par défaut pour les rôles super admin et
+administrateur — et peut être élargi à d'autres rôles via la matrice des droits d'accès
+(*Utilisateurs → Droits d'accès par rôle*).
 
 **Rôles** : `super_admin` (tout + activation des modules + salaires) > `admin` (contenu,
 paramètres, utilisateurs, GRH, point de vente) > `editor` (contenu) > `viewer` (consultation).
 Le compte initial `admin@adiong.org` est super admin. Seul un super admin peut créer/donner le rôle
 super admin ; il doit toujours rester au moins un compte privilégié (super admin ou admin).
+Ces droits de base sont des **défauts** : le super admin affine ensuite chaque rôle dans la matrice
+des droits d'accès (page Utilisateurs).
 
 ## Module Point de vente (POS) + stock + boutique en ligne
 

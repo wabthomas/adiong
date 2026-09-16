@@ -499,5 +499,20 @@ migrate(`CREATE TABLE IF NOT EXISTS grh_attendance (
   UNIQUE(employee_id, date)
 )`);
 migrate("CREATE INDEX IF NOT EXISTS idx_grh_attendance_date ON grh_attendance(date)");
+migrate(`CREATE TABLE IF NOT EXISTS role_permissions (
+  role TEXT NOT NULL,
+  area TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (role, area)
+)`);
+// Droits par défaut : identiques aux rôles codés en dur (seed une seule fois)
+const permSeed = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
+for (const [role, area, on] of [
+  ['super_admin', 'backoffice', 1], ['super_admin', 'content', 1], ['super_admin', 'settings', 1], ['super_admin', 'grh', 1], ['super_admin', 'pos', 1],
+  ['admin', 'backoffice', 1], ['admin', 'content', 1], ['admin', 'settings', 1], ['admin', 'grh', 1], ['admin', 'pos', 1],
+  ['editor', 'backoffice', 1], ['editor', 'content', 1], ['editor', 'settings', 0], ['editor', 'grh', 0], ['editor', 'pos', 0],
+  ['viewer', 'backoffice', 1], ['viewer', 'content', 0], ['viewer', 'settings', 0], ['viewer', 'grh', 0], ['viewer', 'pos', 0],
+  ['cashier', 'backoffice', 1], ['cashier', 'content', 0], ['cashier', 'settings', 0], ['cashier', 'grh', 0], ['cashier', 'pos', 1]
+]) permSeed.run(role, area, on);
 
 export default db;
