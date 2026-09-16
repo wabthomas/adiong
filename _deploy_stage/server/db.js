@@ -414,5 +414,6 @@ migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAU
 migrate("ALTER TABLE grh_employees ADD COLUMN job_description TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE grh_leaves ADD COLUMN days INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE stock_products ADD COLUMN barcode TEXT NOT NULL DEFAULT ''");
+migrate("CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_products_barcode_unique ON stock_products(barcode) WHERE barcode != ''");
 
 export default db;
