@@ -68,7 +68,6 @@ export const api = {
   campaigns: () => req('/api/public/campaigns'),
   campaign: (slug) => req(`/api/public/campaigns/${slug}`),
   partners: () => req('/api/public/partners'),
-  modules: () => req('/api/public/modules'),
   shop: () => req('/api/public/shop'),
   shopOrder: (b) => req('/api/public/shop/orders', { method: 'POST', body: b }),
   contact: (body) => req('/api/contact', { method: 'POST', body }),
@@ -141,6 +140,7 @@ export const api = {
     remove: (id) => req(`/api/admin/users/${id}`, { method: 'DELETE', auth: true })
   },
   modules: {
+    public: () => req('/api/public/modules'),
     get: () => req('/api/admin/modules', { auth: true }),
     update: (b) => req('/api/admin/modules', { method: 'PUT', body: b, auth: true })
   },

@@ -18,6 +18,8 @@ import Shop from './pages/Shop.jsx';
 import MemberCard from './pages/MemberCard.jsx';
 import MemberPrintCard from './pages/MemberPrintCard.jsx';
 import NotFound from './pages/NotFound.jsx';
+import Maintenance from './pages/Maintenance.jsx';
+import { useSite } from './hooks/useSite.jsx';
 const AdminLogin = lazy(() => import('./pages/admin/AdminLogin.jsx'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
 const Dashboard = lazy(() => import('./pages/admin/Dashboard.jsx'));
@@ -67,48 +69,91 @@ function AdminPage({ children }) {
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    try {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    } catch {
+      window.scrollTo(0, 0);
+    }
   }, [pathname]);
   return null;
+}
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error('[AppErrorBoundary]', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="grid min-h-screen place-items-center bg-cream p-8 text-center">
+          <div className="max-w-lg">
+            <p className="font-display text-xl font-bold text-ink-900">Erreur d’affichage</p>
+            <p className="mt-2 text-sm text-ink-500">{String(this.state.error?.message || this.state.error)}</p>
+            <button type="button" className="btn-primary mt-5 text-sm" onClick={() => window.location.reload()}>
+              Recharger
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function PublicGate({ children }) {
+  const { maintenance, maintenanceMessage, site } = useSite();
+  if (maintenance) {
+    return <Maintenance message={maintenanceMessage} site={site} />;
+  }
+  return children;
 }
 
 function Shell() {
   const loc = useLocation();
   return (
-    <div className="flex min-h-screen flex-col">
-      <Navbar />
-      <main className="flex-1">
-        <AnimatePresence mode="wait">
-          <Routes location={loc} key={loc.pathname}>
-            <Route path="/" element={<Home />} />
-            <Route path="/a-propos" element={<About />} />
-            <Route path="/notre-travail" element={<Work />} />
-            <Route path="/notre-travail/:slug" element={<WorkDetail />} />
-            <Route path="/actualites" element={<News />} />
-            <Route path="/actualites/:slug" element={<ArticlePage />} />
-            <Route path="/collectes" element={<Campaigns />} />
-            <Route path="/collectes/:slug" element={<CampaignDetail />} />
-            <Route path="/faire-un-don" element={<Donate />} />
-            <Route path="/contact" element={<Contact />} />
-            <Route path="/boutique" element={<Shop />} />
-            <Route path="/membre/:code" element={<MemberCard />} />
-            <Route path="/membre/:code/carte" element={<MemberPrintCard />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AnimatePresence>
-      </main>
-      <PartnerSlider />
-      <Footer />
-    </div>
+    <PublicGate>
+      <div className="flex min-h-screen flex-col">
+        <Navbar />
+        <main className="flex-1">
+          <AnimatePresence mode="wait">
+            <Routes location={loc} key={loc.pathname}>
+              <Route path="/" element={<Home />} />
+              <Route path="/a-propos" element={<About />} />
+              <Route path="/notre-travail" element={<Work />} />
+              <Route path="/notre-travail/:slug" element={<WorkDetail />} />
+              <Route path="/actualites" element={<News />} />
+              <Route path="/actualites/:slug" element={<ArticlePage />} />
+              <Route path="/collectes" element={<Campaigns />} />
+              <Route path="/collectes/:slug" element={<CampaignDetail />} />
+              <Route path="/faire-un-don" element={<Donate />} />
+              <Route path="/contact" element={<Contact />} />
+              <Route path="/boutique" element={<Shop />} />
+              <Route path="/membre/:code" element={<MemberCard />} />
+              <Route path="/membre/:code/carte" element={<MemberPrintCard />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AnimatePresence>
+        </main>
+        <PartnerSlider />
+        <Footer />
+      </div>
+    </PublicGate>
   );
 }
 
 export default function App() {
   return (
-    <>
+    <AppErrorBoundary>
       <ScrollToTop />
       <Routes>
-        <Route path="/inscription" element={<Suspense fallback={<AdminFallback />}><RegisterPage /></Suspense>} />
+        <Route path="/inscription" element={<PublicGate><Suspense fallback={<AdminFallback />}><RegisterPage /></Suspense></PublicGate>} />
         <Route path="/admin/login" element={<Suspense fallback={<AdminFallback />}><AdminLogin /></Suspense>} />
         <Route path="/admin" element={<Suspense fallback={<AdminFallback />}><AdminLayout /></Suspense>}>
           <Route index element={<AdminPage><Dashboard /></AdminPage>} />
@@ -128,6 +173,6 @@ export default function App() {
         </Route>
         <Route path="/*" element={<Shell />} />
       </Routes>
-    </>
+    </AppErrorBoundary>
   );
 }

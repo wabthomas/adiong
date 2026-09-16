@@ -53,7 +53,10 @@ export default function Home() {
           <div className="absolute inset-0 bg-gradient-to-t from-ink-950/70 via-transparent to-ink-950/40" />
         </motion.div>
 
-        <div className="container-x relative pt-24 pb-10 sm:pt-28 sm:pb-12" style={reduce ? undefined : { opacity }}>
+        <motion.div
+          className="container-x relative pt-24 pb-10 sm:pt-28 sm:pb-12"
+          style={reduce ? undefined : { opacity }}
+        >
           <div className="max-w-2xl">
             <motion.p
               initial={reduce ? false : { opacity: 0, y: 24 }}
@@ -123,7 +126,7 @@ export default function Home() {
               )}
             </motion.div>
           </div>
-        </div>
+        </motion.div>
 
         <motion.div
           initial={reduce ? false : { opacity: 0, y: 24 }}
