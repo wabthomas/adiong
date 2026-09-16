@@ -478,5 +478,13 @@ migrate('ALTER TABLE grh_employees ADD COLUMN annual_days INTEGER NOT NULL DEFAU
 migrate("ALTER TABLE grh_employees ADD COLUMN job_description TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE grh_leaves ADD COLUMN days INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE stock_products ADD COLUMN barcode TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN reference TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN method TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'");
+migrate("ALTER TABLE donations ADD COLUMN is_anonymous INTEGER NOT NULL DEFAULT 0");
+migrate("ALTER TABLE donations ADD COLUMN proof TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN proof_name TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN tx_ref TEXT NOT NULL DEFAULT ''");
+migrate("CREATE UNIQUE INDEX IF NOT EXISTS idx_donations_reference ON donations(reference) WHERE reference != ''");
 
 export default db;

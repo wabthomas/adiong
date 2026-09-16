@@ -114,7 +114,7 @@ setInterval(() => {
 
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, key: (req) => `login:${req.ip}:${String(req.body?.email || '').toLowerCase()}`, message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' });
 const contactLimiter = rateLimit({ windowMs: 60 * 60_000, max: 5, key: (req) => `contact:${req.ip}`, message: 'Trop de messages envoyés depuis votre connexion. Réessayez dans une heure.' });
-const donateLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `donate:${req.ip}`, message: 'Trop de dons enregistrés depuis votre connexion. Réessayez dans une heure.' });
+const donateLimiter = rateLimit({ windowMs: 60 * 60_000, max: 30, key: (req) => `donate:${req.ip}`, message: 'Trop de dons enregistrés depuis votre connexion. Réessayez dans une heure.' });
 const registerLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `register:${req.ip}`, message: 'Trop de tentatives d’inscription. Réessayez plus tard.' });
 
 // Limiteur global de l'API (filet de sécurité anti scan/brute-force)
@@ -160,6 +160,7 @@ const STRING_SETTINGS = [
   'grh_annual_leave_days',
   'site_name','site_tagline','logo','favicon','address','phone1','phone2','email','whatsapp','facebook','twitter',
   'instagram','pinterest','video_url','copyright','footer_credit','currency',
+  'pay_airtel','pay_mpesa','pay_orange','pay_card','pay_note',
   'seo_title','seo_description','seo_keywords','og_image','twitter_handle',
   'hero_image','hero_kicker','hero_title','hero_text','hero_badge_title','hero_badge_sub','about_image',
   'mission_title','mission_text','home_mission_heading',
@@ -571,31 +572,113 @@ app.post('/api/contact', contactLimiter, (req, res) => {
   res.json({ ok: true });
 });
 
+const DONATE_METHODS = { airtel: 'Airtel Money', mpesa: 'M-Pesa', orange: 'Orange Money', carte: 'Carte / virement' };
+const DONATE_STATUSES = ['nouvelle', 'preuve', 'confirmee', 'refusee'];
+
+const newDonationReference = () => {
+  for (let i = 0; i < 5; i++) {
+    const ref = `DON-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    if (!db.prepare('SELECT id FROM donations WHERE reference = ?').get(ref)) return ref;
+  }
+  return `DON-${Date.now().toString(36).toUpperCase()}`;
+};
+
+const donationPayNumber = (method) =>
+  method === 'airtel' ? getSetting('pay_airtel') : method === 'mpesa' ? getSetting('pay_mpesa') : method === 'orange' ? getSetting('pay_orange') : '';
+
 app.post('/api/donate', donateLimiter, (req, res) => {
   const b = req.body || {};
   if (isSpam(b)) return res.json({ ok: true });
-  const name = clip(b.name, 100).trim();
+  const anonymous = b.anonymous === true || b.anonymous === '1' || b.anonymous === 'true';
+  const name = anonymous ? '' : clip(b.name, 100).trim();
   const email = clip(b.email, 120).trim();
   const amount = Number(b.amount);
   const message = clip(b.message, 500).trim();
   const campaignId = b.campaignId ? Number(b.campaignId) : null;
-  if (!name || !amount || amount <= 0 || amount > 1000000) return res.status(400).json({ error: 'Nom et montant sont requis' });
+  const method = DONATE_METHODS[b.method] ? b.method : '';
+  if (!anonymous && !name) return res.status(400).json({ error: 'Nom requis (ou don anonyme)' });
+  if (!amount || amount <= 0 || amount > 1000000) return res.status(400).json({ error: 'Montant requis' });
   if (email && !isEmail(email)) return res.status(400).json({ error: 'Adresse email invalide' });
-  db.prepare('INSERT INTO donations (campaign_id, donor_name, donor_email, amount, message) VALUES (?, ?, ?, ?, ?)')
-    .run(campaignId || null, name, email || '', Number(amount), message || '');
+  const reference = newDonationReference();
+  const displayName = anonymous ? 'Donateur anonyme' : name;
+  const currency = getSetting('currency') || 'USD';
+  db.prepare(`INSERT INTO donations (campaign_id, donor_name, donor_email, amount, message, reference, method, is_anonymous, currency)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(campaignId || null, displayName, email || '', Number(amount), message || '', reference, method, anonymous ? 1 : 0, currency);
   let campaignTitle = '';
   if (campaignId) {
     db.prepare('UPDATE campaigns SET collected_amount = collected_amount + ? WHERE id = ?').run(Number(amount), Number(campaignId));
     campaignTitle = db.prepare('SELECT title FROM campaigns WHERE id = ?').get(campaignId)?.title || '';
   }
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = (s) => String(s ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const methodLabel = method ? ` — ${DONATE_METHODS[method]}` : '';
   notifyEmail(
-    `Nouveau don de ${name} — ${Number(amount).toLocaleString('fr-FR')} $${campaignTitle ? ` (${campaignTitle})` : ''}`,
-    `<p><strong>${esc(name)}</strong>${email ? ` &lt;${esc(email)}&gt;` : ''} a fait un don de <strong>${Number(amount).toLocaleString('fr-FR')} $</strong>
+    `Nouveau don de ${displayName} — ${Number(amount).toLocaleString('fr-FR')} ${currency}${campaignTitle ? ` (${campaignTitle})` : ''}`,
+    `<p><strong>${esc(displayName)}</strong>${email ? ` &lt;${esc(email)}&gt;` : ''} a fait un don de <strong>${Number(amount).toLocaleString('fr-FR')} ${esc(currency)}</strong>${methodLabel}
      ${campaignTitle ? `pour la collecte <strong>${esc(campaignTitle)}</strong>` : 'de soutien'}.${message ? `<br/><em>« ${esc(message)} »</em>` : ''}</p>
-     <p style="color:#888;font-size:12px">Merci de l'enregistrer dans l'espace admin → Dons.</p>`
+     <p><strong>Référence du don : ${esc(reference)}</strong> — l'administrateur vérifiera le paiement (preuve éventuelle) dans l'espace admin → Dons.</p>`
   );
-  res.json({ ok: true });
+  res.json({ ok: true, reference });
+});
+
+// QR code de paiement : récapitulatif scannable (référence, moyen, numéro, montant)
+app.get('/api/public/donations/qr', async (req, res) => {
+  const ref = clip(req.query.ref, 24).trim().toUpperCase();
+  const d = db.prepare('SELECT * FROM donations WHERE reference = ?').get(ref);
+  if (!d) return res.status(404).json({ error: 'Référence inconnue' });
+  const lines = [
+    `DON — ${getSetting('site_name') || 'ADI ONG'}`,
+    `Reference : ${d.reference}`,
+    `Moyen : ${DONATE_METHODS[d.method] || 'A définir'}`,
+    `Montant : ${Number(d.amount).toLocaleString('fr-FR')} ${d.currency || 'USD'}`
+  ];
+  const number = donationPayNumber(d.method);
+  if (number) lines.splice(3, 0, `Numero : ${number}`);
+  const card = getSetting('pay_card');
+  if (d.method === 'carte' && card) lines.splice(3, 0, `Carte : ${card.split('\n').join(' / ')}`);
+  try {
+    const buf = await QRCode.toBuffer(lines.join('\n'), { width: 512, margin: 2, errorCorrectionLevel: 'M' });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le QR code' });
+  }
+});
+
+// Preuves de paiement (captures d'écran) — stockées hors du site public
+const proofDir = path.join(__dirname, 'data', 'donation-proofs');
+fs.mkdirSync(proofDir, { recursive: true });
+const proofLimiter = rateLimit({ windowMs: 60 * 60_000, max: 30, key: (req) => `proof:${req.ip}`, message: 'Trop d’envois de preuve. Réessayez dans une heure.' });
+const proofUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, proofDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname || '').toLowerCase().slice(0, 5);
+      const safeExt = /\.(jpe?g|png|webp|gif|pdf)$/.test(ext) ? ext : '.bin';
+      cb(null, `proof-${Date.now()}-${Math.floor(Math.random() * 1e6)}${safeExt}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+app.post('/api/donations/proof', proofLimiter, proofUpload.single('file'), (req, res) => {
+  const ref = clip(req.body?.reference, 24).trim().toUpperCase();
+  const d = db.prepare('SELECT * FROM donations WHERE reference = ?').get(ref);
+  if (!d) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(404).json({ error: 'Référence de don inconnue' });
+  }
+  if (d.status === 'confirmee') {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(409).json({ error: 'Ce don est déjà confirmé' });
+  }
+  if (!req.file) return res.status(400).json({ error: 'Fichier de preuve requis' });
+  if (d.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
+  const txRef = clip(req.body?.tx_ref, 60).trim();
+  db.prepare('UPDATE donations SET proof = ?, proof_name = ?, tx_ref = ?, status = ? WHERE id = ?')
+    .run(req.file.path, req.file.originalname || 'preuve', txRef, 'preuve', d.id);
+  res.json({ ok: true, status: 'preuve', reference: d.reference });
 });
 
 app.get('/api/admin/dashboard', authRequired, (req, res) => {
@@ -718,10 +801,19 @@ app.delete('/api/admin/partners/:id', authRequired, requireRole('content'), (req
 app.get('/api/admin/donations', authRequired, requireRole('any'), (req, res) =>
   res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC').all()));
 app.put('/api/admin/donations/:id', authRequired, requireRole('content'), (req, res) => {
-  db.prepare('UPDATE donations SET status = ? WHERE id = ?').run(req.body?.status || 'nouvelle', req.params.id);
-  res.json({ ok: true });
+  const status = DONATE_STATUSES.includes(req.body?.status) ? req.body.status : 'nouvelle';
+  db.prepare('UPDATE donations SET status = ? WHERE id = ?').run(status, req.params.id);
+  res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id));
+});
+app.get('/api/admin/donations/:id/proof', authRequired, requireRole('content'), (req, res) => {
+  const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
+  if (!d || !d.proof || !fs.existsSync(d.proof)) return res.status(404).json({ error: 'Preuve introuvable' });
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(d.proof_name || 'preuve')}"`);
+  res.sendFile(d.proof);
 });
 app.delete('/api/admin/donations/:id', authRequired, requireRole('content'), (req, res) => {
+  const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
+  if (d?.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
   db.prepare('DELETE FROM donations WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });

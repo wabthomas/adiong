@@ -36,7 +36,12 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
     - L'extrait de carte est généré automatiquement depuis le contenu s'il est vide
   - **Causes** : gestion des domaines d'action (Notre travail) : icône, image, ordre, brouillon
   - **Campagnes de collecte** : objectif, montant collecté, échéance, progression en direct
-  - **Dons** : dons envoyés depuis la page « Faire un don » (le montant collecté de la campagne est incrémenté automatiquement), statuts
+  - **Dons** : dons envoyés depuis la page « Faire un don » (le montant collecté de la campagne est incrémenté automatiquement).
+    Chaque don reçoit une **référence unique** (ex. `DON-1A2B3C`) et un **mode de paiement** (Airtel Money, M-Pesa,
+    Orange Money, Carte / virement). Le donateur peut **donner de façon anonyme** (son nom n'apparaît nulle part) et
+    **envoyer sa preuve de paiement** (capture du reçu / SMS + n° de transaction) ; l'aperçu de la preuve est visible
+    dans la fiche du don (image intégrée, PDF téléchargeable). Statuts : *Nouvelle → Preuve reçue → Confirmée / Refusée*.
+    Supprimer un don supprime aussi son fichier de preuve.
   - **Messages** : messages du formulaire de contact (marquer lu, répondre, supprimer)
   - **Médiathèque** : bibliothèque d'images (recherche, upload, copie d'URL, suppression).
     **Optimisation automatique** (Jimp) : redimensionnement max 1600px + compression + miniature 480px ;
@@ -64,7 +69,9 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
     - *Accueil* : image du hero, titres/textes du hero, badge, image et textes de la mission, mots du bandeau défilant, titres des sections « Notre travail » / « Actualités », bannière CTA
     - *En-têtes de pages* : kicker, titre, texte et image d'en-tête de chaque page (À propos, Notre travail, Actualités, Collectes, Don, Contact)
     - *À propos* : présentation, valeurs, méthode de travail, présence, carrières
-    - *Don & collectes* : montants de don proposés, arguments « Pourquoi donner », points de réassurance des campagnes
+    - *Don & collectes* : montants de don proposés, arguments « Pourquoi donner », points de réassurance des campagnes,
+      **numéros de paiement** (Airtel Money, M-Pesa, Orange Money, coordonnées carte/virement + note de paiement) affichés
+      sur la page « Faire un don » et intégrés au **QR code de paiement** généré pour chaque don
     - *Compteurs & valeurs* : compteurs animés, valeurs, étapes de la méthode
     - + changement de mot de passe
 
@@ -192,7 +199,7 @@ Le site a été conçu en tenant compte des attaques subies par l'ancienne versi
 - **Limitation de débit** (anti brute-force / anti spam) :
   - connexion admin : 10 tentatives / 15 min par couple IP+email,
   - formulaire de contact : 5 messages / heure par IP,
-  - dons : 10 envois / heure par IP,
+  - dons : 30 envois / heure par IP (envois de preuve de paiement : 30 / heure par IP),
   - filet global : 600 requêtes / 15 min par IP sur toute l'API.
 - **Anti-spam des formulaires** (contact & dons) : champ piège invisible (honeypot) + piège temporel (un formulaire soumis en moins de 3 s est rejeté). Les bots reçoivent une réponse « succès » silencieuse sans que le message soit enregistré.
 - **Validation des entrées** : adresses email vérifiées, longeurs maximales imposées (nom 100, email 120, sujet 200, message 2000, don 500, montant ≤ 1 M), montants contrôlés.

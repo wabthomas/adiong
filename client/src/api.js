@@ -104,8 +104,16 @@ export const api = {
   adminDonations: {
     list: () => req('/api/admin/donations', { auth: true }),
     update: (id, b) => req(`/api/admin/donations/${id}`, { method: 'PUT', body: b, auth: true }),
-    remove: (id) => req(`/api/admin/donations/${id}`, { method: 'DELETE', auth: true })
+    remove: (id) => req(`/api/admin/donations/${id}`, { method: 'DELETE', auth: true }),
+    proofUrl: async (id) => {
+      const t = getToken();
+      const res = await fetch(`/api/admin/donations/${id}/proof`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+      if (!res.ok) throw new Error('Preuve introuvable');
+      const ct = res.headers.get('Content-Type') || 'application/octet-stream';
+      return { url: URL.createObjectURL(await res.blob()), ct };
+    }
   },
+  donationsProof: (fd) => req('/api/donations/proof', { method: 'POST', body: fd }),
   adminMessages: {
     list: () => req('/api/admin/messages', { auth: true }),
     markRead: (id) => req(`/api/admin/messages/${id}`, { method: 'PUT', body: {}, auth: true }),

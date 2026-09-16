@@ -562,6 +562,28 @@ export default function SettingsAdmin() {
               <FlatListEditor items={s.donate_why_points || []} onChange={(v) => setS({ ...s, donate_why_points: v })} placeholder="Point de vente" />
             </Field>
           </SettingsSection>
+          <SettingsSection
+            title="Numéros de paiement (Mobile Money & carte)"
+            desc="Affichés sur la page « Faire un don » après l'enregistrement, et intégrés au QR code de paiement. Laissez vide un moyen pour le masquer côté paiement."
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Airtel Money" hint="Numéro à faire payer (ex. +243 99 000 11 22)">
+                <input className="input" value={s.pay_airtel || ''} onChange={set('pay_airtel')} placeholder="+243 99 000 11 22" />
+              </Field>
+              <Field label="M-Pesa" hint="Numéro à faire payer">
+                <input className="input" value={s.pay_mpesa || ''} onChange={set('pay_mpesa')} placeholder="+254 700 000 111" />
+              </Field>
+              <Field label="Orange Money" hint="Numéro à faire payer">
+                <input className="input" value={s.pay_orange || ''} onChange={set('pay_orange')} placeholder="+243 99 222 33 44" />
+              </Field>
+              <Field label="Carte / virement" hint="IBAN, SWIFT, coordonnées bancaires (plusieurs lignes possibles)">
+                <textarea className="input min-h-[64px]" value={s.pay_card || ''} onChange={set('pay_card')} placeholder={"IBAN : CD00 0000 0000\nSWIFT : ADBLCDXX\nBanque : …"} />
+              </Field>
+            </div>
+            <Field label="Note de paiement (optionnel)" hint="Message affiché sur l'écran de paiement (ex. « Après le transfert, écrivez la référence du don dans la note de la transaction »).">
+              <textarea className="input min-h-[64px]" value={s.pay_note || ''} onChange={set('pay_note')} placeholder="Après le transfert, précisez la référence du don (DON-XXXXXX) dans la note de la transaction." />
+            </Field>
+          </SettingsSection>
           <SettingsSection title="Pages des campagnes">
             <Field label="Points de réassurance (« À quoi sert cette collecte ? »)">
               <FlatListEditor items={s.campaign_points || []} onChange={(v) => setS({ ...s, campaign_points: v })} placeholder="Point de réassurance" />
