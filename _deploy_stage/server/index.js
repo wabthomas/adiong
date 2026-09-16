@@ -72,8 +72,27 @@ app.use(helmet(process.env.NODE_ENV === 'production' ? {
   },
   crossOriginResourcePolicy: { policy: 'same-site' }
 } : { contentSecurityPolicy: false }));
+
+/** Origines autorisées : absente (curl / same-origin sans header) + BASE_URL + localhost en dev. */
+const corsOriginAllowed = (origin) => {
+  if (!origin) return true;
+  const allowed = new Set();
+  const add = (u) => {
+    try {
+      if (u) allowed.add(new URL(u).origin);
+    } catch { /* ignore URL invalide */ }
+  };
+  add(process.env.BASE_URL);
+  add(process.env.CORS_ORIGIN);
+  if (process.env.NODE_ENV !== 'production') {
+    for (const host of ['localhost', '127.0.0.1']) {
+      for (const port of [5173, 4173, 4000]) allowed.add(`http://${host}:${port}`);
+    }
+  }
+  return allowed.has(origin);
+};
 app.use(cors({
-  origin: (origin, cb) => cb(null, !origin),
+  origin: (origin, cb) => cb(null, corsOriginAllowed(origin)),
   credentials: false
 }));
 app.use(express.json({ limit: '2mb' }));
@@ -155,6 +174,14 @@ const notifyEmail = (subject, html) => {
 const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 const setSetting = (key, value) =>
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+
+const safeUnlink = (full) => {
+  try {
+    if (fs.existsSync(full)) fs.unlinkSync(full);
+  } catch (e) {
+    console.error('[unlink]', full, e.message);
+  }
+};
 
 const STRING_SETTINGS = [
   'grh_annual_leave_days',
@@ -1311,10 +1338,7 @@ app.delete('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
   db.prepare('DELETE FROM grh_evaluations WHERE employee_id = ?').run(req.params.id);
   db.prepare('DELETE FROM grh_training_attendees WHERE employee_id = ?').run(req.params.id);
   const docs = db.prepare('SELECT * FROM grh_documents WHERE employee_id = ?').all(req.params.id);
-  docs.forEach((d) => {
-    const full = path.join(empDocsDir, d.file);
-    if (fs.existsSync(full)) fs.unlink(full, () => {});
-  });
+  docs.forEach((d) => safeUnlink(path.join(empDocsDir, d.file)));
   db.prepare('DELETE FROM grh_documents WHERE employee_id = ?').run(req.params.id);
   db.prepare('UPDATE grh_employees SET manager_id = NULL WHERE manager_id = ?').run(req.params.id);
   db.prepare('DELETE FROM grh_employees WHERE id = ?').run(req.params.id);
@@ -1384,8 +1408,7 @@ app.get('/api/admin/grh/documents/:id', ...GRH, (req, res) => {
 app.delete('/api/admin/grh/documents/:id', ...GRH, (req, res) => {
   const doc = db.prepare('SELECT * FROM grh_documents WHERE id = ?').get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document introuvable' });
-  const full = path.join(empDocsDir, doc.file);
-  if (fs.existsSync(full)) fs.unlink(full, () => {});
+  safeUnlink(path.join(empDocsDir, doc.file));
   db.prepare('DELETE FROM grh_documents WHERE id = ?').run(doc.id);
   res.json({ ok: true });
 });
@@ -1635,7 +1658,7 @@ app.get('/api/admin/grh/payroll/:id/pdf', ...PAY, async (req, res) => {
       ['Salaire de base', fmtMoney(p.base_salary)],
       ...(p.bonus > 0 ? [['Primes' + (p.bonus_label ? ` — ${p.bonus_label}` : ''), `+ ${fmtMoney(p.bonus)}`]] : []),
       ...(p.deductions > 0 ? [['Retenues' + (p.deductions_label ? ` — ${p.deductions_label}` : ''), `- ${fmtMoney(p.deductions)}`]] : []),
-      ['Total', fmtMoney(p.base_salary + p.bonus)]
+      ['Total', fmtMoney(p.base_salary + p.bonus - (Number(p.deductions) || 0))]
     ];
     let ry = 540;
     for (const [label, val] of rows) {
@@ -1800,10 +1823,7 @@ app.put('/api/admin/grh/candidates/:id', ...GRH, (req, res) => {
 app.delete('/api/admin/grh/candidates/:id', ...GRH, (req, res) => {
   const ex = db.prepare('SELECT * FROM grh_candidates WHERE id = ?').get(req.params.id);
   if (!ex) return res.status(404).json({ error: 'Candidat introuvable' });
-  if (ex.cv_file) {
-    const full = path.join(cvDir, ex.cv_file);
-    if (fs.existsSync(full)) fs.unlink(full, () => {});
-  }
+  if (ex.cv_file) safeUnlink(path.join(cvDir, ex.cv_file));
   db.prepare('DELETE FROM grh_candidates WHERE id = ?').run(ex.id);
   res.json({ ok: true });
 });
@@ -2402,31 +2422,39 @@ app.post('/api/admin/pos/products', ...POS_ADMIN, (req, res) => {
   const stock = Math.max(0, Math.trunc(Number(b.stock) || 0));
   const cost = b.cost === '' || b.cost == null ? null : Math.max(0, Number(b.cost) || null);
   const barcode = String(b.barcode || '').trim().slice(0, 64);
-  if (barcode && db.prepare('SELECT id FROM stock_products WHERE barcode = ?').get(barcode))
-    return res.status(409).json({ error: 'Ce code-barres est déjà attribué à un autre produit' });
-  const info = runTx(() => {
-    const r = db.prepare(`INSERT INTO stock_products
-      (name, reference, description, category_id, price, cost, stock, min_stock, image, active, barcode)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      String(b.name).trim().slice(0, 200),
-      String(b.reference || '').trim().slice(0, 40),
-      String(b.description || '').slice(0, 2000),
-      b.category_id || null,
-      price,
-      cost,
-      stock,
-      Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
-      b.image || '',
-      b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
-      barcode
-    );
-    if (stock > 0) {
-      db.prepare('INSERT INTO stock_movements (product_id, type, qty, reason, created_by) VALUES (?, ?, ?, ?, ?)')
-        .run(r.lastInsertRowid, 'entree', stock, 'Stock initial', req.user.id);
-    }
-    return r.lastInsertRowid;
-  });
-  res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(info));
+  try {
+    const info = runTx(() => {
+      if (barcode && db.prepare('SELECT id FROM stock_products WHERE barcode = ?').get(barcode)) {
+        const err = new Error('BARCODE_TAKEN');
+        throw err;
+      }
+      const r = db.prepare(`INSERT INTO stock_products
+        (name, reference, description, category_id, price, cost, stock, min_stock, image, active, barcode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        String(b.name).trim().slice(0, 200),
+        String(b.reference || '').trim().slice(0, 40),
+        String(b.description || '').slice(0, 2000),
+        b.category_id || null,
+        price,
+        cost,
+        stock,
+        Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
+        b.image || '',
+        b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
+        barcode
+      );
+      if (stock > 0) {
+        db.prepare('INSERT INTO stock_movements (product_id, type, qty, reason, created_by) VALUES (?, ?, ?, ?, ?)')
+          .run(r.lastInsertRowid, 'entree', stock, 'Stock initial', req.user.id);
+      }
+      return r.lastInsertRowid;
+    });
+    res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(info));
+  } catch (e) {
+    if (e.message === 'BARCODE_TAKEN' || String(e.message || '').includes('UNIQUE'))
+      return res.status(409).json({ error: 'Ce code-barres est déjà attribué à un autre produit' });
+    throw e;
+  }
 });
 
 app.put('/api/admin/pos/products/:id', ...POS_ADMIN, (req, res) => {
@@ -2436,31 +2464,38 @@ app.put('/api/admin/pos/products/:id', ...POS_ADMIN, (req, res) => {
   const nextStock = Math.max(0, Math.trunc(Number(b.stock) || 0));
   const cost = b.cost === '' || b.cost == null ? null : Math.max(0, Number(b.cost) || null);
   const barcode = String(b.barcode || '').trim().slice(0, 64);
-  if (barcode && barcode !== ex.barcode && db.prepare('SELECT id FROM stock_products WHERE barcode = ? AND id != ?').get(barcode, ex.id))
-    return res.status(409).json({ error: 'Ce code-barres est déjà attribué à un autre produit' });
-  runTx(() => {
-    db.prepare(`UPDATE stock_products SET
-      name = ?, reference = ?, description = ?, category_id = ?, price = ?, cost = ?, stock = ?, min_stock = ?, image = ?, active = ?, barcode = ?
-      WHERE id = ?`).run(
-      String(b.name).trim().slice(0, 200),
-      String(b.reference || '').trim().slice(0, 40),
-      String(b.description || '').slice(0, 2000),
-      b.category_id || null,
-      Math.max(0, Number(b.price) || 0),
-      cost,
-      nextStock,
-      Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
-      b.image || '',
-      b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
-      barcode,
-      ex.id
-    );
-    if (nextStock !== ex.stock) {
-      db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(ex.id, 'ajustement', Math.abs(nextStock - ex.stock), nextStock, 'Mise à jour du stock depuis la fiche produit', req.user.id);
-    }
-  });
-  res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(ex.id));
+  try {
+    runTx(() => {
+      if (barcode && db.prepare('SELECT id FROM stock_products WHERE barcode = ? AND id != ?').get(barcode, ex.id)) {
+        throw new Error('BARCODE_TAKEN');
+      }
+      db.prepare(`UPDATE stock_products SET
+        name = ?, reference = ?, description = ?, category_id = ?, price = ?, cost = ?, stock = ?, min_stock = ?, image = ?, active = ?, barcode = ?
+        WHERE id = ?`).run(
+        String(b.name).trim().slice(0, 200),
+        String(b.reference || '').trim().slice(0, 40),
+        String(b.description || '').slice(0, 2000),
+        b.category_id || null,
+        Math.max(0, Number(b.price) || 0),
+        cost,
+        nextStock,
+        Math.max(0, Math.trunc(Number(b.min_stock) || 0)),
+        b.image || '',
+        b.active === false || b.active === 0 || b.active === '0' ? 0 : 1,
+        barcode,
+        ex.id
+      );
+      if (nextStock !== ex.stock) {
+        db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(ex.id, 'ajustement', Math.abs(nextStock - ex.stock), nextStock, 'Mise à jour du stock depuis la fiche produit', req.user.id);
+      }
+    });
+    res.json(db.prepare('SELECT * FROM stock_products WHERE id = ?').get(ex.id));
+  } catch (e) {
+    if (e.message === 'BARCODE_TAKEN' || String(e.message || '').includes('UNIQUE'))
+      return res.status(409).json({ error: 'Ce code-barres est déjà attribué à un autre produit' });
+    throw e;
+  }
 });
 
 app.get('/api/admin/pos/products/by-barcode/:code', ...POS, (req, res) => {
