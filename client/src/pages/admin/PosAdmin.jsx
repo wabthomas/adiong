@@ -1,65 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getSavedUser } from '../../api.js';
 import { useSite } from '../../hooks/useSite.jsx';
-import { Field, Modal, ImageInput } from './AdminUI.jsx';
+import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
-  { id: 'caisse', group: 'Vente', label: 'Caisse', hint: 'Encaissement et panier', icon: 'M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 0 0-16.536-1.84M7.5 14.25 5.106 5.272M6 20.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm12.75 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z' },
-  { id: 'ventes', group: 'Vente', label: 'Ventes', hint: 'Historique, tickets et retours', icon: 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z' },
-  { id: 'commandes', group: 'Vente', label: 'Commandes', hint: 'Boutique en ligne et livraisons', icon: 'M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.236a2.25 2.25 0 0 1 2.25 2.236v.5a2.25 2.25 0 0 1-2.25 2.236H14.25V7.514Z' },
-  { id: 'stock', group: 'Catalogue', label: 'Stock', hint: 'Produits, catégories et seuils', icon: 'M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z' },
-  { id: 'mouvements', group: 'Catalogue', label: 'Mouvements', hint: 'Entrées, sorties et ajustements', icon: 'M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5' },
-  { id: 'stats', group: 'Pilotage', label: 'Statistiques', hint: 'CA, top ventes et alertes', manage: true, icon: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z' }
+  ['caisse', 'Caisse'],
+  ['ventes', 'Ventes'],
+  ['commandes', 'Commandes en ligne'],
+  ['stock', 'Stock'],
+  ['mouvements', 'Mouvements'],
+  ['stats', 'Statistiques', true]
 ];
-
-function TabIcon({ d, className = 'h-5 w-5 shrink-0' }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.7" stroke="currentColor" className={className}>
-      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
-    </svg>
-  );
-}
-
-function PosSection({ title, desc, action, children, padded = true }) {
-  return (
-    <section className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5">
-      {(title || desc || action) && (
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-100 px-6 py-4">
-          <div className="min-w-0">
-            {title && <h3 className="font-display text-base font-bold text-ink-900">{title}</h3>}
-            {desc && <p className="mt-0.5 text-sm text-ink-400">{desc}</p>}
-          </div>
-          {action}
-        </div>
-      )}
-      {padded ? <div className="p-6">{children}</div> : children}
-    </section>
-  );
-}
-
-function StatCard({ icon, label, value, sub, tone = 'brand' }) {
-  const tones = {
-    brand: 'bg-brand-50 text-brand-700',
-    accent: 'bg-accent-50 text-accent-800',
-    ink: 'bg-ink-50 text-ink-600',
-    warn: 'bg-amber-50 text-amber-800',
-    danger: 'bg-red-50 text-red-700'
-  };
-  return (
-    <div className="overflow-hidden rounded-2xl bg-white p-5 ring-1 ring-ink-950/5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-wider text-ink-400">{label}</p>
-          <p className="mt-1 font-display text-2xl font-extrabold text-ink-900 sm:text-3xl">{value}</p>
-          {sub && <p className="mt-1 text-xs text-ink-400">{sub}</p>}
-        </div>
-        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${tones[tone]}`}>
-          <TabIcon d={icon} />
-        </span>
-      </div>
-    </div>
-  );
-}
 
 const ORDER_STATUS = {
   attente: { label: 'En attente', cls: 'bg-accent-100 text-accent-800' },
@@ -169,7 +120,7 @@ function ReportSheet({ rep, site }) {
         <div className="divide-y divide-ink-50 rounded-xl ring-1 ring-ink-100">
           {Object.entries(PAY_METHODS).filter(([m]) => rep.byPayment[m]).map(([m, v]) => (
             <div key={m} className="flex items-center justify-between px-4 py-2.5">
-              <span className="text-ink-700">{PAY_METHODS[m]}</span>
+              <span className="text-ink-700">{m === 'especes' ? '💵 ' : m === 'mobile' ? '📱 ' : m === 'carte' ? '💳 ' : m === 'virement' ? '🏦 ' : '🧾 '}{PAY_METHODS[m]}</span>
               <span className="text-ink-500">{v.n} vente(s) — <strong className="text-ink-800">{fmtMoney(v.total)}</strong></span>
             </div>
           ))}
@@ -361,75 +312,62 @@ function CaisseTab() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <style>{PRINT_RECEIPT_CSS}</style>
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <PosSection
-          title="Catalogue caisse"
-          desc="Recherchez, scannez ou filtrez par catégorie."
-          action={
-            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-bold text-brand-700">
-              {visible.length} produit(s)
-            </span>
-          }
-        >
-          <div className="mb-5 flex flex-wrap items-center gap-3">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div>
+          <div className="mb-4 flex flex-wrap items-center gap-3">
             <input
-              className="input !w-56 !py-2.5 text-sm"
+              className="input !w-64 !py-2.5 text-sm"
               placeholder="Rechercher un produit…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
             <input
-              className="input !w-64 !py-2.5 text-sm font-mono"
-              placeholder="Code-barres + Entrée"
+              className="input !w-60 !py-2.5 text-sm"
+              placeholder="📷 Scanner un code-barres + Entrée"
               value={scan}
               onChange={(e) => setScan(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && scanCode()}
             />
-          </div>
-          <div className="mb-5 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => setCat('')}
-              className={`rounded-full px-3.5 py-2 text-xs font-bold ring-1 transition-all ${
-                !cat ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-ink-600 ring-ink-200 hover:ring-brand-300'
-              }`}
-            >
-              Tous
-            </button>
-            {cats.map((c) => (
+            <div className="flex flex-wrap gap-1.5">
               <button
-                key={c.id}
-                type="button"
-                onClick={() => setCat(String(c.id) === cat ? '' : String(c.id))}
+                onClick={() => setCat('')}
                 className={`rounded-full px-3.5 py-2 text-xs font-bold ring-1 transition-all ${
-                  String(c.id) === cat ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-ink-600 ring-ink-200 hover:ring-brand-300'
+                  !cat ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-ink-600 ring-ink-200 hover:ring-brand-300'
                 }`}
               >
-                {c.name}
+                Tous
               </button>
-            ))}
+              {cats.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setCat(String(c.id) === cat ? '' : String(c.id))}
+                  className={`rounded-full px-3.5 py-2 text-xs font-bold ring-1 transition-all ${
+                    String(c.id) === cat ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-ink-600 ring-ink-200 hover:ring-brand-300'
+                  }`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {visible.map((p) => (
               <button
                 key={p.id}
-                type="button"
                 onClick={() => add(p)}
                 disabled={p.stock <= 0}
-                className={`rounded-2xl bg-cream/60 p-4 text-left ring-1 ring-ink-950/5 transition-all ${
-                  p.stock <= 0 ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:bg-white hover:shadow-soft'
+                className={`card group p-4 text-left transition-all ${
+                  p.stock <= 0 ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:shadow-soft'
                 }`}
               >
                 <div className="flex items-start gap-3">
                   {p.image ? (
                     <img src={p.image} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover ring-1 ring-ink-100" />
                   ) : (
-                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white text-brand-600 ring-1 ring-ink-100">
-                      <TabIcon d={TABS.find((t) => t.id === 'stock').icon} className="h-5 w-5" />
-                    </span>
+                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-cream text-xl">📦</span>
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-bold text-ink-900">{p.name}</p>
@@ -446,22 +384,17 @@ function CaisseTab() {
             ))}
           </div>
           {visible.length === 0 && (
-            <p className="rounded-xl border border-dashed border-ink-200 py-12 text-center text-ink-400">
-              Aucun produit — créez le catalogue dans l’onglet Stock.
+            <p className="rounded-2xl border border-dashed border-ink-200 py-12 text-center text-ink-400">
+              Aucun produit — créez le catalogue dans l'onglet Stock.
             </p>
           )}
-        </PosSection>
+        </div>
 
-        <div className="sticky top-36 overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5">
-          <div className="flex items-center justify-between border-b border-ink-100 px-5 py-4">
-            <div>
-              <h3 className="font-display text-base font-bold text-ink-900">Panier</h3>
-              <p className="text-xs text-ink-400">{cart.length} article(s)</p>
-            </div>
+        <div className="card sticky top-20 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-ink-100 bg-cream/70 px-5 py-4">
+            <h3 className="font-display text-lg font-bold text-ink-900">🛒 Panier ({cart.length})</h3>
             {cart.length > 0 && (
-              <button type="button" onClick={clearCart} className="text-xs font-bold text-red-600 hover:text-red-700">
-                Vider
-              </button>
+              <button onClick={clearCart} className="text-xs font-bold text-red-600 hover:text-red-700">Vider</button>
             )}
           </div>
           <div className="max-h-72 space-y-2 overflow-y-auto px-5 py-4">
@@ -473,7 +406,6 @@ function CaisseTab() {
                 </div>
                 <div className="flex items-center gap-1">
                   <button
-                    type="button"
                     onClick={() => setQty(c.product.id, c.qty - 1)}
                     className="grid h-7 w-7 place-items-center rounded-lg bg-white font-bold text-ink-600 ring-1 ring-ink-200 hover:bg-ink-50"
                   >
@@ -481,7 +413,6 @@ function CaisseTab() {
                   </button>
                   <span className="w-7 text-center text-sm font-bold text-ink-900">{c.qty}</span>
                   <button
-                    type="button"
                     onClick={() => setQty(c.product.id, c.qty + 1)}
                     className="grid h-7 w-7 place-items-center rounded-lg bg-white font-bold text-ink-600 ring-1 ring-ink-200 hover:bg-ink-50"
                     disabled={c.qty >= c.product.stock}
@@ -493,7 +424,7 @@ function CaisseTab() {
               </div>
             ))}
             {cart.length === 0 && (
-              <p className="py-8 text-center text-sm text-ink-400">Cliquez sur un produit pour l’ajouter au panier.</p>
+              <p className="py-8 text-center text-sm text-ink-400">Cliquez sur un produit pour l'ajouter au panier.</p>
             )}
           </div>
           <div className="space-y-3 border-t border-ink-100 px-5 py-4">
@@ -526,12 +457,11 @@ function CaisseTab() {
               {change > 0 && <div className="flex justify-between font-bold text-emerald-700"><span>Monnaie</span><span>{fmtMoney(change)}</span></div>}
             </div>
             <button
-              type="button"
               onClick={checkout}
               disabled={!cart.length || busy}
               className="btn-primary w-full !py-3 text-sm"
             >
-              {busy ? 'Enregistrement…' : `Encaisser ${cart.length ? fmtMoney(total) : ''}`}
+              {busy ? 'Enregistrement…' : `✓ Encaisser ${cart.length ? fmtMoney(total) : ''}`}
             </button>
           </div>
         </div>
@@ -542,13 +472,13 @@ function CaisseTab() {
           <div className="space-y-4">
             <ReceiptSheet sale={doneSale} site={site} />
             <div className="no-print flex flex-wrap justify-end gap-2 border-t border-ink-100 pt-4">
-              <button type="button" className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadTicket(doneSale)}>
-                Ticket PDF
+              <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadTicket(doneSale)}>
+                ⬇ Ticket PDF
               </button>
-              <button type="button" className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => window.print()}>
-                Imprimer
+              <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => window.print()}>
+                🖨 Imprimer
               </button>
-              <button type="button" className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setDoneSale(null)}>
+              <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setDoneSale(null)}>
                 Nouvelle vente
               </button>
             </div>
@@ -587,7 +517,7 @@ function ReturnModal({ sale, onDone, onClose }) {
   return (
     <div className="space-y-5">
       <p className="rounded-xl bg-accent-50 px-4 py-3 text-sm font-semibold text-accent-900">
-        Retour sur <strong>{sale.number}</strong> — un remboursement de <strong>{fmtMoney(total)}</strong> sera à effectuer
+        ↩️ Retour sur <strong>{sale.number}</strong> — un remboursement de <strong>{fmtMoney(total)}</strong> sera à effectuer
         (le stock retourné est réapprovisionné automatiquement).
       </p>
       <div className="space-y-2">
@@ -685,57 +615,47 @@ function SalesTab({ canManage = false }) {
 
   return (
     <div className="space-y-5">
-      <PosSection
-        title="Filtres"
-        desc="Affinez l’historique des ventes et générez un rapport de caisse."
-      >
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label="Du">
-            <input className="input !w-40 !py-2.5 text-sm" type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
-          </Field>
-          <Field label="Au">
-            <input className="input !w-40 !py-2.5 text-sm" type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
-          </Field>
-          <Field label="Paiement">
-            <select className="input !w-44 !py-2.5 text-sm" value={filters.payment} onChange={(e) => setFilters({ ...filters, payment: e.target.value })}>
-              <option value="">Tous</option>
-              {Object.entries(PAY_METHODS).map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Recherche (n° / client)">
-            <input className="input !w-52 !py-2.5 text-sm" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="POS-00012" />
-          </Field>
-          <button
-            type="button"
-            className="btn-ghost !px-4 !py-2.5 text-sm"
-            onClick={() => setFilters({ from: '', to: '', payment: '', q: '' })}
-          >
-            Réinitialiser
-          </button>
-          {canManage && (
-            <div className="ml-auto flex items-end gap-2">
-              <Field label="Rapport de caisse">
-                <input className="input !w-40 !py-2.5 text-sm" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
-              </Field>
-              <button type="button" className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
-                Générer
-              </button>
-            </div>
-          )}
-        </div>
-      </PosSection>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Du">
+          <input className="input !w-40 !py-2.5 text-sm" type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
+        </Field>
+        <Field label="Au">
+          <input className="input !w-40 !py-2.5 text-sm" type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+        </Field>
+        <Field label="Paiement">
+          <select className="input !w-44 !py-2.5 text-sm" value={filters.payment} onChange={(e) => setFilters({ ...filters, payment: e.target.value })}>
+            <option value="">Tous</option>
+            {Object.entries(PAY_METHODS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Recherche (n° / client)">
+          <input className="input !w-52 !py-2.5 text-sm" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="POS-00012" />
+        </Field>
+        <button
+          className="btn-ghost !px-4 !py-2.5 text-sm"
+          onClick={() => setFilters({ from: '', to: '', payment: '', q: '' })}
+        >
+          Réinitialiser
+        </button>
+        {canManage && (
+          <div className="ml-auto flex items-end gap-2">
+            <Field label="Rapport de caisse">
+              <input className="input !w-40 !py-2.5 text-sm" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
+            </Field>
+            <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
+              🖨 Générer
+            </button>
+          </div>
+        )}
+      </div>
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-      <PosSection
-        title={`Historique (${rows.length})`}
-        desc={rows.length > 0 ? `Total affiché : ${fmtMoney(totalShown)}` : 'Aucune vente pour ces filtres.'}
-        padded={false}
-      >
+      <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-left text-sm">
-            <thead className="border-b border-ink-100 bg-cream/50 text-xs font-bold tracking-wide text-ink-400 uppercase">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
               <tr>
                 <th className="px-6 py-4">N°</th>
                 <th className="px-6 py-4">Date</th>
@@ -750,7 +670,7 @@ function SalesTab({ canManage = false }) {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/40">
+                <tr key={r.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
                   <td className="px-6 py-4 font-bold text-ink-900">{r.number}</td>
                   <td className="px-6 py-4 text-ink-600">{fmtDateTime(r.created_at)}</td>
                   <td className="px-6 py-4 text-ink-600">{r.cashier_name || '—'}</td>
@@ -765,22 +685,22 @@ function SalesTab({ canManage = false }) {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex justify-end gap-1.5">
-                      <button type="button" onClick={() => openDetail(r.id)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
+                      <button onClick={() => openDetail(r.id)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
                         Détail
                       </button>
-                      <button type="button" onClick={() => downloadPdf(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
-                        Ticket
+                      <button onClick={() => downloadPdf(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                        ⬇ Ticket
                       </button>
-                      <button type="button" onClick={() => downloadInvoice(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
-                        Facture
+                      <button onClick={() => downloadInvoice(r)} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                        🧾 Facture
                       </button>
                       {canManage && r.status !== 'retournee' && (
-                        <button type="button" onClick={() => setRetSale(r)} className="rounded-lg bg-accent-50 px-2.5 py-1.5 text-xs font-bold text-accent-800 hover:bg-accent-100">
-                          Retour
+                        <button onClick={() => setRetSale(r)} className="rounded-lg bg-accent-50 px-2.5 py-1.5 text-xs font-bold text-accent-800 hover:bg-accent-100">
+                          ↩ Retour
                         </button>
                       )}
                       {canManage && (
-                        <button type="button" onClick={() => voidSale(r)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Annuler la vente">
+                        <button onClick={() => voidSale(r)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Annuler la vente">
                           Annuler
                         </button>
                       )}
@@ -793,37 +713,25 @@ function SalesTab({ canManage = false }) {
         </div>
         {rows.length === 0 && <p className="py-12 text-center text-ink-400">Aucune vente pour ces filtres.</p>}
         {rows.length > 0 && (
-          <div className="flex items-center justify-between border-t border-ink-100 bg-cream/50 px-6 py-4 text-sm">
+          <div className="flex items-center justify-between border-t border-ink-100 bg-cream/70 px-6 py-4 text-sm">
             <span className="font-bold text-ink-500">{rows.length} vente(s)</span>
             <span className="font-display font-bold text-brand-700">Total : {fmtMoney(totalShown)}</span>
           </div>
         )}
-      </PosSection>
+      </div>
 
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `Vente ${detail.number}` : ''} wide>
         {detail && (
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Date</p>
-                <p className="mt-1 font-semibold text-ink-800">{fmtDateTime(detail.created_at)}</p>
-              </div>
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Caissier</p>
-                <p className="mt-1 font-semibold text-ink-800">{detail.cashier_name || '—'}</p>
-              </div>
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Paiement</p>
-                <p className="mt-1 font-semibold text-ink-800">{PAY_METHODS[detail.payment_method] || detail.payment_method}</p>
-              </div>
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Statut</p>
-                <p className="mt-1">
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${SALE_STATUS_STYLES[detail.status] || ''}`}>
-                    {SALE_STATUS[detail.status] || detail.status}
-                  </span>
-                </p>
-              </div>
+              <p className="text-ink-500">📅 {fmtDateTime(detail.created_at)}</p>
+              <p className="text-ink-500">👤 {detail.cashier_name || '—'}</p>
+              <p className="text-ink-500">🧾 {PAY_METHODS[detail.payment_method] || detail.payment_method}</p>
+              <p>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${SALE_STATUS_STYLES[detail.status] || ''}`}>
+                  {SALE_STATUS[detail.status] || detail.status}
+                </span>
+              </p>
             </div>
             {detail.customer_name && <p className="text-sm text-ink-500">Client : <strong>{detail.customer_name}</strong></p>}
             <div className="overflow-x-auto rounded-xl ring-1 ring-ink-100">
@@ -857,15 +765,15 @@ function SalesTab({ canManage = false }) {
                 <p className="flex justify-between gap-8 font-display text-base font-extrabold text-ink-900"><span>Total</span><span>{fmtMoney(detail.total)}</span></p>
               </div>
               <div className="no-print flex flex-wrap gap-2">
-                <button type="button" className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadPdf(detail)}>Ticket PDF</button>
-                <button type="button" className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadInvoice(detail)}>Facture PDF</button>
+                <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadPdf(detail)}>⬇ Ticket PDF</button>
+                <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => downloadInvoice(detail)}>🧾 Facture PDF</button>
                 {canManage && detail.status !== 'retournee' && (
-                  <button type="button" className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => { setRetSale(detail); setDetail(null); }}>
-                    Retourner
+                  <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => { setRetSale(detail); setDetail(null); }}>
+                    ↩ Retourner
                   </button>
                 )}
                 {canManage && (
-                  <button type="button" className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={() => voidSale(detail)}>
+                  <button className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={() => voidSale(detail)}>
                     Annuler
                   </button>
                 )}
@@ -880,7 +788,7 @@ function SalesTab({ canManage = false }) {
                       <p className="font-bold text-accent-900">{fmtMoney(rt.total)} — {fmtDateTime(rt.created_at)}</p>
                       {rt.reason && <p className="mt-0.5 text-xs text-ink-500">{rt.reason}</p>}
                       <p className="mt-1 text-xs text-ink-600">
-                        {rt.items.map((ri) => `${ri.qty} × ligne #${ri.sale_item_id}`).join(' · ')}
+                        {rt.items.map((ri, i) => `${ri.qty} × ligne #${ri.sale_item_id}`).join(' · ')}
                       </p>
                     </li>
                   ))}
@@ -909,11 +817,11 @@ function SalesTab({ canManage = false }) {
           <div className="space-y-4">
             <ReportSheet rep={report} site={site} />
             <div className="no-print flex flex-wrap justify-end gap-2 border-t border-ink-100 pt-4">
-              <button type="button" className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
-                Actualiser
+              <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={openReport}>
+                ↻ Actualiser
               </button>
-              <button type="button" className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => window.print()}>
-                Imprimer
+              <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => window.print()}>
+                🖨 Imprimer
               </button>
             </div>
           </div>
@@ -1011,7 +919,7 @@ function ProductForm({ initial, categories, onSaved, onClose }) {
       </div>
       {initial.id && (
         <p className="rounded-xl bg-cream px-4 py-3 text-sm text-ink-500">
-          Stock actuel : <strong>{initial.stock}</strong> — pour le modifier, utilisez le bouton « Mouvement » (l’ajustement reste tracé).
+          💡 Stock actuel : <strong>{initial.stock}</strong> — pour le modifier, utilisez le bouton « Mouvement » (l'ajustement reste tracé).
         </p>
       )}
       <Field label="Image (bibliothèque)">
@@ -1138,9 +1046,7 @@ function CategoriesModal({ categories, onChanged, onClose }) {
       <ul className="divide-y divide-ink-50 rounded-2xl ring-1 ring-ink-100">
         {categories.map((c) => (
           <li key={c.id} className="flex items-center gap-3 px-4 py-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700">
-              <TabIcon d={TABS.find((t) => t.id === 'stock').icon} className="h-4 w-4" />
-            </span>
+            <span className="text-lg">🏷️</span>
             <input
               className="input !w-56 !border-0 !bg-transparent !px-2 !py-1.5 font-semibold text-ink-800 focus:!ring-1"
               defaultValue={c.name}
@@ -1201,27 +1107,12 @@ function StockTab({ canManage = false }) {
     <div className="space-y-5">
       {lowStock.length > 0 && (
         <p className="rounded-2xl border border-accent-200 bg-accent-50 px-5 py-4 text-sm font-semibold text-accent-900">
-          {lowStock.length} produit(s) sous le seuil d’alerte : {lowStock.map((p) => p.name).join(', ')}
+          ⚠️ {lowStock.length} produit(s) sous le seuil d'alerte : {lowStock.map((p) => p.name).join(', ')}
         </p>
       )}
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-      <PosSection
-        title="Catalogue produits"
-        desc="Recherchez, filtrez et gérez le stock."
-        action={
-          canManage ? (
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setCatsModal(true)}>
-                Catégories
-              </button>
-              <button type="button" className="btn-primary !px-5 !py-2 text-sm" onClick={() => setProdModal({})}>
-                + Produit
-              </button>
-            </div>
-          ) : null
-        }
-      >
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <input
             className="input !w-56 !py-2.5 text-sm"
@@ -1235,16 +1126,23 @@ function StockTab({ canManage = false }) {
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
-          <span className="rounded-full bg-ink-50 px-3 py-1 text-xs font-bold text-ink-500">
-            {visible.length} / {products.length}
-          </span>
         </div>
-      </PosSection>
+        {canManage && (
+          <div className="flex gap-2">
+            <button className="btn-ghost !px-4 !py-2.5 text-sm" onClick={() => setCatsModal(true)}>
+              🏷️ Catégories
+            </button>
+            <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setProdModal({})}>
+              + Produit
+            </button>
+          </div>
+        )}
+      </div>
 
-      <PosSection title="Inventaire" padded={false}>
+      <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-left text-sm">
-            <thead className="border-b border-ink-100 bg-cream/50 text-xs font-bold tracking-wide text-ink-400 uppercase">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
               <tr>
                 <th className="px-6 py-4">Produit</th>
                 <th className="px-6 py-4">Code-barres</th>
@@ -1259,15 +1157,13 @@ function StockTab({ canManage = false }) {
             </thead>
             <tbody>
               {visible.map((p) => (
-                <tr key={p.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/40">
+                <tr key={p.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       {p.image ? (
                         <img src={p.image} alt="" className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-ink-100" />
                       ) : (
-                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-cream text-brand-600">
-                          <TabIcon d={TABS.find((t) => t.id === 'stock').icon} className="h-4 w-4" />
-                        </span>
+                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-cream">📦</span>
                       )}
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-ink-900">{p.name}</p>
@@ -1284,15 +1180,15 @@ function StockTab({ canManage = false }) {
                   <td className="px-6 py-4">{stockBadge(p)}</td>
                   <td className="px-6 py-4">
                     <div className="flex justify-end gap-1.5">
-                      <button type="button" onClick={() => setMoveModal(p)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
+                      <button onClick={() => setMoveModal(p)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
                         Mouvement
                       </button>
                       {canManage && (
                         <>
-                          <button type="button" onClick={() => setProdModal({ ...p })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
+                          <button onClick={() => setProdModal({ ...p })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
                             Modifier
                           </button>
-                          <button type="button" onClick={() => removeProduct(p)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
+                          <button onClick={() => removeProduct(p)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" title="Supprimer">
                             ✕
                           </button>
                         </>
@@ -1305,7 +1201,7 @@ function StockTab({ canManage = false }) {
           </table>
         </div>
         {visible.length === 0 && <p className="py-12 text-center text-ink-400">Aucun produit — ajoutez le premier.</p>}
-      </PosSection>
+      </div>
 
       <Modal open={!!prodModal} onClose={() => setProdModal(null)} title={prodModal?.id ? `Modifier — ${prodModal.name}` : 'Nouveau produit'} wide>
         {prodModal && (
@@ -1365,27 +1261,26 @@ function MovementsTab() {
 
   return (
     <div className="space-y-5">
-      <PosSection title="Filtres" desc="Historique tracé : entrées, sorties (ventes comprises) et ajustements.">
-        <div className="flex flex-wrap items-center gap-3">
-          <select className="input !w-60 !py-2.5 text-sm" value={prodId} onChange={(e) => setProdId(e.target.value)}>
-            <option value="">Tous les produits</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-          <select className="input !w-44 !py-2.5 text-sm" value={type} onChange={(e) => setType(e.target.value)}>
-            <option value="">Tous les types</option>
-            {Object.entries(MOVE_TYPES).map(([v, l]) => (
-              <option key={v} value={v}>{l}</option>
-            ))}
-          </select>
-        </div>
-      </PosSection>
+      <div className="flex flex-wrap items-center gap-3">
+        <select className="input !w-60 !py-2.5 text-sm" value={prodId} onChange={(e) => setProdId(e.target.value)}>
+          <option value="">Tous les produits</option>
+          {products.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <select className="input !w-44 !py-2.5 text-sm" value={type} onChange={(e) => setType(e.target.value)}>
+          <option value="">Tous les types</option>
+          {Object.entries(MOVE_TYPES).map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
+        </select>
+        <p className="text-sm text-ink-400">Historique tracé : entrées, sorties (ventes comprises) et ajustements.</p>
+      </div>
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
-      <PosSection title={`Journal (${rows.length})`} padded={false}>
+      <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="border-b border-ink-100 bg-cream/50 text-xs font-bold tracking-wide text-ink-400 uppercase">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
               <tr>
                 <th className="px-6 py-4">Date</th>
                 <th className="px-6 py-4">Produit</th>
@@ -1397,7 +1292,7 @@ function MovementsTab() {
             </thead>
             <tbody>
               {rows.map((m) => (
-                <tr key={m.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/40">
+                <tr key={m.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
                   <td className="px-6 py-4 text-ink-600">{fmtDateTime(m.created_at)}</td>
                   <td className="px-6 py-4 font-semibold text-ink-800">{m.product_name}</td>
                   <td className="px-6 py-4">
@@ -1414,7 +1309,7 @@ function MovementsTab() {
           </table>
         </div>
         {rows.length === 0 && <p className="py-12 text-center text-ink-400">Aucun mouvement enregistré.</p>}
-      </PosSection>
+      </div>
     </div>
   );
 }
@@ -1444,27 +1339,28 @@ function OrdersTab() {
   };
 
   const nextAction = (o) => {
-    if (o.status === 'attente') return <button type="button" className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100" onClick={() => setStatus(o, 'preparation')}>En préparation</button>;
-    if (o.status === 'preparation') return <button type="button" className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => setStatus(o, 'livree')}>Marquer livrée</button>;
+    if (o.status === 'attente') return <button className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100" onClick={() => setStatus(o, 'preparation')}>En préparation</button>;
+    if (o.status === 'preparation') return <button className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => setStatus(o, 'livree')}>✓ Marquer livrée</button>;
     return null;
   };
 
   return (
     <div className="space-y-5">
-      <PosSection title="Pipeline boutique" desc="Commandes passées depuis la boutique en ligne — le stock est réservé à la commande.">
+      <div className="flex flex-wrap items-center gap-3">
         <select className="input !w-56 !py-2.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="">Toutes les commandes</option>
           {Object.entries(ORDER_STATUS).map(([v, s]) => (
             <option key={v} value={v}>{s.label}</option>
           ))}
         </select>
-      </PosSection>
+        <p className="text-sm text-ink-400">Commandes passées depuis la boutique en ligne — le stock est réservé à la commande.</p>
+      </div>
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
 
-      <PosSection title={`Commandes (${rows.length})`} padded={false}>
+      <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="border-b border-ink-100 bg-cream/50 text-xs font-bold tracking-wide text-ink-400 uppercase">
+            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
               <tr>
                 <th className="px-6 py-4">N°</th>
                 <th className="px-6 py-4">Date</th>
@@ -1479,7 +1375,7 @@ function OrdersTab() {
             </thead>
             <tbody>
               {rows.map((o) => (
-                <tr key={o.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/40">
+                <tr key={o.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
                   <td className="px-6 py-4 font-bold text-ink-900">{o.reference}</td>
                   <td className="px-6 py-4 text-ink-600">{fmtDateTime(o.created_at)}</td>
                   <td className="px-6 py-4 text-ink-600">{o.customer_name}</td>
@@ -1494,12 +1390,12 @@ function OrdersTab() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex justify-end gap-1.5">
-                      <button type="button" className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100" onClick={() => setDetail(o)}>
+                      <button className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100" onClick={() => setDetail(o)}>
                         Détail
                       </button>
                       {nextAction(o)}
                       {o.status === 'attente' && (
-                        <button type="button" className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" onClick={() => setStatus(o, 'annulee')}>
+                        <button className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100" onClick={() => setStatus(o, 'annulee')}>
                           Annuler
                         </button>
                       )}
@@ -1511,34 +1407,22 @@ function OrdersTab() {
           </table>
         </div>
         {rows.length === 0 && <p className="py-12 text-center text-ink-400">Aucune commande en ligne pour le moment.</p>}
-      </PosSection>
+      </div>
 
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `Commande ${detail.reference}` : ''} wide>
         {detail && (
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Date</p>
-                <p className="mt-1 font-semibold text-ink-800">{fmtDateTime(detail.created_at)}</p>
-              </div>
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Client</p>
-                <p className="mt-1 font-semibold text-ink-800">{detail.customer_name}</p>
-              </div>
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Téléphone</p>
-                <p className="mt-1 font-semibold text-ink-800">{detail.phone}</p>
-              </div>
-              <div className="rounded-xl bg-cream px-4 py-3">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Statut</p>
-                <p className="mt-1">
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${ORDER_STATUS[detail.status]?.cls || ''}`}>
-                    {ORDER_STATUS[detail.status]?.label || detail.status}
-                  </span>
-                </p>
-              </div>
+              <p className="text-ink-500">📅 {fmtDateTime(detail.created_at)}</p>
+              <p className="text-ink-500">👤 <strong>{detail.customer_name}</strong></p>
+              <p className="text-ink-500">📞 {detail.phone}</p>
+              <p>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${ORDER_STATUS[detail.status]?.cls || ''}`}>
+                  {ORDER_STATUS[detail.status]?.label || detail.status}
+                </span>
+              </p>
             </div>
-            {detail.note && <p className="rounded-xl bg-cream px-4 py-3 text-sm text-ink-600">{detail.note}</p>}
+            {detail.note && <p className="rounded-xl bg-cream px-4 py-3 text-sm text-ink-600">📝 {detail.note}</p>}
             <div className="overflow-x-auto rounded-xl ring-1 ring-ink-100">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
@@ -1569,7 +1453,7 @@ function OrdersTab() {
               <div className="no-print flex flex-wrap gap-2">
                 {nextAction(detail)}
                 {detail.status === 'attente' && (
-                  <button type="button" className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={() => setStatus(detail, 'annulee')}>
+                  <button className="btn-ghost !px-4 !py-2.5 !text-red-600 text-sm" onClick={() => setStatus(detail, 'annulee')}>
                     Annuler (réappro stock)
                   </button>
                 )}
@@ -1595,43 +1479,31 @@ function StatsTab() {
   if (!stats) return <p className="text-sm text-ink-400">Chargement…</p>;
 
   const max7 = Math.max(1, ...stats.last7.map((d) => d.total));
-  const ca7 = stats.last7.reduce((a, d) => a + d.total, 0);
-  const n7 = stats.last7.reduce((a, d) => a + d.n, 0);
+  const cards = [
+    { icon: '💵', label: 'Ventes aujourd\'hui', value: fmtMoney(stats.today.total), sub: `${stats.today.n} vente(s)` },
+    { icon: '📈', label: 'CA 7 jours', value: fmtMoney(stats.last7.reduce((a, d) => a + d.total, 0)), sub: `${stats.last7.reduce((a, d) => a + d.n, 0)} vente(s)` },
+    { icon: '🏦', label: 'Valeur du stock', value: fmtMoney(stats.stockValue), sub: `${stats.products} produit(s) actif(s)` },
+    { icon: '⚠️', label: 'Stock bas / rupture', value: stats.lowStock.length, sub: `${stats.outOfStock} en rupture` }
+  ];
 
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={TABS.find((t) => t.id === 'caisse').icon}
-          label="Ventes aujourd’hui"
-          value={fmtMoney(stats.today.total)}
-          sub={`${stats.today.n} vente(s)`}
-        />
-        <StatCard
-          icon={TABS.find((t) => t.id === 'stats').icon}
-          label="CA 7 jours"
-          value={fmtMoney(ca7)}
-          sub={`${n7} vente(s)`}
-          tone="accent"
-        />
-        <StatCard
-          icon={TABS.find((t) => t.id === 'stock').icon}
-          label="Valeur du stock"
-          value={fmtMoney(stats.stockValue)}
-          sub={`${stats.products} produit(s) actif(s)`}
-          tone="ink"
-        />
-        <StatCard
-          icon="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
-          label="Stock bas / rupture"
-          value={stats.lowStock.length}
-          sub={`${stats.outOfStock} en rupture`}
-          tone={stats.lowStock.length ? 'warn' : 'brand'}
-        />
+    <div className="space-y-6">
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((c) => (
+          <div key={c.label} className="card flex items-center gap-4 p-6">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-brand-50 text-2xl">{c.icon}</span>
+            <div className="min-w-0">
+              <p className="font-display text-xl font-bold text-ink-900">{c.value}</p>
+              <p className="truncate text-sm font-semibold text-ink-500">{c.label}</p>
+              <p className="text-xs text-ink-400">{c.sub}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <PosSection title="Ventes — 7 derniers jours" desc="Courbe journalière et répartition des paiements.">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="card p-7">
+          <h3 className="mb-5 font-display text-lg font-bold text-ink-900">Ventes — 7 derniers jours</h3>
           <div className="flex h-44 items-end gap-3">
             {stats.last7.map((d) => (
               <div key={d.date} className="flex flex-1 flex-col items-center gap-1.5">
@@ -1656,10 +1528,11 @@ function StatsTab() {
               ))}
             </div>
           )}
-        </PosSection>
+        </div>
 
-        <div className="space-y-5">
-          <PosSection title="Meilleures ventes (30 jours)" desc="Produits les plus vendus.">
+        <div className="space-y-6">
+          <div className="card p-7">
+            <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Meilleures ventes (30 jours)</h3>
             {stats.topProducts.length === 0 && <p className="text-sm text-ink-400">Aucune vente sur 30 jours.</p>}
             <ul className="space-y-3">
               {stats.topProducts.map((p, i) => (
@@ -1672,9 +1545,10 @@ function StatsTab() {
                 </li>
               ))}
             </ul>
-          </PosSection>
-          <PosSection title="Alertes stock" desc="Produits sous le seuil d’alerte.">
-            {stats.lowStock.length === 0 && <p className="text-sm text-ink-400">Aucun produit sous le seuil d’alerte.</p>}
+          </div>
+          <div className="card p-7">
+            <h3 className="mb-4 font-display text-lg font-bold text-ink-900">Alertes stock</h3>
+            {stats.lowStock.length === 0 && <p className="text-sm text-ink-400">✅ Aucun produit sous le seuil d'alerte.</p>}
             <ul className="space-y-2">
               {stats.lowStock.map((p) => (
                 <li key={p.id} className="flex items-center justify-between gap-3 rounded-xl bg-cream px-4 py-2.5 text-sm">
@@ -1685,7 +1559,7 @@ function StatsTab() {
                 </li>
               ))}
             </ul>
-          </PosSection>
+          </div>
         </div>
       </div>
     </div>
@@ -1696,10 +1570,7 @@ export default function PosAdmin() {
   const [tab, setTab] = useState('caisse');
   const [moduleError, setModuleError] = useState('');
   const canManage = ['super_admin', 'admin'].includes(getSavedUser()?.role);
-  const visibleTabs = TABS.filter((t) => !t.manage || canManage);
-  const activeId = visibleTabs.some((t) => t.id === tab) ? tab : 'caisse';
-  const activeTab = visibleTabs.find((t) => t.id === activeId) || visibleTabs[0];
-  const groups = [...new Set(visibleTabs.map((t) => t.group))];
+  const tabs = TABS.filter(([, , manage]) => !manage || canManage);
 
   const checkModule = useCallback(() => {
     api.pos.products.list()
@@ -1712,99 +1583,40 @@ export default function PosAdmin() {
 
   if (moduleError)
     return (
-      <div className="mx-auto max-w-lg overflow-hidden rounded-2xl bg-white p-8 text-center ring-1 ring-ink-950/5">
-        <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-red-50 text-red-600">
-          <TabIcon d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
-        </span>
-        <p className="mt-4 text-sm font-bold text-ink-900">{moduleError}</p>
-        <p className="mt-2 text-sm text-ink-500">
-          Si le module POS a été désactivé par le super administrateur, demandez-lui de le réactiver
-          (Paramètres → Modules).
+      <div className="mx-auto max-w-lg rounded-2xl bg-red-50 p-8 text-center">
+        <p className="text-sm font-bold text-red-700">{moduleError}</p>
+        <p className="mt-2 text-sm text-red-600">
+          Le super administrateur peut l'activer dans Paramètres → Modules.
         </p>
-        <button type="button" className="btn-ghost mt-5 text-sm" onClick={checkModule}>Réessayer</button>
       </div>
     );
 
   return (
     <div>
-      <div className="lg:grid lg:grid-cols-[240px_minmax(0,1fr)] lg:items-start lg:gap-8">
-        <aside className="mb-6 lg:sticky lg:top-24 lg:mb-0">
-          {groups.map((g) => (
-            <div key={g} className="mb-5 last:mb-0">
-              <p className="mb-2 px-1 text-xs font-bold uppercase tracking-wider text-ink-400">{g}</p>
-              <nav className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
-                {visibleTabs.filter((t) => t.group === g).map((t) => {
-                  const on = activeId === t.id;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setTab(t.id)}
-                      className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors lg:w-full ${
-                        on ? 'bg-white text-brand-800 shadow-soft ring-1 ring-brand-100' : 'text-ink-600 hover:bg-white/70'
-                      }`}
-                    >
-                      <span className={`grid h-9 w-9 place-items-center rounded-lg ${on ? 'bg-brand-600 text-white' : 'bg-white text-ink-500 ring-1 ring-ink-100'}`}>
-                        <TabIcon d={t.icon} />
-                      </span>
-                      <span className="hidden min-w-0 lg:block">
-                        <span className="block text-sm font-bold">{t.label}</span>
-                        <span className="block text-[11px] font-medium text-ink-400">{t.hint}</span>
-                      </span>
-                      <span className="text-sm font-bold lg:hidden">{t.label}</span>
-                    </button>
-                  );
-                })}
-              </nav>
-            </div>
-          ))}
-        </aside>
-
-        <div>
-          <div className="sticky top-16 z-20 -mx-4 mb-6 border-b border-ink-100 bg-[#f4f6fb]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:mx-0 lg:rounded-2xl lg:border lg:bg-white/90 lg:px-5 lg:shadow-soft">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="font-display text-lg font-bold text-ink-900">{activeTab.label}</h2>
-                <p className="text-sm text-ink-400">{activeTab.hint}</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {activeId === 'caisse' && (
-                  <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setTab('stock')}>
-                    Voir le stock
-                  </button>
-                )}
-                {activeId === 'ventes' && canManage && (
-                  <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setTab('stats')}>
-                    Statistiques
-                  </button>
-                )}
-                {activeId === 'commandes' && (
-                  <a href="/boutique" target="_blank" rel="noreferrer" className="btn-ghost !px-4 !py-2 text-sm">
-                    Ouvrir la boutique
-                  </a>
-                )}
-                {activeId === 'stock' && (
-                  <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setTab('mouvements')}>
-                    Voir les mouvements
-                  </button>
-                )}
-                {activeId === 'stats' && (
-                  <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setTab('ventes')}>
-                    Voir les ventes
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {activeId === 'caisse' && <CaisseTab />}
-          {activeId === 'ventes' && <SalesTab canManage={canManage} />}
-          {activeId === 'commandes' && <OrdersTab />}
-          {activeId === 'stock' && <StockTab canManage={canManage} />}
-          {activeId === 'mouvements' && <MovementsTab />}
-          {activeId === 'stats' && canManage && <StatsTab />}
-        </div>
+      <PageTitle
+        title="Point de vente (POS)"
+        subtitle="Caisse, ventes, stock et statistiques — module interne activable par le super administrateur"
+      />
+      <div className="mb-8 flex flex-wrap gap-2">
+        {tabs.map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`rounded-full px-5 py-2.5 text-sm font-bold transition-all ${
+              tab === id ? 'bg-brand-600 text-white shadow-soft' : 'bg-white text-ink-600 ring-1 ring-ink-200 hover:ring-brand-300'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
+
+      {tab === 'caisse' && <CaisseTab />}
+      {tab === 'ventes' && <SalesTab canManage={canManage} />}
+      {tab === 'commandes' && <OrdersTab />}
+      {tab === 'stock' && <StockTab canManage={canManage} />}
+      {tab === 'mouvements' && <MovementsTab />}
+      {tab === 'stats' && canManage && <StatsTab />}
     </div>
   );
 }

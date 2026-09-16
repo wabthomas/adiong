@@ -23,8 +23,6 @@ export const DEFAULT_SETTINGS = {
   favicon: '/uploads/seed/favicon.png',
   grh_enabled: '0',
   pos_enabled: '0',
-  maintenance_enabled: '0',
-  maintenance_message: 'Le site est temporairement en maintenance. Nous revenons très bientôt.',
   address: '38 Av. Baraka, Rue Dr. Maganga, Q. Himbi, Commune de Goma, Nord-Kivu, RDC',
   phone1: '+243 976 483 612',
   phone2: '+243 811 401 636',
@@ -36,8 +34,6 @@ export const DEFAULT_SETTINGS = {
   pinterest: 'https://pinterest.com/',
   video_url: '',
   copyright: '© 2026 ADI ONG — Tous droits réservés.',
-  currency: 'USD',
-  footer_credit: "Fait avec {heart} pour l'inclusion",
 
   seo_title: 'ADI ONG — Inclusion des personnes handicapées à Goma',
   seo_description: "L'ONG ADI (Accessibility and Disabled Inclusion) soutient l'inclusion des personnes handicapées dans tous les secteurs de la vie : plaidoyer, entrepreneuriat, éducation inclusive et justice climatique à Goma, RDC.",

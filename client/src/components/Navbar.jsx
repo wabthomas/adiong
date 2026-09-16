@@ -42,7 +42,7 @@ export default function Navbar() {
   const [shopEnabled, setShopEnabled] = useState(false);
 
   useEffect(() => {
-    api.modules.public().then((m) => setShopEnabled(!!m.pos_enabled)).catch(() => setShopEnabled(false));
+    api.modules().then((m) => setShopEnabled(!!m.pos_enabled)).catch(() => setShopEnabled(false));
   }, []);
 
   const navLinks = shopEnabled

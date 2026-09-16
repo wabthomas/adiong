@@ -26,11 +26,9 @@ export default function CTABanner() {
               <Link to="/faire-un-don" className="btn-accent w-full sm:w-auto">
                 <IconHeart className="h-5 w-5" /> Faire un don
               </Link>
-              {String(site.phone1 || '').replace(/\s/g, '') && (
-                <a href={`tel:${String(site.phone1).replace(/\s/g, '')}`} className="btn w-full border border-white/30 bg-white/10 px-7 py-3.5 text-white backdrop-blur transition-all hover:bg-white/20 sm:w-auto">
-                  <IconPhone className="h-5 w-5" /> {site.phone1}
-                </a>
-              )}
+              <a href={`tel:${String(site.phone1 || '').replace(/\s/g, '')}`} className="btn w-full border border-white/30 bg-white/10 px-7 py-3.5 text-white backdrop-blur transition-all hover:bg-white/20 sm:w-auto">
+                <IconPhone className="h-5 w-5" /> {site.phone1}
+              </a>
             </div>
           </div>
         </div>

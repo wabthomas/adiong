@@ -82,7 +82,7 @@ export default function PartnersAdmin() {
           <p className="mb-3 text-xs font-bold tracking-wide text-ink-400 uppercase">Aperçu du bandeau</p>
           <div className="flex items-center gap-8 overflow-hidden">
             {partners.filter((p) => p.published).map((p) => (
-              <img key={p.id} src={p.logo} alt={p.name} className="h-14 w-auto max-w-[180px] bg-white object-contain sm:h-16" />
+              <img key={p.id} src={p.logo} alt={p.name} className="h-11 w-auto max-w-[150px] object-contain opacity-60 grayscale" />
             ))}
           </div>
         </div>

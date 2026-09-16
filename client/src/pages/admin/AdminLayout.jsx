@@ -243,19 +243,19 @@ export default function AdminLayout() {
           </header>
 
           <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <Suspense
-            fallback={
-              <div className="grid min-h-[40vh] place-items-center">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
-                  <p className="text-sm font-semibold text-ink-400">Chargement…</p>
+            <Suspense
+              fallback={
+                <div className="grid min-h-[40vh] place-items-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+                    <p className="text-sm font-semibold text-ink-400">Chargement…</p>
+                  </div>
                 </div>
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
-        </main>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </main>
         </div>
       </div>
     </div>

@@ -128,7 +128,7 @@ export default function Donate() {
                   </p>
 
                   <div className="mt-8">
-                    <label className="label">Montant du don ({site.currency || 'USD'})</label>
+                    <label className="label">Montant du don (USD)</label>
                     <div className="grid grid-cols-3 gap-3">
                       {amounts.map((a) => (
                         <button

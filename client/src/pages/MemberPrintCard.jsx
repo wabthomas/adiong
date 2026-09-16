@@ -107,14 +107,14 @@ export default function MemberPrintCard() {
       <div className="mx-auto flex max-w-3xl flex-wrap items-start justify-center gap-x-10 gap-y-8">
         <div className="flex flex-col items-center">
           <p className="no-print mb-2 text-[11px] font-bold tracking-wider text-ink-400 uppercase">Recto</p>
-          <div className={`relative flex overflow-hidden rounded-[2mm] bg-white shadow-lift ring-1 ring-ink-950/10 ${rectoCls}`} style={{ width: '85mm', height: '55mm' }}>
-            <div className="pointer-events-none absolute -top-[16mm] -right-[16mm] h-[36mm] w-[36mm] rounded-full bg-brand-50" />
-            <div className="pointer-events-none absolute -bottom-[8mm] -left-[12mm] h-[16mm] w-[16mm] rounded-full bg-accent-100/40" />
+          <div className={`shadow-lift ${rectoCls}`} style={{ width: '85mm', height: '55mm' }}>
+            <div className="relative h-full w-full overflow-hidden rounded-[2mm] bg-white ring-1 ring-ink-950/10">
+              <div className="absolute -top-[14mm] -right-[14mm] h-[40mm] w-[40mm] rounded-full bg-brand-50" />
+              <div className="absolute -bottom-[10mm] -left-[8mm] h-[26mm] w-[26mm] rounded-full bg-accent-100/70" />
 
-            <div className="relative flex h-full w-full flex-col">
-              <div className="relative flex min-h-0 flex-1 flex-col px-[5mm] pt-[3.5mm] pb-[1.5mm]">
+              <div className="relative flex h-full flex-col px-[5mm] pt-[4mm]">
                 <div className="flex items-start justify-between gap-[3mm]">
-                  <div className="flex min-w-0 items-center gap-[2.5mm] pt-[1.5mm]">
+                  <div className="flex min-w-0 items-center gap-[2.5mm]">
                     {site.logo ? (
                       <span className="grid h-[9mm] w-[11mm] shrink-0 place-items-center overflow-hidden rounded-[1mm] bg-white ring-1 ring-ink-100">
                         <img src={site.logo} alt={site.site_name || 'ADI ONG'} className="max-h-[7mm] max-w-[10mm] object-contain" />
@@ -124,9 +124,16 @@ export default function MemberPrintCard() {
                         {(site.site_name || 'A').slice(0, 1)}
                       </span>
                     )}
-                    <p className="min-w-0 truncate font-display text-[9pt] leading-tight font-extrabold tracking-wide text-brand-800">
-                      {site.site_name || 'ADI ONG'}
-                    </p>
+                    <div className="min-w-0">
+                      <p className="truncate font-display text-[9pt] leading-tight font-extrabold tracking-wide text-brand-800">
+                        {site.site_name || 'ADI ONG'}
+                      </p>
+                      {site.site_tagline && (
+                        <p className="truncate text-[5.5pt] font-medium tracking-wide text-ink-400">
+                          {site.site_tagline}
+                        </p>
+                      )}
+                    </div>
                   </div>
                   {member.photo ? (
                     <img
@@ -141,47 +148,50 @@ export default function MemberPrintCard() {
                   )}
                 </div>
 
-                <div className="-mt-[6mm] flex min-h-0 flex-1 items-end justify-between gap-[3mm]">
-                  <div className="min-w-0 flex-1 pr-[2mm]">
-                    <h2 className="max-w-[48mm] font-display text-[14pt] leading-tight font-extrabold text-ink-900">
+                <div className="mt-[2.5mm] flex min-h-0 flex-1 items-center gap-[3.5mm]">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate font-display text-[15pt] leading-tight font-extrabold text-ink-900">
                       {member.full_name}
                     </h2>
                     {member.job_title && (
-                      <p className="mt-[0.4mm] text-[8pt] font-bold tracking-wide text-accent-500">
+                      <p className="mt-[0.5mm] truncate text-[8.5pt] font-bold tracking-wide text-accent-500">
                         {member.job_title}
                       </p>
                     )}
-                    <div className="mt-[1.6mm] h-[0.3mm] w-[16mm] rounded-full bg-brand-500" />
-                    <div className="mt-[1.8mm] space-y-[1mm] text-[6.8pt] leading-snug font-semibold text-ink-700">
+                    <div className="mt-[2mm] h-[0.3mm] w-[16mm] rounded-full bg-brand-500" />
+                    <div className="mt-[2.5mm] space-y-[1.2mm] text-[7pt] font-semibold text-ink-600">
                       {member.phone && (
-                        <p className="flex items-center gap-[1.5mm]">
+                        <p className="flex items-center gap-[1.5mm] truncate">
                           <IconPhone className="h-[2.4mm] w-[2.4mm] shrink-0 text-brand-600" />
-                          <span className="min-w-0 truncate">{member.phone}</span>
+                          {member.phone}
                         </p>
                       )}
                       {member.email && (
-                        <p className="flex items-center gap-[1.5mm]">
+                        <p className="flex items-center gap-[1.5mm] truncate">
                           <IconMail className="h-[2.4mm] w-[2.4mm] shrink-0 text-brand-600" />
-                          <span className="min-w-0 truncate">{member.email}</span>
+                          {member.email}
                         </p>
                       )}
                       {site.address && (
-                        <p className="flex items-start gap-[1.5mm]">
-                          <IconPin className="mt-[0.3mm] h-[2.4mm] w-[2.4mm] shrink-0 text-brand-600" />
-                          <span className="min-w-0 line-clamp-2">{site.address}</span>
+                        <p className="flex items-center gap-[1.5mm] truncate">
+                          <IconPin className="h-[2.4mm] w-[2.4mm] shrink-0 text-brand-600" />
+                          {site.address}
                         </p>
                       )}
                     </div>
                   </div>
-                  <div className="mb-[0.4mm] shrink-0">
-                    <img src={qrSrc} alt={`QR ${member.unique_code}`} className="h-[15mm] w-[15mm]" />
+                  <div className="flex shrink-0 flex-col items-center">
+                    <img src={qrSrc} alt={`QR ${member.unique_code}`} className="h-[16mm] w-[16mm]" />
+                    <p className="mt-[1mm] text-[4.5pt] font-bold tracking-wider text-ink-400">SCANNER</p>
                   </div>
                 </div>
               </div>
 
-              <div className="relative z-10 flex h-[6mm] shrink-0 items-center justify-between gap-[3mm] bg-brand-700 px-[4.5mm]">
-                <p className="text-[5.5pt] font-semibold tracking-wide text-white/80">Carte de membre</p>
-                <p className="font-display text-[7pt] font-bold tracking-widest text-white">
+              <div className="absolute inset-x-0 bottom-0 flex h-[7mm] items-center justify-between bg-brand-700 px-[5mm]">
+                <p className="truncate text-[5.5pt] font-semibold tracking-wide text-white/85">
+                  {site.site_tagline || 'Inclusion et accompagnement des personnes en situation de handicap'}
+                </p>
+                <p className="shrink-0 font-display text-[6.5pt] font-bold tracking-widest text-white">
                   {member.unique_code}
                 </p>
               </div>
@@ -191,13 +201,13 @@ export default function MemberPrintCard() {
 
         <div className="flex flex-col items-center">
           <p className="no-print mb-2 text-[11px] font-bold tracking-wider text-ink-400 uppercase">Verso</p>
-          <div className={`relative flex overflow-hidden rounded-[2mm] bg-brand-700 shadow-lift ring-1 ring-ink-950/10 ${versoCls}`} style={{ width: '85mm', height: '55mm' }}>
-            <div className="pointer-events-none absolute -top-[16mm] -right-[12mm] h-[44mm] w-[44mm] rounded-full bg-accent-400/25" />
-            <div className="pointer-events-none absolute -bottom-[8mm] -left-[10mm] h-[24mm] w-[24mm] rounded-full bg-white/10" />
-            <div className="pointer-events-none absolute top-[10mm] left-[6mm] h-[3mm] w-[3mm] rounded-full bg-accent-400/60" />
+          <div className={`shadow-lift ${versoCls}`} style={{ width: '85mm', height: '55mm' }}>
+            <div className="relative h-full w-full overflow-hidden rounded-[2mm] bg-brand-700 ring-1 ring-ink-950/10">
+              <div className="absolute -top-[16mm] -right-[12mm] h-[44mm] w-[44mm] rounded-full bg-accent-400/25" />
+              <div className="absolute -bottom-[14mm] -left-[10mm] h-[32mm] w-[32mm] rounded-full bg-white/10" />
+              <div className="absolute top-[10mm] left-[6mm] h-[3mm] w-[3mm] rounded-full bg-accent-400/60" />
 
-            <div className="relative flex h-full w-full flex-col">
-              <div className="relative flex min-h-0 flex-1 flex-col items-center px-[5mm] pt-[3mm] pb-[1.5mm] text-center">
+              <div className="relative flex h-full flex-col items-center px-[5mm] pt-[3.5mm] text-center">
                 {site.logo ? (
                   <span className="grid h-[8mm] w-[10mm] place-items-center overflow-hidden rounded-[1mm] bg-white">
                     <img src={site.logo} alt="" className="max-h-[6mm] max-w-[8.5mm] object-contain" />
@@ -207,12 +217,12 @@ export default function MemberPrintCard() {
                     {(site.site_name || 'A').slice(0, 1)}
                   </span>
                 )}
-                <p className="mt-[1.4mm] text-[5pt] font-bold tracking-[0.3em] text-white/60">CARTE DE MEMBRE</p>
-                <h2 className="mt-[0.6mm] max-w-full truncate font-display text-[11pt] leading-tight font-extrabold text-white">
+                <p className="mt-[1.8mm] text-[5pt] font-bold tracking-[0.3em] text-white/60">CARTE DE MEMBRE</p>
+                <h2 className="mt-[0.8mm] max-w-full truncate font-display text-[11pt] leading-tight font-extrabold text-white">
                   {site.site_name || 'ADI ONG'}
                 </h2>
 
-                <div className="my-[1.6mm] h-[0.3mm] w-[14mm] rounded-full bg-accent-400" />
+                <div className="my-[2mm] h-[0.3mm] w-[14mm] rounded-full bg-accent-400" />
 
                 <p className="max-w-full truncate font-display text-[10pt] font-bold text-white">{member.full_name}</p>
                 {member.job_title && (
@@ -221,36 +231,38 @@ export default function MemberPrintCard() {
                   </p>
                 )}
 
-                <div className="mt-auto flex w-full items-center gap-[3mm] pt-[2mm]">
-                  <span className="grid h-[15mm] w-[15mm] shrink-0 place-items-center rounded-[1.5mm] bg-white p-[1.2mm]">
+                <div className="mt-[2.5mm] flex items-center gap-[3mm]">
+                  <span className="grid h-[16mm] w-[16mm] shrink-0 place-items-center rounded-[1.5mm] bg-white p-[1.2mm]">
                     <img src={qrSrc} alt={`QR ${member.unique_code}`} className="h-full w-full" />
                   </span>
-                  <div className="min-w-0 space-y-[1mm] text-left text-[6pt] font-semibold text-white/90">
+                  <div className="space-y-[1mm] text-left text-[6pt] font-semibold text-white/90">
                     {member.phone && (
-                      <p className="flex items-center gap-[1.5mm]">
+                      <p className="flex items-center gap-[1.5mm] truncate">
                         <IconPhone className="h-[2.2mm] w-[2.2mm] shrink-0 text-accent-300" />
-                        <span className="min-w-0 truncate">{member.phone}</span>
+                        {member.phone}
                       </p>
                     )}
                     {member.email && (
-                      <p className="flex items-center gap-[1.5mm]">
+                      <p className="flex items-center gap-[1.5mm] truncate">
                         <IconMail className="h-[2.2mm] w-[2.2mm] shrink-0 text-accent-300" />
-                        <span className="min-w-0 truncate">{member.email}</span>
+                        {member.email}
                       </p>
                     )}
                     {site.address && (
-                      <p className="flex items-start gap-[1.5mm]">
-                        <IconPin className="mt-[0.2mm] h-[2.2mm] w-[2.2mm] shrink-0 text-accent-300" />
-                        <span className="min-w-0 line-clamp-2">{site.address}</span>
+                      <p className="flex items-center gap-[1.5mm] truncate">
+                        <IconPin className="h-[2.2mm] w-[2.2mm] shrink-0 text-accent-300" />
+                        {site.address}
                       </p>
                     )}
                   </div>
                 </div>
               </div>
 
-              <div className="relative z-10 flex h-[6mm] shrink-0 items-center justify-between gap-[3mm] bg-brand-900 px-[4.5mm]">
-                <p className="text-[5.5pt] font-semibold tracking-wide text-white/80">Carte de membre</p>
-                <p className="font-display text-[6.5pt] font-bold tracking-widest text-accent-300">
+              <div className="absolute inset-x-0 bottom-0 flex h-[6mm] items-center justify-between bg-brand-900 px-[5mm]">
+                <p className="truncate text-[5pt] font-semibold tracking-wide text-white/70">
+                  {site.site_tagline || 'Inclusion et accompagnement des personnes en situation de handicap'}
+                </p>
+                <p className="shrink-0 font-display text-[6pt] font-bold tracking-widest text-accent-300">
                   {member.unique_code}
                 </p>
               </div>

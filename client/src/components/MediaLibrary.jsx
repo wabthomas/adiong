@@ -3,11 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api.js';
 import { IconClose } from './Icons.jsx';
 
-function pickExtra(m) {
-  const pdf = /pdf/i.test(m?.mime || '') || /\.pdf$/i.test(m?.url || '') || /\.pdf$/i.test(m?.filename || '');
-  return pdf ? (m.filename || '') : (m.alt || '');
-}
-
 function LibraryPanel({ onPick, onClose, embedded = false, accept = 'all' }) {
   const [items, setItems] = useState([]);
   const [q, setQ] = useState('');
@@ -31,7 +26,7 @@ function LibraryPanel({ onPick, onClose, embedded = false, accept = 'all' }) {
     if (!file) return;
     const media = await api.media.upload(file);
     setItems((prev) => [media, ...prev]);
-    if (onPick) onPick(media.url, pickExtra(media));
+    if (onPick) onPick(media.url);
   };
 
   const uploadFiles = async (fileList) => {
@@ -152,7 +147,7 @@ function LibraryPanel({ onPick, onClose, embedded = false, accept = 'all' }) {
             <div key={m.id} className="group relative overflow-hidden rounded-2xl ring-1 ring-ink-100">
               <button
                 className="block w-full"
-                onClick={() => onPick && onPick(m.url, pickExtra(m))}
+                onClick={() => onPick && onPick(m.url, isPdf ? m.filename : (m.alt || ''))}
                 title={m.alt || m.filename}
               >
                 {isPdf ? (

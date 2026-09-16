@@ -1,66 +1,20 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { api, setMoneyCurrency } from '../api.js';
+import { api } from '../api.js';
 
 const Ctx = createContext(null);
 
-const EMPTY = {
-  site: {},
-  causes: [],
-  articles: [],
-  campaigns: [],
-  partners: [],
-  maintenance: false,
-  maintenanceMessage: ''
-};
-
 export function SiteProvider({ children }) {
-  const [data, setData] = useState(EMPTY);
+  const [data, setData] = useState({ site: {}, causes: [], articles: [], campaigns: [], partners: [] });
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    try {
-      const [site, modules] = await Promise.all([api.site(), api.modules.public()]);
-      setMoneyCurrency(site?.currency);
-      if (site?.site_name) {
-        document.title = modules?.maintenance_enabled
-          ? `${site.site_name} — Maintenance`
-          : `${site.site_name} — ${site.site_tagline || 'Inclusion'}`;
-      }
-
-      if (modules?.maintenance_enabled) {
-        setData({
-          site: site || {},
-          causes: [],
-          articles: [],
-          campaigns: [],
-          partners: [],
-          maintenance: true,
-          maintenanceMessage: modules.maintenance_message || ''
-        });
-        return;
-      }
-
-      const [causes, articles, campaigns, partners] = await Promise.all([
-        api.causes(),
-        api.articles(''),
-        api.campaigns(),
-        api.partners()
-      ]);
-      setData({
-        site: site || {},
-        causes: Array.isArray(causes) ? causes : [],
-        articles: Array.isArray(articles) ? articles : [],
-        campaigns: Array.isArray(campaigns) ? campaigns : [],
-        partners: Array.isArray(partners) ? partners : [],
-        maintenance: false,
-        maintenanceMessage: ''
-      });
-    } catch {
-      /* keep last known data */
-    } finally {
-      setLoading(false);
-    }
-  };
+  const load = () =>
+    Promise.all([api.site(), api.causes(), api.articles(''), api.campaigns(), api.partners()])
+      .then(([site, causes, articles, campaigns, partners]) => {
+        setData({ site, causes, articles, campaigns, partners });
+        document.title = `${site.site_name || 'ADI ONG'} — ${site.site_tagline || 'Inclusion'}`;
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
 
   useEffect(() => {
     load();
@@ -95,10 +49,4 @@ export function SiteProvider({ children }) {
   );
 }
 
-export const useSite = () => {
-  const ctx = useContext(Ctx);
-  if (!ctx) {
-    return { ...EMPTY, reload: () => {}, loading: false };
-  }
-  return ctx;
-};
+export const useSite = () => useContext(Ctx);

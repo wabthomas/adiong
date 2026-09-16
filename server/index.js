@@ -32,26 +32,10 @@ function loadSecret() {
 }
 const JWT_SECRET = loadSecret();
 
-function loadDotEnv() {
-  try {
-    const envPath = path.join(__dirname, '..', '.env');
-    if (!fs.existsSync(envPath)) return;
-    for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-      if (!m || (process.env[m[1]] != null && process.env[m[1]] !== '')) continue;
-      let v = m[2].trim();
-      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-      process.env[m[1]] = v;
-    }
-  } catch { /* ignore */ }
-}
-loadDotEnv();
-
 ensureSettings();
 seedIfEmpty();
 ensureUserCodes();
-// Pas de top-level await : Passenger N0C exige un listen() pendant le chargement sync du startup file.
-void syncMediaLibrary().catch((e) => console.error('[media sync]', e));
+await syncMediaLibrary();
 
 const app = express();
 app.use(helmet(process.env.NODE_ENV === 'production' ? {
@@ -159,7 +143,7 @@ const setSetting = (key, value) =>
 const STRING_SETTINGS = [
   'grh_annual_leave_days',
   'site_name','site_tagline','logo','favicon','address','phone1','phone2','email','whatsapp','facebook','twitter',
-  'instagram','pinterest','video_url','copyright','footer_credit','currency',
+  'instagram','pinterest','video_url','copyright',
   'seo_title','seo_description','seo_keywords','og_image','twitter_handle',
   'hero_image','hero_kicker','hero_title','hero_text','hero_badge_title','hero_badge_sub','about_image',
   'mission_title','mission_text','home_mission_heading',
@@ -240,22 +224,13 @@ const requireModule = (name, label) => (req, res, next) => {
   next();
 };
 
-const slugify = (s) =>
-  String(s || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '') || 'item';
-
 const uniqueSlug = (table, desired, ignoreId = null) => {
-  const base = slugify(desired);
-  let slug = base;
+  let slug = desired;
   let i = 1;
   const check = ignoreId
     ? db.prepare(`SELECT id FROM ${table} WHERE slug = ? AND id != ?`)
     : db.prepare(`SELECT id FROM ${table} WHERE slug = ?`);
-  while ((ignoreId ? check.get(slug, ignoreId) : check.get(slug))) slug = `${base}-${++i}`;
+  while ((ignoreId ? check.get(slug, ignoreId) : check.get(slug))) slug = `${desired}-${++i}`;
   return slug;
 };
 
@@ -388,31 +363,7 @@ app.get('/api/public/site', (req, res) => res.json(publicSite()));
 app.get('/api/public/modules', (req, res) => {
   res.json({
     grh_enabled: getSetting('grh_enabled') === '1',
-    pos_enabled: getSetting('pos_enabled') === '1',
-    maintenance_enabled: getSetting('maintenance_enabled') === '1',
-    maintenance_message: getSetting('maintenance_message') || ''
-  });
-});
-
-// Mode maintenance : bloque le contenu public (admin + auth + site/modules restent accessibles)
-app.use((req, res, next) => {
-  if (getSetting('maintenance_enabled') !== '1') return next();
-  const p = req.path || '';
-  if (
-    p.startsWith('/api/admin') ||
-    p.startsWith('/api/auth') ||
-    p.startsWith('/api/register') ||
-    p === '/api/public/site' ||
-    p === '/api/public/modules' ||
-    p.startsWith('/uploads') ||
-    !p.startsWith('/api/')
-  ) {
-    return next();
-  }
-  return res.status(503).json({
-    error: 'Site en maintenance',
-    maintenance: true,
-    message: getSetting('maintenance_message') || ''
+    pos_enabled: getSetting('pos_enabled') === '1'
   });
 });
 
@@ -619,7 +570,7 @@ app.post('/api/admin/articles', authRequired, requireRole('content'), (req, res)
   const { title, slug, excerpt, content, category, image, author, date, published,
     seo_title, seo_description, seo_image, seo_noindex } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
-  const s = uniqueSlug('articles', slug || title);
+  const s = uniqueSlug('articles', slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
   const info = db.prepare(`INSERT INTO articles (slug, title, excerpt, content, category, image, author, date, published, seo_title, seo_description, seo_image, seo_noindex)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(s, title, excerpt || '', content || '', category || 'actualites', image || '', author || 'ADI ONG',
@@ -645,7 +596,7 @@ app.get('/api/admin/causes', authRequired, requireRole('any'), (req, res) => res
 app.post('/api/admin/causes', authRequired, requireRole('content'), (req, res) => {
   const { title, slug, tagline, description, long_content, icon, image, link, sort_order } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
-  const s = uniqueSlug('causes', slug || title);
+  const s = uniqueSlug('causes', slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
   const info = db.prepare(`INSERT INTO causes (slug, title, tagline, description, long_content, icon, image, link, sort_order, published)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
     .run(s, title, tagline || '', description || '', long_content || '', icon || 'megaphone', image || '', link || '', sort_order || 99);
@@ -666,7 +617,7 @@ app.get('/api/admin/campaigns', authRequired, requireRole('any'), (req, res) => 
 app.post('/api/admin/campaigns', authRequired, requireRole('content'), (req, res) => {
   const { title, slug, description, image, goal_amount, collected_amount, deadline, cause_slug } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
-  const s = uniqueSlug('campaigns', slug || title);
+  const s = uniqueSlug('campaigns', slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
   const info = db.prepare(`INSERT INTO campaigns (slug, title, description, image, goal_amount, collected_amount, deadline, cause_slug, published)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`)
     .run(s, title, description || '', image || '', Number(goal_amount) || 0, Number(collected_amount) || 0, deadline || '', cause_slug || '');
@@ -691,14 +642,9 @@ app.post('/api/admin/partners', authRequired, requireRole('content'), (req, res)
   const b = req.body || {};
   if (!String(b.name || '').trim() || !String(b.logo || '').trim())
     return res.status(400).json({ error: 'Nom et logo du partenaire sont requis' });
-  try {
-    const info = db.prepare('INSERT INTO partners (name, logo, link, sort_order, published) VALUES (?, ?, ?, ?, ?)')
-      .run(String(b.name).trim(), b.logo, b.link || '', Number(b.sort_order) || 0, b.published === false ? 0 : 1);
-    res.json(db.prepare('SELECT * FROM partners WHERE id = ?').get(info.lastInsertRowid));
-  } catch (e) {
-    console.error('[partners]', e);
-    res.status(500).json({ error: 'Impossible d’enregistrer le partenaire' });
-  }
+  const info = db.prepare('INSERT INTO partners (name, logo, link, sort_order, published) VALUES (?, ?, ?, ?, ?)')
+    .run(String(b.name).trim(), b.logo, b.link || '', Number(b.sort_order) || 0, b.published === false ? 0 : 1);
+  res.json(db.prepare('SELECT * FROM partners WHERE id = ?').get(info.lastInsertRowid));
 });
 
 app.put('/api/admin/partners/:id', authRequired, requireRole('content'), (req, res) => {
@@ -776,13 +722,11 @@ const memoryUpload = multer({
 });
 
 function uniqueMediaFilename(original) {
-  const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  const raw = path.basename(String(original || 'image')).replace(/[^\w.\-+() ]+/g, '_').slice(0, 160) || 'image';
-  const ext = path.extname(raw) || '.jpg';
-  const stem = path.basename(raw, ext).slice(0, 120) || 'image';
-  const candidate = `${stem}-${stamp}${ext}`;
-  if (!db.prepare('SELECT 1 FROM media WHERE filename = ?').get(candidate)) return candidate;
-  return `${stem}-${stamp}-${crypto.randomBytes(2).toString('hex')}${ext}`;
+  const base = original || 'image';
+  if (!db.prepare('SELECT 1 FROM media WHERE filename = ?').get(base)) return base;
+  const ext = path.extname(base);
+  const stem = path.basename(base, ext);
+  return `${stem}-${Date.now()}${ext || '.jpg'}`;
 }
 
 function scaleTo(image, maxW, maxH) {
@@ -799,84 +743,24 @@ function isPdfMedia(row) {
   return /pdf/i.test(row.mime || '') || /\.pdf$/i.test(row.url || '') || /\.pdf$/i.test(row.filename || '');
 }
 
-function storeRawMedia(buffer, originalName, folder) {
-  const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  const origExt = path.extname(originalName).toLowerCase() || (folder === 'docs' ? '.pdf' : '.png');
-  const allowed = /^\.(jpe?g|png|webp|gif|avif|svg|pdf)$/i.test(origExt);
-  const ext = allowed ? origExt : (folder === 'docs' ? '.pdf' : '.png');
-  const dir = folder === 'docs' ? docsDir : mediaDir;
-  const mainName = `${stamp}${ext}`;
-  fs.writeFileSync(path.join(dir, mainName), buffer);
-  return { folder, mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
-}
-
-function opaqueBounds(image) {
-  const { width, height, data } = image.bitmap;
-  let minX = width;
-  let minY = height;
-  let maxX = 0;
-  let maxY = 0;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      if (data[(width * y + x) * 4 + 3] > 10) {
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < minX) return null;
-  const pad = Math.max(2, Math.round(Math.min(width, height) * 0.01));
-  const x = Math.max(0, minX - pad);
-  const y = Math.max(0, minY - pad);
-  return {
-    x,
-    y,
-    w: Math.min(width - x, maxX - minX + 1 + pad * 2),
-    h: Math.min(height - y, maxY - minY + 1 + pad * 2)
-  };
-}
-
-async function storeTrimmedPng(buffer) {
-  try {
-    const image = await Jimp.read(buffer);
-    const box = opaqueBounds(image);
-    const area = image.bitmap.width * image.bitmap.height;
-    if (box && (box.w * box.h) / area < 0.92) {
-      image.crop(box.x, box.y, box.w, box.h);
-    }
-    scaleTo(image, 1200, 800);
-    const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-    const mainName = `${stamp}.png`;
-    const mainPath = path.join(mediaDir, mainName);
-    await image.writeAsync(mainPath);
-    return {
-      folder: 'media',
-      mainName,
-      thumbName: mainName,
-      width: image.bitmap.width,
-      height: image.bitmap.height,
-      size: fs.statSync(mainPath).size
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function optimizeBuffer(buffer, originalName = 'image.jpg') {
+  const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   const origExt = path.extname(originalName).toLowerCase() || '.jpg';
   const looksPdf = origExt === '.pdf' || buffer.slice(0, 5).toString() === '%PDF-';
-  if (looksPdf) return storeRawMedia(buffer, originalName, 'docs');
-  if (['.svg', '.gif', '.avif'].includes(origExt)) return storeRawMedia(buffer, originalName, 'media');
-  if (origExt === '.png' && buffer.length <= 2 * 1024 * 1024) {
-    return (await storeTrimmedPng(buffer)) || storeRawMedia(buffer, originalName, 'media');
+  if (looksPdf) {
+    const mainName = `${stamp}.pdf`;
+    fs.writeFileSync(path.join(docsDir, mainName), buffer);
+    return { folder: 'docs', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
+  }
+  if (origExt === '.svg') {
+    const mainName = `${stamp}.svg`;
+    fs.writeFileSync(path.join(mediaDir, mainName), buffer);
+    return { folder: 'media', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
   }
   try {
     const image = await Jimp.read(buffer);
     const keepPng = origExt === '.png';
     const mainExt = keepPng ? 'png' : 'jpg';
-    const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
     scaleTo(image, 1600, 1600);
     image.quality(82);
@@ -903,7 +787,9 @@ async function optimizeBuffer(buffer, originalName = 'image.jpg') {
       size
     };
   } catch {
-    return storeRawMedia(buffer, originalName, 'media');
+    const mainName = `${stamp}${origExt}`;
+    fs.writeFileSync(path.join(mediaDir, mainName), buffer);
+    return { folder: 'media', mainName, thumbName: mainName, width: 0, height: 0, size: buffer.length };
   }
 }
 
@@ -911,21 +797,19 @@ app.post('/api/admin/media', authRequired, requireRole('content'), (req, res) =>
   memoryUpload.single('image')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
     try {
-      if (!req.file?.buffer) return res.status(400).json({ error: 'Aucun fichier fourni' });
+      if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
       const opt = await optimizeBuffer(req.file.buffer, req.file.originalname);
       const folder = opt.folder || 'media';
       const url = `/uploads/${folder}/${opt.mainName}`;
       const thumb = `/uploads/${folder}/${opt.thumbName}`;
       const alt = String(req.body?.alt || '').slice(0, 300);
       const filename = uniqueMediaFilename(req.file.originalname);
-      const mime = String(req.file.mimetype || 'application/octet-stream').slice(0, 120);
       const info = db.prepare(`INSERT INTO media (filename, url, thumb, size, width, height, mime, alt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(filename, url, thumb, opt.size, opt.width, opt.height, mime, alt);
+        .run(filename, url, thumb, opt.size, opt.width, opt.height, req.file.mimetype, alt);
       res.json(db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     } catch (e) {
-      console.error('[media]', e);
-      if (!res.headersSent) res.status(500).json({ error: `Échec du téléversement : ${e.message || 'erreur serveur'}` });
+      res.status(400).json({ error: `Échec de l'optimisation : ${e.message}` });
     }
   });
 });
@@ -961,7 +845,6 @@ app.delete('/api/admin/media/:id', authRequired, requireRole('content'), (req, r
     db.prepare('SELECT COUNT(*) n FROM campaigns WHERE image = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM users WHERE photo = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM partners WHERE logo = ?').get(m.url).n +
-    db.prepare('SELECT COUNT(*) n FROM grh_employees WHERE photo = ?').get(m.url).n +
     db.prepare('SELECT COUNT(*) n FROM articles WHERE content LIKE ?').get(`%${m.url}%`).n;
   const settingUsed = db.prepare('SELECT COUNT(*) n FROM settings WHERE value LIKE ?').get(`%${m.url}%`).n;
   if (used + settingUsed > 0)
@@ -1103,25 +986,17 @@ app.get('/api/admin/modules', authRequired, (req, res) => {
   res.json({
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
-    maintenance_enabled: getSetting('maintenance_enabled') === '1',
-    maintenance_message: getSetting('maintenance_message') || '',
     is_super: req.user.role === 'super_admin'
   });
 });
 
 app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => {
-  const { grh_enabled, pos_enabled, maintenance_enabled, maintenance_message } = req.body || {};
+  const { grh_enabled, pos_enabled } = req.body || {};
   if (typeof grh_enabled === 'boolean') setSetting('grh_enabled', grh_enabled ? '1' : '0');
   if (typeof pos_enabled === 'boolean') setSetting('pos_enabled', pos_enabled ? '1' : '0');
-  if (typeof maintenance_enabled === 'boolean') setSetting('maintenance_enabled', maintenance_enabled ? '1' : '0');
-  if (typeof maintenance_message === 'string') {
-    setSetting('maintenance_message', maintenance_message.trim().slice(0, 500));
-  }
   res.json({
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
-    maintenance_enabled: getSetting('maintenance_enabled') === '1',
-    maintenance_message: getSetting('maintenance_message') || '',
     is_super: true
   });
 });
@@ -1267,11 +1142,8 @@ app.post('/api/admin/grh/employees', ...GRH, (req, res) => {
       b.manager_id || null, Math.max(0, Number(b.annual_days) || 0), String(b.job_description || '').slice(0, 4000)
     );
     res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(info.lastInsertRowid));
-  } catch (e) {
-    console.error('[grh employees create]', e);
-    if (String(e.message || '').includes('UNIQUE'))
-      return res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
-    res.status(500).json({ error: e.message || 'Impossible de créer l\'employé' });
+  } catch {
+    res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
   }
 });
 
@@ -1298,11 +1170,8 @@ app.put('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
         .run(ex.id, ex.salary, salary ?? 0);
     }
     res.json(db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(ex.id));
-  } catch (e) {
-    console.error('[grh employees update]', e);
-    if (String(e.message || '').includes('UNIQUE'))
-      return res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
-    res.status(500).json({ error: e.message || 'Impossible de mettre à jour l\'employé' });
+  } catch {
+    res.status(409).json({ error: 'Cet email est déjà utilisé par un autre employé' });
   }
 });
 
@@ -2067,6 +1936,475 @@ app.delete('/api/admin/grh/announcements/:id', ...GRH, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Projets ----------
+const PROJECT_STATUSES = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé', annule: 'Annulé' };
+
+app.get('/api/admin/grh/projects', ...GRH, (req, res) => {
+  const rows = db.prepare(`
+    SELECT p.*,
+      (SELECT COUNT(*) FROM grh_project_members m WHERE m.project_id = p.id) AS members_count,
+      (SELECT COUNT(*) FROM grh_tasks t WHERE t.project_id = p.id) AS tasks_count,
+      (SELECT COUNT(*) FROM grh_tasks t WHERE t.project_id = p.id AND t.status != 'terminee') AS open_tasks
+    FROM grh_projects p
+    ORDER BY p.created_at DESC, p.id DESC
+  `).all();
+  rows.forEach((p) => {
+    p.members = db.prepare(`
+      SELECT e.id, e.full_name, e.position
+      FROM grh_project_members m JOIN grh_employees e ON e.id = m.employee_id
+      WHERE m.project_id = ?
+    `).all(p.id);
+  });
+  res.json(rows);
+});
+
+app.post('/api/admin/grh/projects', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nom du projet requis' });
+  const status = PROJECT_STATUSES[b.status] ? b.status : 'planifie';
+  const memberIds = [...new Set((Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter((n) => n > 0))];
+  const info = runTx(() => {
+    const r = db.prepare(`INSERT INTO grh_projects (name, description, client, deadline, status, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)`).run(
+      String(b.name).trim().slice(0, 150),
+      String(b.description || '').slice(0, 2000),
+      String(b.client || '').trim().slice(0, 150),
+      b.deadline ? String(b.deadline).slice(0, 10) : null,
+      status,
+      req.user.id
+    );
+    const ins = db.prepare('INSERT OR IGNORE INTO grh_project_members (project_id, employee_id) VALUES (?, ?)');
+    for (const mid of memberIds) ins.run(r.lastInsertRowid, mid);
+    return r.lastInsertRowid;
+  });
+  res.json(db.prepare('SELECT * FROM grh_projects WHERE id = ?').get(info));
+});
+
+app.put('/api/admin/grh/projects/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_projects WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Projet introuvable' });
+  const b = { ...ex, ...req.body };
+  const status = PROJECT_STATUSES[b.status] ? b.status : 'planifie';
+  const memberIds = [...new Set((Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter((n) => n > 0))];
+  runTx(() => {
+    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?, updated_at = datetime('now')
+      WHERE id = ?`).run(
+      String(b.name).trim().slice(0, 150),
+      String(b.description || '').slice(0, 2000),
+      String(b.client || '').trim().slice(0, 150),
+      b.deadline ? String(b.deadline).slice(0, 10) : null,
+      status,
+      ex.id
+    );
+    db.prepare('DELETE FROM grh_project_members WHERE project_id = ?').run(ex.id);
+    const ins = db.prepare('INSERT OR IGNORE INTO grh_project_members (project_id, employee_id) VALUES (?, ?)');
+    for (const mid of memberIds) ins.run(ex.id, mid);
+  });
+  res.json(db.prepare('SELECT * FROM grh_projects WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/grh/projects/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT id FROM grh_projects WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Projet introuvable' });
+  runTx(() => {
+    db.prepare('UPDATE grh_tasks SET project_id = NULL WHERE project_id = ?').run(ex.id);
+    db.prepare('DELETE FROM grh_project_members WHERE project_id = ?').run(ex.id);
+    db.prepare('DELETE FROM grh_projects WHERE id = ?').run(ex.id);
+  });
+  res.json({ ok: true });
+});
+
+// ---------- Tâches ----------
+const TASK_STATUSES = { a_faire: 'À faire', en_cours: 'En cours', terminee: 'Terminée' };
+const TASK_PRIORITIES = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
+
+const fetchTask = (id) => {
+  const t = db.prepare(`
+    SELECT t.*,
+      a.full_name AS assignee_name, a.position AS assignee_position,
+      p.name AS project_name, p.deadline AS project_deadline
+    FROM grh_tasks t
+    LEFT JOIN grh_employees a ON a.id = t.assignee_id
+    LEFT JOIN grh_projects p ON p.id = t.project_id
+    WHERE t.id = ?
+  `).get(id);
+  if (!t) return t;
+  t.notes = db.prepare('SELECT * FROM grh_task_notes WHERE task_id = ? ORDER BY id').all(id);
+  return t;
+};
+
+const taskListSql = `
+  SELECT t.*, a.full_name AS assignee_name, p.name AS project_name
+  FROM grh_tasks t
+  LEFT JOIN grh_employees a ON a.id = t.assignee_id
+  LEFT JOIN grh_projects p ON p.id = t.project_id
+`;
+
+app.get('/api/admin/grh/tasks', ...GRH, (req, res) => {
+  const { project_id, assignee_id, status, q } = req.query;
+  const where = [];
+  const params = [];
+  if (project_id) { where.push('t.project_id = ?'); params.push(project_id); }
+  if (assignee_id) { where.push('t.assignee_id = ?'); params.push(assignee_id); }
+  if (status && TASK_STATUSES[status]) { where.push('t.status = ?'); params.push(status); }
+  if (q) { where.push('(t.title LIKE ? OR t.description LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  let sql = taskListSql;
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY t.id DESC LIMIT 300';
+  res.json(db.prepare(sql).all(...params));
+});
+
+const validateTaskBody = (b, partial = false) => {
+  const out = {};
+  if (!partial || b.title !== undefined) {
+    if (!String(b.title || '').trim()) return { error: 'Intitulé de la tâche requis' };
+    out.title = String(b.title).trim().slice(0, 200);
+  }
+  if (b.description !== undefined) out.description = String(b.description || '').slice(0, 3000);
+  if (b.project_id !== undefined) {
+    out.project_id = b.project_id ? Number(b.project_id) : null;
+    if (out.project_id && !db.prepare('SELECT id FROM grh_projects WHERE id = ?').get(out.project_id))
+      return { error: 'Projet introuvable' };
+  }
+  if (b.assignee_id !== undefined) {
+    out.assignee_id = b.assignee_id ? Number(b.assignee_id) : null;
+    if (out.assignee_id && !db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(out.assignee_id))
+      return { error: 'Employé introuvable' };
+  }
+  if (b.priority !== undefined) {
+    if (!TASK_PRIORITIES[b.priority]) return { error: 'Priorité invalide' };
+    out.priority = b.priority;
+  }
+  if (b.due_date !== undefined) out.due_date = b.due_date ? String(b.due_date).slice(0, 10) : null;
+  if (b.status !== undefined) {
+    if (!TASK_STATUSES[b.status]) return { error: 'Statut invalide' };
+    out.status = b.status;
+  }
+  return { out };
+};
+
+app.post('/api/admin/grh/tasks', ...GRH, (req, res) => {
+  const b = req.body || {};
+  const v = validateTaskBody(b);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const o = v.out;
+  const info = db.prepare(`INSERT INTO grh_tasks (title, description, project_id, assignee_id, priority, due_date, status, created_by, completed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    o.title,
+    o.description || '',
+    o.project_id ?? null,
+    o.assignee_id ?? null,
+    o.priority || 'normale',
+    o.due_date ?? null,
+    o.status || 'a_faire',
+    req.user.id,
+    o.status === 'terminee' ? new Date().toISOString().slice(0, 10) : null
+  );
+  res.json(fetchTask(info.lastInsertRowid));
+});
+
+app.put('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
+  const ex = fetchTask(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Tâche introuvable' });
+  const v = validateTaskBody(req.body || {}, true);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const o = v.out;
+  const nextStatus = o.status ?? ex.status;
+  const completedAt = nextStatus === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
+  db.prepare(`UPDATE grh_tasks SET
+      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?, updated_at = datetime('now')
+    WHERE id = ?`).run(
+    o.title ?? ex.title,
+    o.description ?? ex.description,
+    o.project_id !== undefined ? o.project_id : ex.project_id,
+    o.assignee_id !== undefined ? o.assignee_id : ex.assignee_id,
+    o.priority ?? ex.priority,
+    o.due_date !== undefined ? o.due_date : ex.due_date,
+    nextStatus,
+    completedAt,
+    ex.id
+  );
+  res.json(fetchTask(ex.id));
+});
+
+const applyTaskStatus = (id, status, { authorId, authorName, note }) => {
+  const ex = fetchTask(id);
+  if (!ex) return { fail: 404, msg: 'Tâche introuvable' };
+  if (!TASK_STATUSES[status]) return { fail: 400, msg: 'Statut invalide' };
+  if (status === ex.status && !note) return { ok: ex };
+  const completedAt = status === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
+  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`).run(status, completedAt, ex.id);
+  if (note) {
+    db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
+      .run(ex.id, authorId, authorName, String(note).slice(0, 1000));
+  }
+  return { ok: fetchTask(ex.id) };
+};
+
+app.patch('/api/admin/grh/tasks/:id/status', ...GRH, (req, res) => {
+  const r = applyTaskStatus(req.params.id, (req.body || {}).status, {
+    authorId: req.user.id,
+    authorName: req.user.full_name || req.user.email,
+    note: (req.body || {}).note
+  });
+  if (r.fail) return res.status(r.fail).json({ error: r.msg });
+  res.json(r.ok);
+});
+
+app.get('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tâche introuvable' });
+  res.json(t);
+});
+
+app.post('/api/admin/grh/tasks/:id/notes', ...GRH, (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tâche introuvable' });
+  const body = String((req.body || {}).body || '').trim().slice(0, 1000);
+  if (!body) return res.status(400).json({ error: 'Commentaire requis' });
+  const info = db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
+    .run(t.id, req.user.id, req.user.full_name || req.user.email, body);
+  res.json(db.prepare('SELECT * FROM grh_task_notes WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.delete('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT id FROM grh_tasks WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Tâche introuvable' });
+  runTx(() => {
+    db.prepare('DELETE FROM grh_task_notes WHERE task_id = ?').run(ex.id);
+    db.prepare('DELETE FROM grh_tasks WHERE id = ?').run(ex.id);
+  });
+  res.json({ ok: true });
+});
+
+// Fiche de tâche PDF (utilisée par l'admin et l'employé)
+const buildTaskPdf = async (t) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([595.28, 841.89]);
+  const W = 595.28;
+  const [font, fontBold] = await Promise.all([
+    doc.embedFont(StandardFonts.Helvetica),
+    doc.embedFont(StandardFonts.HelveticaBold)
+  ]);
+  const brand = rgb(0.059, 0.227, 0.533);
+  const ink = rgb(0.1, 0.12, 0.18);
+  const gray = rgb(0.45, 0.5, 0.58);
+  const siteName = getSetting('site_name') || 'ADI ONG';
+  const tagline = getSetting('site_tagline') || '';
+  const wrap = (text, size, maxWidth) => {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    const lines = [];
+    let line = '';
+    for (const w of words) {
+      const trial = line ? line + ' ' + w : w;
+      if (font.widthOfTextAtSize(trial, size) > maxWidth && line) { lines.push(line); line = w; }
+      else line = trial;
+    }
+    if (line) lines.push(line);
+    return lines.length ? lines : [''];
+  };
+
+  page.drawRectangle({ x: 0, y: 841.89 - 88, width: W, height: 88, color: brand });
+  page.drawText(siteName.toUpperCase(), { x: 40, y: 782, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+  if (tagline) page.drawText(tagline, { x: 40, y: 764, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+  page.drawText('FICHE DE TÂCHE', { x: (W - fontBold.widthOfTextAtSize('FICHE DE TÂCHE', 20)) / 2, y: 716, size: 20, font: fontBold, color: ink });
+  const meta = [`Tâche n° ${t.id}`, frDateLong(t.created_at)];
+  page.drawText(meta.join('  ·  '), { x: W - 40 - font.widthOfTextAtSize(meta.join('  ·  '), 10), y: 718, size: 10, font, color: gray });
+
+  let y = 676;
+  const row = (label, value) => {
+    page.drawText(label.toUpperCase(), { x: 40, y, size: 8, font: fontBold, color: gray });
+    y -= 14;
+    for (const line of wrap(value || '—', 11, 300)) {
+      page.drawText(line, { x: 40, y, size: 11, font, color: ink });
+      y -= 15;
+    }
+    y -= 8;
+  };
+
+  page.drawText(t.title, { x: 40, y, size: 15, font: fontBold, color: ink });
+  y -= 24;
+  const grid = (entries) => {
+    const colW = 240;
+    entries.forEach((e, i) => {
+      const x = 40 + (i % 2) * (colW + 25);
+      const labelY = y - Math.floor(i / 2) * 52;
+      page.drawText(e.label, { x, y: labelY, size: 8, font: fontBold, color: gray });
+      let ly = labelY - 14;
+      for (const line of wrap(e.value, 11, colW - 10)) {
+        page.drawText(line, { x, y: ly, size: 11, font, color: ink });
+        ly -= 14;
+      }
+    });
+    y -= Math.ceil(entries.length / 2) * 52 + 4;
+  };
+  grid([
+    { label: 'ASSIGNÉ À', value: [t.assignee_name, t.assignee_position].filter(Boolean).join(' — ') },
+    { label: 'PROJET', value: t.project_name || 'Projet non rattaché' },
+    { label: 'PRIORITÉ', value: TASK_PRIORITIES[t.priority] || t.priority },
+    { label: 'ÉCHÉANCE', value: t.due_date ? frDateLong(t.due_date) : 'Non définie' },
+    { label: 'STATUT', value: TASK_STATUSES[t.status] || t.status },
+    { label: 'TERMINÉE LE', value: t.completed_at ? frDateLong(t.completed_at) : 'En attente' }
+  ]);
+  if (t.project_deadline) {
+    page.drawText(`Échéance du projet : ${frDateLong(t.project_deadline)}`, { x: 40, y, size: 10, font, color: gray });
+    y -= 20;
+  }
+
+  page.drawText('DESCRIPTION', { x: 40, y, size: 8, font: fontBold, color: gray });
+  y -= 14;
+  for (const line of wrap(t.description || 'Aucune description.', 10.5, 515)) {
+    page.drawText(line, { x: 40, y, size: 10.5, font, color: ink });
+    y -= 14;
+  }
+  y -= 14;
+
+  if (t.notes && t.notes.length) {
+    page.drawText('HISTORIQUE DES ÉCHANGES', { x: 40, y, size: 8, font: fontBold, color: gray });
+    y -= 16;
+    for (const n of t.notes) {
+      const head = `${frDateLong(n.created_at)} — ${n.author_name || 'Inconnu'}`;
+      page.drawText(head, { x: 40, y, size: 9, font: fontBold, color: brand });
+      y -= 12;
+      for (const line of wrap(n.body, 9.5, 500)) {
+        page.drawText(line, { x: 40, y, size: 9.5, font, color: ink });
+        y -= 12;
+      }
+      y -= 6;
+      if (y < 130) break;
+    }
+    y -= 10;
+  }
+
+  const sigY = Math.max(y - 30, 100);
+  page.drawLine({ start: { x: 40, y: sigY + 46 }, end: { x: 555, y: sigY + 46 }, thickness: 0.7, color: rgb(0.8, 0.83, 0.88) });
+  page.drawText('Signature de l’employé', { x: 40, y: sigY, size: 9, font, color: gray });
+  page.drawLine({ start: { x: 40, y: sigY + 8 }, end: { x: 230, y: sigY + 8 }, thickness: 0.7, color: gray });
+  page.drawText('Signature de la hiérarchie', { x: 340, y: sigY, size: 9, font, color: gray });
+  page.drawLine({ start: { x: 340, y: sigY + 8 }, end: { x: 555, y: sigY + 8 }, thickness: 0.7, color: gray });
+  const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  ·  ');
+  if (footer) page.drawText(footer.slice(0, 100), { x: (W - font.widthOfTextAtSize(footer.slice(0, 100), 7.5)) / 2, y: 45, size: 7.5, font, color: gray });
+
+  return Buffer.from(await doc.save());
+};
+
+app.get('/api/admin/grh/tasks/:id/pdf', ...GRH, async (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tâche introuvable' });
+  try {
+    const buf = await buildTaskPdf(t);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="tache-${t.id}.pdf"`);
+    res.send(buf);
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le PDF' });
+  }
+});
+
+// ---------- Messagerie interne (employé ↔ administration) ----------
+const chatFor = (employeeId) =>
+  db.prepare(`SELECT c.*, u.full_name AS sender_name FROM grh_chat c LEFT JOIN users u ON u.id = c.user_id
+    WHERE c.employee_id = ? ORDER BY c.id`).all(employeeId);
+
+app.get('/api/admin/grh/chat', ...GRH, (req, res) => {
+  res.json(db.prepare(`
+    SELECT e.id, e.full_name, e.position,
+      (SELECT c.body FROM grh_chat c WHERE c.employee_id = e.id ORDER BY c.id DESC LIMIT 1) AS last_body,
+      (SELECT c.created_at FROM grh_chat c WHERE c.employee_id = e.id ORDER BY c.id DESC LIMIT 1) AS last_at,
+      (SELECT COUNT(*) FROM grh_chat c WHERE c.employee_id = e.id AND c.sender = 'employee' AND c.read_at IS NULL) AS unread
+    FROM grh_employees e
+    ORDER BY COALESCE((SELECT c.created_at FROM grh_chat c WHERE c.employee_id = e.id ORDER BY c.id DESC LIMIT 1), e.created_at) DESC, e.id
+  `).all());
+});
+
+app.get('/api/admin/grh/chat/:employeeId', ...GRH, (req, res) => {
+  const emp = db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(req.params.employeeId);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  const msgs = chatFor(emp.id);
+  db.prepare(`UPDATE grh_chat SET read_at = datetime('now')
+    WHERE employee_id = ? AND sender = 'employee' AND read_at IS NULL`).run(emp.id);
+  res.json(msgs);
+});
+
+app.post('/api/admin/grh/chat/:employeeId', ...GRH, (req, res) => {
+  const emp = db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(req.params.employeeId);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  const body = String((req.body || {}).body || '').trim().slice(0, 2000);
+  if (!body) return res.status(400).json({ error: 'Message requis' });
+  const info = db.prepare(`INSERT INTO grh_chat (employee_id, sender, user_id, body) VALUES (?, 'admin', ?, ?)`)
+    .run(emp.id, req.user.id, body);
+  res.json(db.prepare('SELECT * FROM grh_chat WHERE id = ?').get(info.lastInsertRowid));
+});
+
+// ---------- Documents administratifs ----------
+const adminDocsDir = path.join(__dirname, 'data', 'admin-docs');
+fs.mkdirSync(adminDocsDir, { recursive: true });
+const adminDocsUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, adminDocsDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase().slice(0, 8) || '.bin';
+      cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
+    }
+  }),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const ok = isAllowedUpload(file) ||
+      mime === 'application/msword' ||
+      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      mime === 'application/pdf' ||
+      mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    if (ok) cb(null, true);
+    else cb(new Error('Format de fichier non autorisé'));
+  }
+});
+
+app.get('/api/admin/grh/admin-docs', ...GRH, (req, res) => {
+  res.json(db.prepare(`
+    SELECT d.*, u.full_name AS created_by_name
+    FROM grh_admin_docs d LEFT JOIN users u ON u.id = d.created_by
+    ORDER BY d.created_at DESC, d.id DESC
+  `).all());
+});
+
+app.post('/api/admin/grh/admin-docs', ...GRH, adminDocsUpload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
+  const b = req.body || {};
+  const name = String(b.name || req.file.originalname || 'Document').trim().slice(0, 200);
+  const info = db.prepare(`INSERT INTO grh_admin_docs (name, category, file, mime, size, expires_on, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    name,
+    String(b.category || 'autre').trim().slice(0, 40) || 'autre',
+    req.file.filename,
+    String(req.file.mimetype || ''),
+    req.file.size,
+    b.expires_on ? String(b.expires_on).slice(0, 10) : null,
+    req.user.id
+  );
+  res.json(db.prepare('SELECT * FROM grh_admin_docs WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.get('/api/admin/grh/admin-docs/:id/download', ...GRH, (req, res) => {
+  const d = db.prepare('SELECT * FROM grh_admin_docs WHERE id = ?').get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Document introuvable' });
+  const full = path.join(adminDocsDir, path.basename(d.file));
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Fichier introuvable sur le serveur' });
+  res.setHeader('Content-Type', d.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(d.name)}${path.extname(d.file)}"`);
+  res.sendFile(full);
+});
+
+app.delete('/api/admin/grh/admin-docs/:id', ...GRH, (req, res) => {
+  const d = db.prepare('SELECT * FROM grh_admin_docs WHERE id = ?').get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Document introuvable' });
+  db.prepare('DELETE FROM grh_admin_docs WHERE id = ?').run(d.id);
+  const full = path.join(adminDocsDir, path.basename(d.file));
+  fs.promises.unlink(full).catch(() => {});
+  res.json({ ok: true });
+});
+
 // ---------- Certificats PDF (attestation d'emploi / certificat de travail) ----------
 const CERT_CONTRACTS = {
   permanent: 'contrat permanent (CDI)',
@@ -2215,6 +2553,70 @@ app.delete('/api/me/employee/leaves/:id', authRequired, requireModule('grh_enabl
   if (leave.status !== 'en_attente') return res.status(409).json({ error: 'Seule une demande en attente peut être retirée.' });
   db.prepare('DELETE FROM grh_leaves WHERE id = ?').run(leave.id);
   res.json({ ok: true });
+});
+
+app.get('/api/me/grh/tasks', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  res.json(db.prepare(`
+    SELECT t.*, p.name AS project_name
+    FROM grh_tasks t LEFT JOIN grh_projects p ON p.id = t.project_id
+    WHERE t.assignee_id = ?
+    ORDER BY CASE t.status WHEN 'a_faire' THEN 0 WHEN 'en_cours' THEN 1 ELSE 2 END, t.due_date IS NULL, t.due_date, t.id DESC
+  `).all(req.employee.id));
+});
+
+app.get('/api/me/grh/tasks/:id', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t || t.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  res.json(t);
+});
+
+app.patch('/api/me/grh/tasks/:id/status', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const ex = fetchTask(req.params.id);
+  if (!ex || ex.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  const r = applyTaskStatus(ex.id, (req.body || {}).status, {
+    authorId: req.user.id,
+    authorName: req.employee.full_name,
+    note: (req.body || {}).note
+  });
+  if (r.fail) return res.status(r.fail).json({ error: r.msg });
+  res.json(r.ok);
+});
+
+app.post('/api/me/grh/tasks/:id/notes', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const ex = fetchTask(req.params.id);
+  if (!ex || ex.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  const body = String((req.body || {}).body || '').trim().slice(0, 1000);
+  if (!body) return res.status(400).json({ error: 'Commentaire requis' });
+  const info = db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
+    .run(ex.id, req.user.id, req.employee.full_name, body);
+  res.json(db.prepare('SELECT * FROM grh_task_notes WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.get('/api/me/grh/tasks/:id/pdf', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, async (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t || t.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  try {
+    const buf = await buildTaskPdf(t);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="tache-${t.id}.pdf"`);
+    res.send(buf);
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le PDF' });
+  }
+});
+
+app.get('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  db.prepare(`UPDATE grh_chat SET read_at = datetime('now')
+    WHERE employee_id = ? AND sender = 'admin' AND read_at IS NULL`).run(req.employee.id);
+  res.json(chatFor(req.employee.id));
+});
+
+app.post('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const body = String((req.body || {}).body || '').trim().slice(0, 2000);
+  if (!body) return res.status(400).json({ error: 'Message requis' });
+  const info = db.prepare(`INSERT INTO grh_chat (employee_id, sender, user_id, body) VALUES (?, 'employee', ?, ?)`)
+    .run(req.employee.id, req.user.id, body);
+  res.json(db.prepare('SELECT * FROM grh_chat WHERE id = ?').get(info.lastInsertRowid));
 });
 
 // ---------- Inscription sur invitation (lien à usage unique) ----------
@@ -3106,9 +3508,4 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: status >= 500 ? 'Erreur serveur' : err.message || 'Erreur' });
 });
 
-// Passenger (N0C / CloudLinux) : PORT=passenger — sinon écoute TCP classique
-if (process.env.PORT === 'passenger' || process.env.PASSENGER_APP_ENV) {
-  app.listen('passenger', () => console.log('🚀 API ADI ONG (Passenger)'));
-} else {
-  app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API ADI ONG sur http://0.0.0.0:${PORT}`));
-}
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API ADI ONG sur http://0.0.0.0:${PORT}`));

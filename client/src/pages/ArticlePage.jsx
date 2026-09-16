@@ -58,7 +58,7 @@ function ShareBar({ article }) {
           title={l.label}
           className={`grid h-10 w-10 place-items-center rounded-xl bg-white text-ink-500 shadow-soft ring-1 ring-ink-950/5 transition-all hover:-translate-y-0.5 ${l.color}`}
         >
-          {l.Icon}
+          <l.Icon />
         </a>
       ))}
       <button
@@ -117,14 +117,8 @@ export default function ArticlePage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    setArticle(null);
-    setNotFound(false);
-    api.article(slug)
-      .then((a) => { if (!cancelled) setArticle(a); })
-      .catch(() => { if (!cancelled) setNotFound(true); });
+    api.article(slug).then(setArticle).catch(() => setNotFound(true));
     window.scrollTo(0, 0);
-    return () => { cancelled = true; };
   }, [slug]);
 
   const seoTitle = article ? (article.seo_title || (article.title ? `${article.title} — ${site.site_name || 'ADI ONG'}` : '')) : '';
@@ -140,16 +134,7 @@ export default function ArticlePage() {
   });
 
   if (notFound) return <NotFound />;
-  if (!article) {
-    return (
-      <section className="grid min-h-[50vh] place-items-center pt-36">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-brand-200 border-t-brand-600" />
-          <p className="text-sm font-semibold text-ink-400">Chargement de l'article…</p>
-        </div>
-      </section>
-    );
-  }
+  if (!article) return null;
 
   const related = articles.filter((a) => a.slug !== article.slug && a.category === article.category).slice(0, 2);
   const fallbackRelated = related.length ? related : articles.filter((a) => a.slug !== article.slug).slice(0, 2);
