@@ -175,10 +175,10 @@ export default function ArticlePage() {
               <span>/</span>
               <Link to="/actualites" className="hover:text-accent-300">Actualités</Link>
               <span>/</span>
-              <span className="text-white/80">{categoryLabel(article.category)}</span>
+              <span className="text-white/80">{categoryLabel(article.category, site.article_categories)}</span>
             </nav>
             <span className="inline-flex rounded-full bg-accent-400 px-4 py-1.5 text-xs font-bold text-ink-950 uppercase tracking-wide">
-              {categoryLabel(article.category)}
+              {categoryLabel(article.category, site.article_categories)}
             </span>
             <h1 className="mt-6 font-display text-3xl font-bold leading-tight text-white sm:text-4xl lg:text-[2.8rem]">
               {article.title}
@@ -238,7 +238,7 @@ export default function ArticlePage() {
                       <Link to={`/actualites/${a.slug}`} className="group flex gap-3">
                         <img src={a.image} alt="" className="h-16 w-20 shrink-0 rounded-xl object-cover ring-1 ring-ink-950/5" loading="lazy" />
                         <div>
-                          <span className="text-[10px] font-bold tracking-wide text-brand-600 uppercase">{categoryLabel(a.category)}</span>
+                          <span className="text-[10px] font-bold tracking-wide text-brand-600 uppercase">{categoryLabel(a.category, site.article_categories)}</span>
                           <p className="text-sm leading-snug font-semibold text-ink-800 line-clamp-2 group-hover:text-brand-700">
                             {a.title}
                           </p>

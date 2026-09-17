@@ -83,6 +83,12 @@ export const api = {
     update: (id, b) => req(`/api/admin/articles/${id}`, { method: 'PUT', body: b, auth: true }),
     remove: (id) => req(`/api/admin/articles/${id}`, { method: 'DELETE', auth: true })
   },
+  adminArticleCategories: {
+    list: () => req('/api/admin/article-categories', { auth: true }),
+    create: (b) => req('/api/admin/article-categories', { method: 'POST', body: b, auth: true }),
+    update: (id, b) => req(`/api/admin/article-categories/${id}`, { method: 'PUT', body: b, auth: true }),
+    remove: (id) => req(`/api/admin/article-categories/${id}`, { method: 'DELETE', auth: true })
+  },
   adminCauses: {
     list: () => req('/api/admin/causes', { auth: true }),
     create: (b) => req('/api/admin/causes', { method: 'POST', body: b, auth: true }),

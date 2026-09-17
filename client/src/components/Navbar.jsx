@@ -371,7 +371,7 @@ function NewsMega({ featured, more }) {
         <div className="flex flex-col justify-center">
           <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">
             {megaDate(featured.date)}
-            {featured.category ? ` — ${categoryLabel(featured.category)}` : ''}
+            {featured.category ? ` — ${categoryLabel(featured.category, site.article_categories)}` : ''}
           </p>
           <h3 className="mt-2 font-display text-lg font-bold leading-snug text-ink-900 group-hover:text-brand-700">
             {featured.title}
@@ -383,7 +383,7 @@ function NewsMega({ featured, more }) {
           <Link key={a.id} to={`/actualites/${a.slug}`} className="group py-3 first:pt-0 last:pb-0">
             <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">
               {megaDate(a.date)}
-              {a.category ? ` — ${categoryLabel(a.category)}` : ''}
+              {a.category ? ` — ${categoryLabel(a.category, site.article_categories)}` : ''}
             </p>
             <p className="mt-0.5 font-display text-[15px] font-bold leading-snug text-ink-900 group-hover:text-brand-700">
               {a.title}

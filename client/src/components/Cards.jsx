@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 import { fmtDate, fmtMoney } from '../api.js';
 import { IconArrow, causeIcons, IconCalendar } from './Icons.jsx';
+import { useSite } from '../hooks/useSite.jsx';
 
 const card = {
   hidden: { opacity: 0, y: 30 },
@@ -50,6 +51,7 @@ export function CauseCard({ cause, index = 0, compact = false }) {
 }
 
 export function ArticleCard({ article, index = 0, big = false }) {
+  const { site } = useSite();
   return (
     <motion.article
       variants={card}
@@ -69,7 +71,7 @@ export function ArticleCard({ article, index = 0, big = false }) {
             />
           </div>
           <span className="absolute top-4 left-4 rounded-full bg-white/90 px-3.5 py-1 text-xs font-bold text-brand-700 backdrop-blur">
-            {categoryLabel(article.category)}
+            {categoryLabel(article.category, site?.article_categories)}
           </span>
         </div>
         <div className="p-6">
@@ -155,7 +157,11 @@ export function ProgressBar({ value, className = '' }) {
   );
 }
 
-export function categoryLabel(cat) {
+export function categoryLabel(cat, cats) {
+  if (Array.isArray(cats)) {
+    const found = cats.find((c) => c.slug === cat);
+    if (found?.name) return found.name;
+  }
   return (
     {
       plaidoyer: 'Plaidoyer',
@@ -164,6 +170,6 @@ export function categoryLabel(cat) {
       socio_economique: 'Socio-économique',
       entrepreneuriat: 'Entrepreneuriat',
       actualites: 'Actualité'
-    }[cat] || 'Actualité'
+    }[cat] || cat || 'Actualité'
   );
 }
