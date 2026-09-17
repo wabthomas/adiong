@@ -43,6 +43,27 @@
   .label {
     @apply mb-1.5 block text-sm font-semibold text-ink-700;
   }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Barres fixes mobile : opaque + couche GPU (évite le « coincé » au scroll iOS) */
+  .site-chrome-top,
+  .site-chrome-bottom {
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  html.nav-drawer-open .mobile-bottom-nav {
+    visibility: hidden;
+    pointer-events: none;
+  }
 }
 
 

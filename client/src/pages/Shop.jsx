@@ -254,7 +254,7 @@ export default function Shop() {
         </div>
 
         {count > 0 && (
-          <div className="sticky bottom-4 mt-10">
+          <div className="sticky bottom-[5.5rem] mt-10 lg:bottom-4">
             <div className="card mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-4 p-5 shadow-soft">
               <div className="flex items-center gap-3">
                 <span className="grid h-11 w-11 place-items-center rounded-full bg-brand-600 text-sm font-extrabold text-white">{count}</span>

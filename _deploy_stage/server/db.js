@@ -319,6 +319,70 @@ CREATE TABLE IF NOT EXISTS grh_announcements (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS grh_projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  client TEXT NOT NULL DEFAULT '',
+  deadline TEXT,
+  status TEXT NOT NULL DEFAULT 'planifie',
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_project_members (
+  project_id INTEGER NOT NULL,
+  employee_id INTEGER NOT NULL,
+  PRIMARY KEY (project_id, employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS grh_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  project_id INTEGER,
+  assignee_id INTEGER,
+  priority TEXT NOT NULL DEFAULT 'normale',
+  due_date TEXT,
+  status TEXT NOT NULL DEFAULT 'a_faire',
+  created_by INTEGER,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_task_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  author_id INTEGER,
+  author_name TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grh_chat (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  sender TEXT NOT NULL,
+  user_id INTEGER,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  read_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS grh_admin_docs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'autre',
+  file TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT '',
+  size INTEGER NOT NULL DEFAULT 0,
+  expires_on TEXT,
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS stock_categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT UNIQUE NOT NULL,
@@ -415,5 +479,40 @@ migrate("ALTER TABLE grh_employees ADD COLUMN job_description TEXT NOT NULL DEFA
 migrate('ALTER TABLE grh_leaves ADD COLUMN days INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE stock_products ADD COLUMN barcode TEXT NOT NULL DEFAULT ''");
 migrate("CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_products_barcode_unique ON stock_products(barcode) WHERE barcode != ''");
+migrate("ALTER TABLE donations ADD COLUMN reference TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN method TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'");
+migrate("ALTER TABLE donations ADD COLUMN is_anonymous INTEGER NOT NULL DEFAULT 0");
+migrate("ALTER TABLE donations ADD COLUMN proof TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN proof_name TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE donations ADD COLUMN tx_ref TEXT NOT NULL DEFAULT ''");
+migrate("CREATE UNIQUE INDEX IF NOT EXISTS idx_donations_reference ON donations(reference) WHERE reference != ''");
+migrate(`CREATE TABLE IF NOT EXISTS grh_attendance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL,
+  date TEXT NOT NULL,
+  clock_in TEXT NOT NULL DEFAULT '',
+  last_seen TEXT NOT NULL DEFAULT '',
+  clock_out TEXT NOT NULL DEFAULT '',
+  corrected INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(employee_id, date)
+)`);
+migrate("CREATE INDEX IF NOT EXISTS idx_grh_attendance_date ON grh_attendance(date)");
+migrate(`CREATE TABLE IF NOT EXISTS role_permissions (
+  role TEXT NOT NULL,
+  area TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (role, area)
+)`);
+// Droits par défaut : identiques aux rôles codés en dur (seed une seule fois)
+const permSeed = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
+for (const [role, area, on] of [
+  ['super_admin', 'backoffice', 1], ['super_admin', 'content', 1], ['super_admin', 'settings', 1], ['super_admin', 'grh', 1], ['super_admin', 'pos', 1],
+  ['admin', 'backoffice', 1], ['admin', 'content', 1], ['admin', 'settings', 1], ['admin', 'grh', 1], ['admin', 'pos', 1],
+  ['editor', 'backoffice', 1], ['editor', 'content', 1], ['editor', 'settings', 0], ['editor', 'grh', 0], ['editor', 'pos', 0],
+  ['viewer', 'backoffice', 1], ['viewer', 'content', 0], ['viewer', 'settings', 0], ['viewer', 'grh', 0], ['viewer', 'pos', 0],
+  ['cashier', 'backoffice', 1], ['cashier', 'content', 0], ['cashier', 'settings', 0], ['cashier', 'grh', 0], ['cashier', 'pos', 1]
+]) permSeed.run(role, area, on);
 
 export default db;

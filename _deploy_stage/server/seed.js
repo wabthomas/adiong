@@ -38,6 +38,32 @@ export const DEFAULT_SETTINGS = {
   copyright: '© 2026 ADI ONG — Tous droits réservés.',
   currency: 'USD',
   footer_credit: "Fait avec {heart} pour l'inclusion",
+  menu_footer_title: 'Navigation',
+  menu_footer_work_title: 'Notre travail',
+  menu_donate_label: 'Faire un don',
+  menu_donate_to: '/faire-un-don',
+  menu_header: [
+    { label: 'Accueil', to: '/', mega: '' },
+    { label: 'À propos', to: '/a-propos', mega: 'about' },
+    { label: 'Notre travail', to: '/notre-travail', mega: 'work' },
+    { label: 'Actualités', to: '/actualites', mega: 'news' },
+    { label: 'Collectes', to: '/collectes', mega: 'campaigns' },
+    { label: 'Contact', to: '/contact', mega: '' }
+  ],
+  menu_footer: [
+    { label: 'Accueil', to: '/' },
+    { label: 'À propos', to: '/a-propos' },
+    { label: 'Actualités', to: '/actualites' },
+    { label: 'Nos collectes', to: '/collectes' },
+    { label: 'Contact', to: '/contact' }
+  ],
+  menu_mobile: [
+    { label: 'Accueil', to: '/' },
+    { label: 'Actus', to: '/actualites' },
+    { label: 'Don', to: '/faire-un-don' },
+    { label: 'Collectes', to: '/collectes' },
+    { label: 'Contact', to: '/contact' }
+  ],
 
   seo_title: 'ADI ONG — Inclusion des personnes handicapées à Goma',
   seo_description: "L'ONG ADI (Accessibility and Disabled Inclusion) soutient l'inclusion des personnes handicapées dans tous les secteurs de la vie : plaidoyer, entrepreneuriat, éducation inclusive et justice climatique à Goma, RDC.",
@@ -360,7 +386,7 @@ Chaque personne compte, chaque contribution, chaque don compte pour créer un mo
       description: "Aidez-nous à inscrire et maintenir les enfants en situation de handicap dans les écoles de la ville de Goma : frais de scolarité, kits scolaires adaptés et accompagnement pédagogique.",
       image: '/uploads/seed/campaign-scolarite.jpg',
       goal_amount: 5000,
-      collected_amount: 3250,
+      collected_amount: 0,
       deadline: '2026-12-31',
       cause_slug: 'education'
     },
@@ -370,7 +396,7 @@ Chaque personne compte, chaque contribution, chaque don compte pour créer un mo
       description: "Chaque kit comprend cahiers, stylos, uniformes et matériel adapté pour les enfants déplacés en situation de handicap. Ensemble, faisons redevenir l'école un droit pour tous.",
       image: '/uploads/seed/campaign-kits.jpg',
       goal_amount: 2000,
-      collected_amount: 840,
+      collected_amount: 0,
       deadline: '2026-11-30',
       cause_slug: 'education'
     },
@@ -380,7 +406,7 @@ Chaque personne compte, chaque contribution, chaque don compte pour créer un mo
       description: "Un fonds rotatif pour financer les premières activités génératrices de revenus de jeunes handicapés formés par l'ONG ADI : outillage, stock et démarrage.",
       image: '/uploads/seed/campaign-entrepreneuriat.jpg',
       goal_amount: 10000,
-      collected_amount: 4120,
+      collected_amount: 0,
       deadline: '2027-03-31',
       cause_slug: 'entrepreneuriat'
     }

@@ -5,6 +5,7 @@ import {
   IconFacebook, IconInstagram, IconMail, IconPhone, IconPin,
   IconPinterest, IconTwitter, IconWhatsapp, IconHeart
 } from './Icons.jsx';
+import { isExternalHref, resolveDonateCta, resolveFooterMenu } from '../lib/menus.js';
 
 function FooterCredit({ text }) {
   const raw = text || "Fait avec {heart} pour l'inclusion";
@@ -21,8 +22,25 @@ function FooterCredit({ text }) {
   );
 }
 
+function FooterLink({ to, children, className }) {
+  if (isExternalHref(to)) {
+    return (
+      <a href={to} target="_blank" rel="noreferrer" className={className}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <Link to={to} className={className}>
+      {children}
+    </Link>
+  );
+}
+
 export default function Footer() {
   const { site, causes } = useSite();
+  const footerLinks = resolveFooterMenu(site);
+  const donate = resolveDonateCta(site);
   const socials = [
     { href: site.facebook, Icon: IconFacebook, label: 'Facebook' },
     { href: site.twitter, Icon: IconTwitter, label: 'X (Twitter)' },
@@ -34,13 +52,13 @@ export default function Footer() {
   return (
     <footer className="relative overflow-hidden bg-ink-950 text-white">
       <div className="pointer-events-none absolute -top-40 -right-40 h-96 w-96 rounded-full bg-brand-600/20 blur-3xl" />
-      <div className="container-x relative py-16 lg:py-20">
-        <div className="grid gap-12 md:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1.3fr]">
+      <div className="container-x relative py-12 sm:py-16 lg:py-20">
+        <div className="grid gap-10 sm:gap-12 md:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1.3fr]">
           <div>
             <Link to="/" className="flex items-center gap-3">
               {site.logo ? (
                 <span className="rounded-xl bg-white px-2.5 py-1.5">
-                  <img src={site.logo} alt={site.site_name || 'ADI ONG'} className="h-10 max-w-[220px] object-contain sm:h-11 sm:max-w-[260px]" />
+                  <img src={site.logo} alt={site.site_name || 'ADI ONG'} className="h-9 max-w-[180px] object-contain sm:h-11 sm:max-w-[260px]" />
                 </span>
               ) : (
                 <>
@@ -54,8 +72,8 @@ export default function Footer() {
                 </>
               )}
             </Link>
-            <p className="mt-5 max-w-sm text-[15px] leading-relaxed text-white/60">{site.site_tagline}.</p>
-            <div className="mt-6 flex gap-2.5">
+            <p className="mt-4 max-w-sm text-sm leading-relaxed text-white/60 sm:mt-5 sm:text-[15px]">{site.site_tagline}.</p>
+            <div className="mt-5 flex flex-wrap gap-2.5 sm:mt-6">
               {socials.map(({ href, Icon, label }) => (
                 <a
                   key={label}
@@ -71,45 +89,49 @@ export default function Footer() {
             </div>
           </div>
 
-          <div>
-            <h4 className="font-display text-sm font-bold tracking-widest text-white/50 uppercase">Notre travail</h4>
-            <ul className="mt-5 space-y-3 text-[15px]">
-              {(causes.length ? causes : []).slice(0, 4).map((c) => (
-                <li key={c.id}>
-                  <Link to={c.link || '/notre-travail'} className="text-white/70 transition-colors hover:text-accent-300">
-                    {c.title}
-                  </Link>
+          <div className="grid grid-cols-2 gap-8 sm:contents">
+            <div>
+              <h4 className="font-display text-xs font-bold tracking-widest text-white/50 uppercase sm:text-sm">
+                {site.menu_footer_work_title || 'Notre travail'}
+              </h4>
+              <ul className="mt-4 space-y-2.5 text-sm sm:mt-5 sm:space-y-3 sm:text-[15px]">
+                {(causes.length ? causes : []).slice(0, 4).map((c) => (
+                  <li key={c.id}>
+                    <Link to={c.link || '/notre-travail'} className="text-white/70 transition-colors hover:text-accent-300">
+                      {c.title}
+                    </Link>
+                  </li>
+                ))}
+                <li>
+                  <FooterLink to={donate.to} className="font-semibold text-accent-300 hover:text-accent-200">
+                    {donate.label}
+                  </FooterLink>
                 </li>
-              ))}
-              <li>
-                <Link to="/faire-un-don" className="font-semibold text-accent-300 hover:text-accent-200">Faire un don</Link>
-              </li>
-            </ul>
+              </ul>
+            </div>
+
+            <div>
+              <h4 className="font-display text-xs font-bold tracking-widest text-white/50 uppercase sm:text-sm">
+                {site.menu_footer_title || 'Navigation'}
+              </h4>
+              <ul className="mt-4 space-y-2.5 text-sm sm:mt-5 sm:space-y-3 sm:text-[15px]">
+                {footerLinks.map((l) => (
+                  <li key={`${l.to}-${l.label}`}>
+                    <FooterLink to={l.to} className="text-white/70 transition-colors hover:text-accent-300">
+                      {l.label}
+                    </FooterLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
 
           <div>
-            <h4 className="font-display text-sm font-bold tracking-widest text-white/50 uppercase">Navigation</h4>
-            <ul className="mt-5 space-y-3 text-[15px]">
-              {[
-                ['/', 'Accueil'],
-                ['/a-propos', 'À propos'],
-                ['/actualites', 'Actualités'],
-                ['/collectes', 'Nos collectes'],
-                ['/contact', 'Contact']
-              ].map(([to, label]) => (
-                <li key={to}>
-                  <Link to={to} className="text-white/70 transition-colors hover:text-accent-300">{label}</Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="font-display text-sm font-bold tracking-widest text-white/50 uppercase">Contact</h4>
-            <ul className="mt-5 space-y-4 text-[15px] text-white/70">
+            <h4 className="font-display text-xs font-bold tracking-widest text-white/50 uppercase sm:text-sm">Contact</h4>
+            <ul className="mt-4 space-y-3.5 text-sm text-white/70 sm:mt-5 sm:space-y-4 sm:text-[15px]">
               <li className="flex gap-3">
                 <IconPin className="mt-0.5 h-5 w-5 shrink-0 text-accent-400" />
-                {site.address}
+                <span className="break-words">{site.address}</span>
               </li>
               <li className="flex gap-3">
                 <IconPhone className="mt-0.5 h-5 w-5 shrink-0 text-accent-400" />
@@ -120,15 +142,15 @@ export default function Footer() {
               </li>
               <li className="flex gap-3">
                 <IconMail className="mt-0.5 h-5 w-5 shrink-0 text-accent-400" />
-                <a href={`mailto:${site.email}`} className="hover:text-accent-300">{site.email}</a>
+                <a href={`mailto:${site.email}`} className="break-all hover:text-accent-300">{site.email}</a>
               </li>
             </ul>
           </div>
         </div>
 
-        <div className="mt-14 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-7 sm:flex-row">
-          <p className="text-sm text-white/50">{site.copyright || '© 2026 ADI ONG — Tous droits réservés.'}</p>
-          <div className="flex items-center gap-5 text-sm">
+        <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-6 text-center sm:mt-14 sm:flex-row sm:gap-4 sm:pt-7 sm:text-left">
+          <p className="text-xs text-white/50 sm:text-sm">{site.copyright || '© 2026 ADI ONG — Tous droits réservés.'}</p>
+          <div className="flex flex-wrap items-center justify-center gap-4 text-xs sm:gap-5 sm:text-sm">
             <Link to="/admin" className="text-white/40 transition-colors hover:text-accent-300">Espace admin</Link>
             <FooterCredit text={site.footer_credit} />
           </div>

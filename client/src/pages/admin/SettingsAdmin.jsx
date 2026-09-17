@@ -6,6 +6,7 @@ import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 const TABS = [
   { id: 'identite', label: 'Identité', hint: 'Nom, contact, réseaux', icon: 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z' },
   { id: 'marque', label: 'Marque & SEO', hint: 'Logo, favicone, Google', icon: 'M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z' },
+  { id: 'menus', label: 'Menus', hint: 'Header, bas mobile & pied', icon: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5' },
   { id: 'accueil', label: 'Accueil', hint: 'Hero, mission, bandeau', icon: 'M2.25 12 11.204 3.045c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25' },
   { id: 'pages', label: 'Pages', hint: 'En-têtes des pages', icon: 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z' },
   { id: 'apropos', label: 'À propos', hint: 'Présentation, valeurs', icon: 'M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z' },
@@ -151,6 +152,101 @@ function ItemListEditor({ items, onChange, fields = [['title', 'Titre'], ['text'
         className="text-sm font-bold text-brand-600 hover:underline"
       >
         + Ajouter un élément
+      </button>
+    </div>
+  );
+}
+
+const MEGA_OPTIONS = [
+  { value: '', label: 'Aucun (lien simple)' },
+  { value: 'about', label: 'Méga : À propos' },
+  { value: 'work', label: 'Méga : Notre travail' },
+  { value: 'news', label: 'Méga : Actualités' },
+  { value: 'campaigns', label: 'Méga : Collectes' }
+];
+
+const PAGE_PRESETS = [
+  { label: 'Accueil', to: '/' },
+  { label: 'À propos', to: '/a-propos' },
+  { label: 'Notre travail', to: '/notre-travail' },
+  { label: 'Actualités', to: '/actualites' },
+  { label: 'Collectes', to: '/collectes' },
+  { label: 'Boutique', to: '/boutique' },
+  { label: 'Faire un don', to: '/faire-un-don' },
+  { label: 'Contact', to: '/contact' }
+];
+
+function MenuLinksEditor({ items, onChange, withMega = false }) {
+  const list = Array.isArray(items) ? items : [];
+
+  const update = (i, patch) => {
+    const copy = list.map((x) => ({ ...x }));
+    copy[i] = { ...copy[i], ...patch };
+    onChange(copy);
+  };
+
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    const copy = [...list];
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    onChange(copy);
+  };
+
+  return (
+    <div className="space-y-3">
+      {list.map((it, i) => (
+        <div key={i} className="rounded-2xl bg-cream p-4">
+          <div className={`grid gap-3 ${withMega ? 'lg:grid-cols-[1fr_1.2fr_1fr_auto]' : 'sm:grid-cols-[1fr_1.4fr_auto]'}`}>
+            <Field label="Libellé">
+              <input
+                className="input !py-2.5 text-sm"
+                value={it.label || ''}
+                placeholder="Ex. Actualités"
+                onChange={(e) => update(i, { label: e.target.value })}
+              />
+            </Field>
+            <Field label="Lien (chemin ou URL)" hint="Ex. /contact ou https://…">
+              <input
+                className="input !py-2.5 text-sm"
+                value={it.to || ''}
+                placeholder="/page"
+                list={`menu-presets-${withMega ? 'h' : 'f'}`}
+                onChange={(e) => update(i, { to: e.target.value })}
+              />
+            </Field>
+            {withMega && (
+              <Field label="Sous-menu (méga)">
+                <select
+                  className="input !py-2.5 text-sm"
+                  value={it.mega || ''}
+                  onChange={(e) => update(i, { mega: e.target.value })}
+                >
+                  {MEGA_OPTIONS.map((o) => (
+                    <option key={o.value || 'none'} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            <div className="flex items-end gap-1.5">
+              <button type="button" title="Monter" onClick={() => move(i, -1)} className="rounded-lg bg-white px-2.5 py-2.5 text-xs font-bold text-ink-600 ring-1 ring-ink-100 hover:bg-ink-50 disabled:opacity-30" disabled={i === 0}>↑</button>
+              <button type="button" title="Descendre" onClick={() => move(i, 1)} className="rounded-lg bg-white px-2.5 py-2.5 text-xs font-bold text-ink-600 ring-1 ring-ink-100 hover:bg-ink-50 disabled:opacity-30" disabled={i === list.length - 1}>↓</button>
+              <button type="button" onClick={() => onChange(list.filter((_, j) => j !== i))} className="rounded-lg bg-red-50 px-3 py-2.5 text-xs font-bold text-red-600 hover:bg-red-100">✕</button>
+            </div>
+          </div>
+        </div>
+      ))}
+      <datalist id={`menu-presets-${withMega ? 'h' : 'f'}`}>
+        {PAGE_PRESETS.map((p) => (
+          <option key={p.to} value={p.to}>{p.label}</option>
+        ))}
+      </datalist>
+      <button
+        type="button"
+        onClick={() => onChange([...list, withMega ? { label: '', to: '/', mega: '' } : { label: '', to: '/' }])}
+        className="text-sm font-bold text-brand-600 hover:underline"
+      >
+        + Ajouter un lien
       </button>
     </div>
   );
@@ -422,6 +518,64 @@ export default function SettingsAdmin() {
                   <p className="mt-1 text-xs leading-relaxed text-ink-500 line-clamp-2">{s.seo_description || ''}</p>
                 </div>
               </div>
+            </div>
+          </SettingsSection>
+        </div>
+      )}
+
+      {tab === 'menus' && (
+        <div className="space-y-5">
+          <SettingsSection
+            title="Menu d’en-tête (navigation)"
+            desc="Ordre et libellés du menu principal. Les méga-menus affichent le contenu dynamique (causes, articles, collectes)."
+          >
+            <MenuLinksEditor
+              withMega
+              items={s.menu_header || []}
+              onChange={(v) => setS({ ...s, menu_header: v })}
+            />
+            <p className="text-xs text-ink-400">
+              Astuce : si le module Boutique est activé et que « /boutique » n’est pas dans la liste, le lien Boutique est ajouté automatiquement.
+            </p>
+          </SettingsSection>
+
+          <SettingsSection
+            title="Menu du pied de page"
+            desc="Colonne « Navigation » du footer. La colonne « Notre travail » reste alimentée par les causes publiées."
+          >
+            <div className="mb-5 grid gap-5 sm:grid-cols-2">
+              <Field label="Titre de la colonne Navigation">
+                <input className="input" value={s.menu_footer_title || ''} onChange={set('menu_footer_title')} placeholder="Navigation" />
+              </Field>
+              <Field label="Titre de la colonne causes">
+                <input className="input" value={s.menu_footer_work_title || ''} onChange={set('menu_footer_work_title')} placeholder="Notre travail" />
+              </Field>
+            </div>
+            <MenuLinksEditor
+              items={s.menu_footer || []}
+              onChange={(v) => setS({ ...s, menu_footer: v })}
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            title="Menu bas mobile"
+            desc="Barre fixe en bas sur téléphone (5 liens max). Libellés courts recommandés."
+          >
+            <MenuLinksEditor
+              items={s.menu_mobile || []}
+              onChange={(v) => setS({ ...s, menu_mobile: (v || []).slice(0, 5) })}
+            />
+            <p className="text-xs text-ink-400">Maximum 5 entrées. Au-delà, seules les 5 premières sont affichées.</p>
+          </SettingsSection>
+
+          <SettingsSection title="Bouton « Faire un don »" desc="Bouton CTA de la barre de navigation desktop et lien mis en avant dans le footer / tiroir mobile.">
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Libellé">
+                <input className="input" value={s.menu_donate_label || ''} onChange={set('menu_donate_label')} placeholder="Faire un don" />
+              </Field>
+              <Field label="Lien">
+                <input className="input" value={s.menu_donate_to || ''} onChange={set('menu_donate_to')} placeholder="/faire-un-don" />
+              </Field>
             </div>
           </SettingsSection>
         </div>
