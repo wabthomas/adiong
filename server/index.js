@@ -1418,6 +1418,7 @@ app.get('/api/admin/modules', authRequired, (req, res) => {
   res.json({
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
+    chat_enabled: getSetting('chat_enabled') !== '0',
     maintenance_enabled: getSetting('maintenance_enabled') === '1',
     maintenance_message: getSetting('maintenance_message') || '',
     is_super: req.user.role === 'super_admin'
@@ -1425,9 +1426,10 @@ app.get('/api/admin/modules', authRequired, (req, res) => {
 });
 
 app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => {
-  const { grh_enabled, pos_enabled, maintenance_enabled, maintenance_message } = req.body || {};
+  const { grh_enabled, pos_enabled, chat_enabled, maintenance_enabled, maintenance_message } = req.body || {};
   if (typeof grh_enabled === 'boolean') setSetting('grh_enabled', grh_enabled ? '1' : '0');
   if (typeof pos_enabled === 'boolean') setSetting('pos_enabled', pos_enabled ? '1' : '0');
+  if (typeof chat_enabled === 'boolean') setSetting('chat_enabled', chat_enabled ? '1' : '0');
   if (typeof maintenance_enabled === 'boolean') setSetting('maintenance_enabled', maintenance_enabled ? '1' : '0');
   if (typeof maintenance_message === 'string') {
     setSetting('maintenance_message', maintenance_message.trim().slice(0, 500));
@@ -1435,6 +1437,7 @@ app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => 
   res.json({
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
+    chat_enabled: getSetting('chat_enabled') !== '0',
     maintenance_enabled: getSetting('maintenance_enabled') === '1',
     maintenance_message: getSetting('maintenance_message') || '',
     is_super: true
@@ -3233,7 +3236,7 @@ app.post('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), self
 });
 
 // ---------- Messagerie d'équipe (style WhatsApp) : discussions privées + groupes ----------
-const CHAT = [authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard];
+const CHAT = [authRequired, requireModule('grh_enabled', 'GRH'), requireModule('chat_enabled', 'Messagerie d\'équipe'), selfEmployeeGuard];
 const chatLimiter = rateLimit({ windowMs: 60_000, max: 30, key: (req) => `chat:${req.employee?.id || req.ip}`, message: 'Vous envoyez les messages trop rapidement — patientez un instant.' });
 const chatDir = path.join(uploadDir, 'chat');
 if (!fs.existsSync(chatDir)) fs.mkdirSync(chatDir, { recursive: true });

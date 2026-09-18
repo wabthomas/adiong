@@ -304,6 +304,19 @@ export default function SettingsAdmin() {
     }
   };
 
+  const toggleChat = async (value) => {
+    setModMsg('');
+    try {
+      const m = await api.modules.update({ chat_enabled: value });
+      setModules(m);
+      setModMsg(value
+        ? '✓ Messagerie d’équipe activée — visible dans le menu pour les employés reliés.'
+        : '✓ Messagerie d’équipe désactivée — le menu est masqué et l’API chat fermée.');
+    } catch (e) {
+      setModMsg(`✗ ${e.message}`);
+    }
+  };
+
   const toggleMaintenance = async (value) => {
     setModMsg('');
     try {
@@ -893,6 +906,39 @@ export default function SettingsAdmin() {
               <span
                 className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition-all ${
                   modules?.pos_enabled ? 'left-8' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="card flex flex-wrap items-center justify-between gap-6 p-7">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="font-display text-lg font-bold text-ink-900">Messagerie d'équipe</h3>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${modules?.chat_enabled !== false ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+                  {modules?.chat_enabled !== false ? 'Activé' : 'Désactivé'}
+                </span>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Chat interne style WhatsApp professionnel : discussions privées, groupes avec rôles
+                (propriétaire, modérateur, membre), pièces jointes, épinglage et non-lus. Ouvert à tout compte
+                relié à un <strong>dossier employé</strong> (module GRH requis). La désactivation masque le menu
+                « Messagerie » et ferme l'API chat (les données restent conservées).
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={modules?.chat_enabled !== false}
+              disabled={!modules}
+              onClick={() => toggleChat(modules?.chat_enabled === false)}
+              className={`relative h-9 w-16 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                modules?.chat_enabled !== false ? 'bg-brand-600' : 'bg-ink-200'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition-all ${
+                  modules?.chat_enabled !== false ? 'left-8' : 'left-1'
                 }`}
               />
             </button>

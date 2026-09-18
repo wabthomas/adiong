@@ -68,6 +68,7 @@ export default function AdminLayout() {
   const [savedUser, setMe] = useState(getSavedUser);
   const [grhEnabled, setGrhEnabled] = useState(false);
   const [posEnabled, setPosEnabled] = useState(false);
+  const [chatEnabled, setChatEnabled] = useState(true);
   const [permMap, setPermMap] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
   const menuRef = useRef(null);
@@ -87,14 +88,13 @@ export default function AdminLayout() {
   }, []);
 
   useEffect(() => {
-    if (HR_ROLES.includes(role) || POS_ROLES.includes(role)) {
-      api.modules.get()
-        .then((m) => {
-          setGrhEnabled(!!m.grh_enabled);
-          setPosEnabled(!!m.pos_enabled);
-        })
-        .catch(() => {});
-    }
+    api.modules.get()
+      .then((m) => {
+        setGrhEnabled(!!m.grh_enabled);
+        setPosEnabled(!!m.pos_enabled);
+        setChatEnabled(m.chat_enabled !== false);
+      })
+      .catch(() => {});
   }, [role]);
 
   useEffect(() => {
@@ -130,6 +130,7 @@ export default function AdminLayout() {
     .filter((it) => (it.roles || ALL_ROLES).includes(role))
     .filter((it) => !it.grh || grhEnabled)
     .filter((it) => !it.pos || posEnabled)
+    .filter((it) => !it.chat || (grhEnabled && chatEnabled))
     .filter((it) => permMap === null || permMap[ITEM_AREAS[it.to]] !== false);
 
   if (!authed) return null;

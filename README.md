@@ -181,6 +181,11 @@ personnel (`grh_employees`), pas l'ensemble des comptes.
 Tables : `chat_conversations`, `chat_members`, `chat_messages`, `chat_pins`, `chat_reads`.
 Endpoints : `/api/chat/*`. Limité à 30 requêtes/min par employé.
 
+**Activation / désactivation** : réservée au **super administrateur** via
+*Admin → Paramètres → Modules (super admin)*. Le module est **actif par défaut**
+(dès que le module GRH l'est) ; la désactivation masque le menu « Messagerie » et
+ferme l'API chat (les données sont conservées).
+
 ## Module Point de vente (POS) + stock + boutique en ligne
 
 Module pour vendre des produits (merchandising, produits des ateliers…) : caisse interne,
