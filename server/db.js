@@ -515,4 +515,53 @@ for (const [role, area, on] of [
   ['cashier', 'backoffice', 1], ['cashier', 'content', 0], ['cashier', 'settings', 0], ['cashier', 'grh', 0], ['cashier', 'pos', 1]
 ]) permSeed.run(role, area, on);
 
+migrate(`CREATE TABLE IF NOT EXISTS chat_conversations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL DEFAULT 'dm',
+  name TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  avatar TEXT NOT NULL DEFAULT '',
+  join_policy TEXT NOT NULL DEFAULT 'ferme',
+  owner_id INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER NOT NULL DEFAULT 0,
+  last_message_at TEXT NOT NULL DEFAULT '',
+  last_message_body TEXT NOT NULL DEFAULT '',
+  last_message_sender TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS chat_members (
+  conversation_id INTEGER NOT NULL,
+  employee_id INTEGER NOT NULL,
+  role TEXT NOT NULL DEFAULT 'membre',
+  joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (conversation_id, employee_id)
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL,
+  sender_id INTEGER NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  attachment TEXT NOT NULL DEFAULT '',
+  attachment_name TEXT NOT NULL DEFAULT '',
+  attachment_mime TEXT NOT NULL DEFAULT '',
+  reply_to INTEGER NOT NULL DEFAULT 0,
+  edited_at TEXT NOT NULL DEFAULT '',
+  deleted_at TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate('CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages(conversation_id, id)');
+migrate(`CREATE TABLE IF NOT EXISTS chat_pins (
+  conversation_id INTEGER NOT NULL,
+  message_id INTEGER NOT NULL,
+  pinned_by INTEGER NOT NULL DEFAULT 0,
+  pinned_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (conversation_id, message_id)
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS chat_reads (
+  conversation_id INTEGER NOT NULL,
+  employee_id INTEGER NOT NULL,
+  read_at TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, employee_id)
+)`);
+
 export default db;

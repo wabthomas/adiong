@@ -35,6 +35,7 @@ const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
 const GrhAdmin = lazy(() => import('./pages/admin/GrhAdmin.jsx'));
 const PosAdmin = lazy(() => import('./pages/admin/PosAdmin.jsx'));
 const MyLeave = lazy(() => import('./pages/admin/MyLeave.jsx'));
+const Chat = lazy(() => import('./pages/admin/Chat.jsx'));
 const PartnersAdmin = lazy(() => import('./pages/admin/PartnersAdmin.jsx'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage.jsx'));
 
@@ -166,6 +167,7 @@ export default function App() {
           <Route path="utilisateurs" element={<AdminPage><UsersAdmin /></AdminPage>} />
           <Route path="profil" element={<AdminPage><ProfileAdmin /></AdminPage>} />
           <Route path="mon-espace" element={<AdminPage><MyLeave /></AdminPage>} />
+          <Route path="messagerie" element={<AdminPage><Chat /></AdminPage>} />
           <Route path="grh" element={<AdminPage><GrhAdmin /></AdminPage>} />
           <Route path="pos" element={<AdminPage><PosAdmin /></AdminPage>} />
           <Route path="partenaires" element={<AdminPage><PartnersAdmin /></AdminPage>} />

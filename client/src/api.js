@@ -515,6 +515,44 @@ export const api = {
     },
     stats: () => req('/api/admin/pos/stats', { auth: true })
   },
+  chat: {
+    upload: async (file) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      return req('/api/chat/upload', { method: 'POST', body: fd, auth: true });
+    },
+    unread: () => req('/api/chat/unread', { auth: true }),
+    staff: () => req('/api/chat/staff', { auth: true }),
+    conversations: () => req('/api/chat/conversations', { auth: true }),
+    openGroups: () => req('/api/chat/open-groups', { auth: true }),
+    joinGroup: (id) => req(`/api/chat/groups/${id}/join`, { method: 'POST', body: {}, auth: true }),
+    dm: (employeeId) => req('/api/chat/dm', { method: 'POST', body: { employee_id: employeeId }, auth: true }),
+    createGroup: (b) => req('/api/chat/groups', { method: 'POST', body: b, auth: true }),
+    update: (id, b) => req(`/api/chat/conversations/${id}`, { method: 'PUT', body: b, auth: true }),
+    remove: (id) => req(`/api/chat/conversations/${id}`, { method: 'DELETE', auth: true }),
+    members: (id) => req(`/api/chat/conversations/${id}/members`, { auth: true }),
+    addMember: (id, b) => req(`/api/chat/conversations/${id}/members`, { method: 'POST', body: b, auth: true }),
+    setMemberRole: (id, empId, role) => req(`/api/chat/conversations/${id}/members/${empId}`, { method: 'PUT', body: { role }, auth: true }),
+    removeMember: (id, empId) => req(`/api/chat/conversations/${id}/members/${empId}`, { method: 'DELETE', auth: true }),
+    messages: (id) => req(`/api/chat/${id}`, { auth: true }),
+    send: (id, body, replyTo, file) => {
+      let payload = { body, reply_to: replyTo || 0 };
+      let form = false;
+      if (file) {
+        const fd = new FormData();
+        fd.append('body', body || '');
+        fd.append('reply_to', String(replyTo || 0));
+        fd.append('file', file);
+        payload = fd;
+        form = true;
+      }
+      return req(`/api/chat/${id}/messages`, { method: 'POST', body: payload, auth: true, form });
+    },
+    editMessage: (id, body) => req(`/api/chat/messages/${id}`, { method: 'PUT', body: { body }, auth: true }),
+    deleteMessage: (id) => req(`/api/chat/messages/${id}`, { method: 'DELETE', auth: true }),
+    togglePin: (id) => req(`/api/chat/messages/${id}/pin`, { method: 'PUT', body: {}, auth: true }),
+    search: (q) => req(`/api/chat/search?q=${encodeURIComponent(q)}`, { auth: true })
+  },
   me: {
     get: () => req('/api/auth/me', { auth: true }),
     update: (b) => req('/api/auth/me', { method: 'PUT', body: b, auth: true }),

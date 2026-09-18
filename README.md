@@ -155,6 +155,32 @@ super admin ; il doit toujours rester au moins un compte privilégié (super adm
 Ces droits de base sont des **défauts** : le super admin affine ensuite chaque rôle dans la matrice
 des droits d'accès (page Utilisateurs).
 
+## Messagerie d'équipe (chat interne)
+
+Messagerie **interne** entre employés, inspirée de WhatsApp mais orientée organisation
+(*Admin → Messagerie*). Accessible à tout compte relié à un **dossier employé** (email
+identique) et disponible quand le module GRH est actif — la population du chat est le
+personnel (`grh_employees`), pas l'ensemble des comptes.
+
+- **Discussions privées** (1:1) entre deux employés, idempotentes (une seule conversation
+  par paire) et **groupes** (nom, description, avatar, **groupe ouvert** — n'importe quel
+  employé peut y adhérer depuis la liste « Groupes ouverts » — ou **fermé**).
+- **Rôles** dans les groupes : propriétaire (personnalisation, suppression, gestion des
+  membres et des rôles), modérateurs (ajout/retrait de membres, épinglage, suppression de
+  n'importe quel message), membres. Départ libre ; un groupe sans assez de membres est
+  supprimé automatiquement.
+- **Messages** : texte, **pièce jointe** (image ou PDF, 10 Mo max, stockée dans
+  `uploads/chat`), **réponse** à un message, **édition** (signalée), **suppression** douce
+  (« Message supprimé », visible seulement par l'auteur ou un modérateur), **épinglage**
+  (bandeau des messages épinglés), séparateurs de jours, **reçus** ✓ (envoyé) / ✓✓ (lu),
+  **compteurs de non-lus** par conversation et badge global dans le menu.
+- **Recherche** plein texte dans l'historique des conversations de l'employé (2 car. min).
+- Rafraîchissement par **polling** (messages 5 s, liste 15 s, badge menu 20 s) — sans
+  WebSocket, comme le reste de l'application.
+
+Tables : `chat_conversations`, `chat_members`, `chat_messages`, `chat_pins`, `chat_reads`.
+Endpoints : `/api/chat/*`. Limité à 30 requêtes/min par employé.
+
 ## Module Point de vente (POS) + stock + boutique en ligne
 
 Module pour vendre des produits (merchandising, produits des ateliers…) : caisse interne,

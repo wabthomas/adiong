@@ -1,0 +1,870 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api, getSavedUser } from '../../api.js';
+import { Modal, Field } from './AdminUI.jsx';
+
+const QUICK_EMOJIS = ['😀', '😂', '😊', '😅', '😉', '😍', '🤔', '🙃', '🙏', '', '🙌', '🎯', '❤️', '🎉', '✅', '❌', '️', '💡', '🌟', '🔥', '', '☕', '🌍', '🕐'];
+const SENDER_COLORS = ['text-brand-700', 'text-emerald-600', 'text-accent-700', 'text-violet-600', 'text-rose-600', 'text-sky-600', 'text-lime-700'];
+
+const ts = (v) => new Date(String(v || '').replace(' ', 'T') + 'Z').getTime();
+const fmtTime = (v) => {
+  const t = ts(v);
+  return isNaN(t) ? '' : new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+};
+const dayKey = (v) => {
+  const t = ts(v);
+  if (isNaN(t)) return '';
+  const d = new Date(t);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+const fmtDayLabel = (v) => {
+  const t = ts(v);
+  if (isNaN(t)) return '';
+  const today = new Date();
+  const yest = new Date(Date.now() - 86400000);
+  const key = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const d = new Date(t);
+  if (key(d) === key(today)) return "Aujourd'hui";
+  if (key(d) === key(yest)) return 'Hier';
+  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+};
+const fmtListTime = (v) => {
+  const t = ts(v);
+  if (!v || isNaN(t)) return '';
+  const d = new Date(t);
+  const today = new Date();
+  const key = (x) => `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;
+  if (key(d) === key(today)) return fmtTime(v);
+  const yest = new Date(Date.now() - 86400000);
+  if (key(d) === key(yest)) return 'Hier';
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+};
+
+function Avatar({ src, name, group = false, size = 'h-12 w-12', txt = 'text-sm' }) {
+  if (src) return <img src={src} alt="" className={`${size} shrink-0 rounded-full object-cover ring-1 ring-ink-100`} />;
+  const initials = (name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  return (
+    <span className={`${size} grid shrink-0 place-items-center rounded-full ${group ? 'bg-accent-100 font-bold text-accent-800' : 'bg-brand-100 font-display font-bold text-brand-700'} ${txt}`}>
+      {group && !initials ? '👥' : initials || '👥'}
+    </span>
+  );
+}
+
+function CheckMarks({ read }) {
+  return (
+    <span className={`text-[10px] leading-none ${read ? 'text-emerald-300' : 'text-white/60'}`}>
+      {read ? '✓✓' : '✓'}
+    </span>
+  );
+}
+
+function Attachment({ m }) {
+  const isImg = String(m.attachment_mime || '').startsWith('image/');
+  if (isImg) return <img src={m.attachment} alt={m.attachment_name} className="max-h-64 w-auto rounded-lg ring-1 ring-ink-100" />;
+  return (
+    <a href={m.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg bg-black/5 px-3 py-2 text-xs font-bold hover:bg-black/10">
+      📄 <span className="max-w-[180px] truncate">{m.attachment_name || 'Fichier'}</span>
+    </a>
+  );
+}
+
+function Bubble({ m, me, group, canModerate, onReply, onPin, onEdit, onDelete }) {
+  const mine = m.sender_id === me;
+  const color = SENDER_COLORS[(m.sender_id || 0) % SENDER_COLORS.length];
+  if (m.deleted_at) {
+    return (
+      <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+        <div className="max-w-[78%] rounded-2xl bg-ink-100/70 px-4 py-2.5 text-sm text-ink-400 italic">
+          🚫 Message supprimé
+          <span className="ml-2 text-[10px] not-italic text-ink-300">{fmtTime(m.created_at)}</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className={`group flex ${mine ? 'justify-end' : 'justify-start'}`}>
+      <div className={`relative max-w-[78%] rounded-2xl px-3.5 py-2 shadow-sm ${mine ? 'rounded-br-md bg-brand-600 text-white' : 'rounded-bl-md bg-white text-ink-800 ring-1 ring-ink-100'}`}>
+        {group && !mine && <p className={`mb-0.5 text-xs font-extrabold ${color}`}>{m.sender_name || 'Membre'}</p>}
+        {m.reply_body && (
+          <div className={`mb-1.5 rounded-lg border-l-4 px-2.5 py-1.5 text-xs ${mine ? 'border-white/40 bg-white/10' : 'border-brand-300 bg-brand-50'}`}>
+            <p className={`font-bold ${mine ? 'text-white' : 'text-brand-700'}`}>{m.reply_sender_name || 'Message'}</p>
+            <p className="line-clamp-2 opacity-80">{m.reply_body}</p>
+          </div>
+        )}
+        {m.attachment && <Attachment m={m} />}
+        {m.body && <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{m.body}</p>}
+        <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${mine ? 'text-white/70' : 'text-ink-400'}`}>
+          {m.pinned === 1 && <span title="Épinglé">📌</span>}
+          {m.edited_at && <span>· Modifié</span>}
+          <span>{fmtTime(m.created_at)}</span>
+          {mine && <CheckMarks read={!!m.read} />}
+        </div>
+        <div className={`absolute top-1/2 hidden -translate-y-1/2 gap-1 group-hover:flex ${mine ? 'right-full mr-1.5' : 'left-full ml-1.5'}`}>
+          <button onClick={() => onReply(m)} title="Répondre" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">↩</button>
+          <button onClick={() => onPin(m)} title={m.pinned === 1 ? 'Désépingler' : 'Épingler'} className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">📌</button>
+          {mine && (
+            <button onClick={() => onEdit(m)} title="Modifier" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">✎</button>
+          )}
+          {(mine || canModerate) && (
+            <button onClick={() => onDelete(m)} title="Supprimer" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-red-100 text-red-500 hover:bg-red-50">🗑</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StaffPicker({ staff, selected, onToggle, excludeSelf = false }) {
+  return (
+    <div className="grid max-h-56 gap-1.5 overflow-y-auto rounded-xl border border-ink-100 bg-cream/60 p-2">
+      {staff.map((e) => {
+        const isSel = selected.includes(e.id);
+        const locked = e.is_me;
+        return (
+          <label key={e.id} className={`flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm hover:bg-white ${locked ? 'cursor-default opacity-70' : ''}`}>
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-[#0f3a88]"
+              checked={locked || isSel}
+              disabled={locked || excludeSelf && locked}
+              onChange={() => !locked && onToggle(e.id)}
+            />
+            <Avatar src={e.photo} name={e.full_name} size="h-8 w-8" txt="text-[10px]" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-semibold text-ink-800">{e.full_name}{locked ? ' (vous)' : ''}</span>
+              <span className="block truncate text-xs text-ink-400">{e.position || e.department_name || '—'}</span>
+            </span>
+          </label>
+        );
+      })}
+      {staff.length === 0 && <p className="py-6 text-center text-sm text-ink-400">Aucun collaborateur actif.</p>}
+    </div>
+  );
+}
+
+function NewGroupModal({ staff, onCreated, onClose }) {
+  const [f, setF] = useState({ name: '', description: '', avatar: '' });
+  const [members, setMembers] = useState([]);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const toggle = (id) => setMembers((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    try {
+      const r = await api.chat.upload(file);
+      setF((cur) => ({ ...cur, avatar: r.url }));
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const create = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const conv = await api.chat.createGroup({ ...f, member_ids: members });
+      onCreated(conv);
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-ink-500">Créez un groupe de discussion : nom, photo, description et membres. Vous en êtes le propriétaire.</p>
+      <div className="grid gap-4 sm:grid-cols-[96px_minmax(0,1fr)]">
+        <Field label="Photo du groupe">
+          <div className="flex flex-col items-center gap-2">
+            <Avatar src={f.avatar} name={f.name || 'G'} group size="h-20 w-20" txt="text-lg" />
+            <label className="btn-ghost cursor-pointer !px-3 !py-1.5 text-xs">
+              {f.avatar ? 'Changer' : '📤 Photo'}
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAvatar(e.target.files?.[0])} />
+            </label>
+          </div>
+        </Field>
+        <div className="space-y-4">
+          <Field label="Nom du groupe *">
+            <input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Équipe Programme Goma" />
+          </Field>
+          <Field label="Description">
+            <input className="input" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Objet du groupe (optionnel)" />
+          </Field>
+        </div>
+      </div>
+      <Field label={`Membres (${members.length} sélectionné(s))`}>
+        <StaffPicker staff={staff} selected={members} onToggle={toggle} />
+      </Field>
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-4">
+        <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={create} disabled={busy || !f.name.trim() || members.length === 0}>
+          {busy ? 'Création…' : 'Créer le groupe'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NewDmModal({ staff, onOpened, onClose }) {
+  const [q, setQ] = useState('');
+  const list = staff.filter((e) => !e.is_me && (e.full_name + ' ' + (e.position || '')).toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-ink-500">Choisissez un collaborateur pour démarrer une discussion privée.</p>
+      <input className="input" placeholder="Rechercher un collaborateur…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="max-h-72 space-y-1 overflow-y-auto">
+        {list.map((e) => (
+          <button key={e.id} onClick={() => onOpened(e)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-cream">
+            <Avatar src={e.photo} name={e.full_name} size="h-10 w-10" txt="text-xs" />
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-bold text-ink-900">{e.full_name}</span>
+              <span className="block truncate text-xs text-ink-400">{e.position || e.department_name || '—'}</span>
+            </span>
+          </button>
+        ))}
+        {list.length === 0 && <p className="py-8 text-center text-sm text-ink-400">Aucun collaborateur trouvé.</p>}
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({ conv, isSuperRole, onClose }) {
+  const isOwner = conv.my_role === 'propietaire';
+  const isMod = isOwner || conv.my_role === 'moderateur';
+  const [f, setF] = useState({ name: conv.name || '', description: conv.description || '', avatar: conv.avatar || '', join_policy: conv.join_policy || 'ferme' });
+  const [error, setError] = useState('');
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    try {
+      const r = await api.chat.upload(file);
+      setF((cur) => ({ ...cur, avatar: r.url }));
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const save = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.chat.update(conv.id, f);
+      setMsg('✓ Groupes mis à jour.');
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const deleteGroup = async () => {
+    if (!confirm(`Supprimer le groupe « ${conv.name} » et tout son historique ? Cette action est définitive.`)) return;
+    try {
+      await api.chat.remove(conv.id);
+      onClose();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-[96px_minmax(0,1fr)]">
+        <div>
+          <p className="label">Photo</p>
+          <div className="flex flex-col items-center gap-2">
+            <Avatar src={f.avatar} name={f.name || 'G'} group size="h-20 w-20" txt="text-lg" />
+            {isMod && (
+              <label className="btn-ghost cursor-pointer !px-3 !py-1.5 text-xs">
+                {f.avatar ? 'Changer' : '📤 Photo'}
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAvatar(e.target.files?.[0])} />
+              </label>
+            )}
+          </div>
+        </div>
+        <div className="space-y-4">
+          <Field label="Nom du groupe">
+            <input className="input" value={f.name} disabled={!isMod} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          </Field>
+          <Field label="Description">
+            <input className="input" value={f.description} disabled={!isMod} onChange={(e) => setF({ ...f, description: e.target.value })} />
+          </Field>
+        </div>
+      </div>
+      {isMod && (
+        <Field label="Adhésion" hint="Ouvert : tout collaborateur peut rejoindre le groupe. Fermé : seuls les modérateurs ajoutent des membres.">
+          <div className="flex gap-4">
+            {['ferme', 'ouvert'].map((p) => (
+              <label key={p} className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-ink-700">
+                <input type="radio" className="h-4 w-4 accent-[#0f3a88]" checked={f.join_policy === p} onChange={() => setF({ ...f, join_policy: p })} />
+                {p === 'ferme' ? 'Groupe fermé (invitations)' : 'Groupe ouvert (adhésion libre)'}
+              </label>
+            ))}
+          </div>
+        </Field>
+      )}
+      {msg && <p className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      {isMod && (
+        <div className="flex justify-end gap-3 border-t border-ink-100 pt-4">
+          <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={save} disabled={busy || !f.name.trim()}>
+            {busy ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+        </div>
+      )}
+      {isOwner && (
+        <div className="rounded-xl border border-red-100 bg-red-50/60 p-4">
+          <p className="text-sm font-bold text-red-700">Zone dangereuse</p>
+          <p className="mt-1 text-xs text-red-600">Supprimer le groupe efface définitivement toutes les discussions et pièces jointes.</p>
+          <button onClick={deleteGroup} className="btn-ghost mt-3 !px-4 !py-2 text-sm !text-red-600">Supprimer le groupe</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MembersModal({ conv, onClose, onChanged }) {
+  const isOwner = conv.my_role === 'propietaire';
+  const isMod = isOwner || conv.my_role === 'moderateur';
+  const [members, setMembers] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    api.chat.members(conv.id).then(setMembers).catch((e) => setError(e.message));
+  }, [conv.id]);
+  useEffect(() => {
+    load();
+    api.chat.staff().then(setStaff).catch(() => {});
+  }, [load]);
+
+  const canRemove = (m) => m.is_me ? conv.my_role !== 'propietaire' : isMod && m.role !== 'propietaire';
+  const remove = async (m) => {
+    const label = m.is_me ? 'quitter le groupe' : `retirer ${m.full_name} du groupe`;
+    if (!confirm(`Confirmer : ${label} ?`)) return;
+    try {
+      const r = await api.chat.removeMember(conv.id, m.id);
+      if (r.deleted) { alert('Le groupe a été supprimé (plus assez de membres).'); onClose(); return; }
+      load();
+      onChanged();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const setRole = async (m, role) => {
+    try {
+      await api.chat.setMemberRole(conv.id, m.id, role);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const add = async (id) => {
+    try {
+      await api.chat.addMember(conv.id, { employee_id: Number(id) });
+      setAddOpen(false);
+      load();
+      onChanged();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const addable = staff.filter((e) => !members.some((m) => m.id === e.id));
+
+  return (
+    <div className="space-y-4">
+      {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-bold text-ink-700">{members.length} membre(s)</p>
+        {isMod && (
+          <button className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setAddOpen((v) => !v)}>
+            {addOpen ? 'Fermer' : '+ Ajouter un membre'}
+          </button>
+        )}
+      </div>
+      {addOpen && isMod && (
+        <div className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-ink-100 bg-cream/60 p-2">
+          {addable.map((e) => (
+            <button key={e.id} onClick={() => add(e.id)} className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-white">
+              <Avatar src={e.photo} name={e.full_name} size="h-8 w-8" txt="text-[10px]" />
+              <span className="truncate font-semibold text-ink-800">{e.full_name}</span>
+              <span className="ml-auto text-xs text-brand-700">Ajouter</span>
+            </button>
+          ))}
+          {addable.length === 0 && <p className="py-4 text-center text-xs text-ink-400">Tout le monde est déjà membre.</p>}
+        </div>
+      )}
+      <ul className="max-h-80 space-y-1 overflow-y-auto">
+        {members.map((m) => (
+          <li key={m.id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-cream/60">
+            <Avatar src={m.photo} name={m.full_name} size="h-9 w-9" txt="text-[10px]" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-ink-900">
+                {m.full_name}
+                {m.is_me && <span className="ml-1.5 rounded-full bg-accent-400 px-1.5 py-0.5 text-[9px] font-bold text-ink-950">VOUS</span>}
+                {!m.is_active && <span className="ml-1.5 rounded-full bg-ink-100 px-1.5 py-0.5 text-[9px] font-bold text-ink-500">inactif</span>}
+              </p>
+              <p className="truncate text-xs text-ink-400">{m.position || '—'}</p>
+            </div>
+            {isOwner && !m.is_me && (
+              <select
+                className="input !w-32 !py-1 text-xs font-bold"
+                value={m.role}
+                disabled={m.role === 'propietaire'}
+                onChange={(e) => setRole(m, e.target.value)}
+              >
+                <option value="membre">Membre</option>
+                <option value="moderateur">Modérateur</option>
+              </select>
+            )}
+            {!isOwner && m.role_label && (
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${m.role === 'propietaire' ? 'bg-accent-100 text-accent-800' : m.role === 'moderateur' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+                {m.role_label}
+              </span>
+            )}
+            {isOwner && m.role !== 'propietaire' && (
+              <button onClick={() => remove(m)} title="Retirer du groupe" className="grid h-8 w-8 place-items-center rounded-lg bg-red-50 text-red-600 hover:bg-red-100">✕</button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {conv.type === 'group' && conv.my_role !== 'propietaire' && (
+        <div className="border-t border-ink-100 pt-3">
+          <button onClick={() => remove(members.find((m) => m.is_me))} className="btn-ghost !px-4 !py-2 text-sm !text-red-600">
+            Quitar le groupe
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Chat() {
+  const [convs, setConvs] = useState([]);
+  const [openGroups, setOpenGroups] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [active, setActive] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [pins, setPins] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [text, setText] = useState('');
+  const [file, setFile] = useState(null);
+  const [reply, setReply] = useState(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState('');
+  const [searchRes, setSearchRes] = useState(null);
+  const [modal, setModal] = useState(null);
+  const [notLinked, setNotLinked] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const endRef = useRef(null);
+  const fileRef = useRef(null);
+  const searchTimer = useRef(null);
+
+  const me = active?.me;
+  const activeRole = active?.conversation?.my_role || 'membre';
+  const canModerate = active?.conversation?.type === 'group' && ['propietaire', 'moderateur'].includes(activeRole);
+
+  const loadConvs = useCallback(() => {
+    api.chat.conversations().then(setConvs).catch((e) => {
+      if (String(e.message).includes('dossier employé')) setNotLinked(true);
+    });
+    api.chat.openGroups().then(setOpenGroups).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadConvs();
+    const id = setInterval(loadConvs, 15000);
+    return () => clearInterval(id);
+  }, [loadConvs]);
+  useEffect(() => {
+    api.chat.staff().then(setStaff).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!activeId) { setActive(null); setMessages([]); setPins([]); return; }
+    const load = () => {
+      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, [activeId]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages.length, activeId]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    const onVis = () => {
+      if (document.visibilityState === 'visible') api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [activeId]);
+
+  const openConv = (id) => {
+    setActiveId(id);
+    setSearchQ('');
+    setSearchRes(null);
+  };
+  const startDm = async (e) => {
+    try {
+      const conv = await api.chat.dm(e.id);
+      setModal(null);
+      loadConvs();
+      openConv(conv.id);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+  const createdGroup = (conv) => {
+    loadConvs();
+    openConv(conv.id);
+  };
+
+  const doSearch = (q) => {
+    clearTimeout(searchTimer.current);
+    if (!q || q.trim().length < 2) { setSearchRes(null); return; }
+    searchTimer.current = setTimeout(() => {
+      api.chat.search(q.trim()).then(setSearchRes).catch(() => setSearchRes(null));
+    }, 350);
+  };
+
+  const send = async () => {
+    if ((!text.trim() && !file) || !activeId) return;
+    setBusy(true);
+    try {
+      await api.chat.send(activeId, text.trim(), reply?.id || 0, file);
+      setText('');
+      setFile(null);
+      setReply(null);
+      if (fileRef.current) fileRef.current.value = '';
+      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+      loadConvs();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const doEdit = async (m) => {
+    const v = prompt('Modifier le message :', m.body || '');
+    if (v === null || !v.trim() || v.trim() === m.body) return;
+    try {
+      await api.chat.editMessage(m.id, v.trim());
+      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const doDelete = async (m) => {
+    if (!confirm('Supprimer ce message pour tout le monde ?')) return;
+    try {
+      await api.chat.deleteMessage(m.id);
+      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+      loadConvs();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const doPin = async (m) => {
+    try {
+      await api.chat.togglePin(m.id);
+      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const insertEmoji = (em) => {
+    setText((t) => t + em);
+    setEmojiOpen(false);
+  };
+  const joinOpenGroup = async (g) => {
+    if (!confirm(`Rejoindre le groupe « ${g.name} » ?`)) return;
+    try {
+      await api.chat.joinGroup(g.id);
+      loadConvs();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  if (notLinked) {
+    return (
+      <div className="mx-auto max-w-xl rounded-3xl border border-dashed border-ink-200 bg-white p-10 text-center">
+        <p className="text-4xl">💬</p>
+        <h3 className="mt-4 font-display text-xl font-bold text-ink-900">Messagerie d'équipe indisponible</h3>
+        <p className="mt-3 text-sm leading-relaxed text-ink-500">
+          La messagerie d'organisation est réservée aux collaborateurs ayant un dossier dans le module GRH.
+          Si vous faites partie de l'équipe, demandez aux ressources humaines de renseigner votre adresse email
+          dans votre fiche employé.
+        </p>
+      </div>
+    );
+  }
+
+  const rendered = [];
+  let lastDay = '';
+  for (const m of messages) {
+    const day = dayKey(m.created_at);
+    const sep = day !== lastDay;
+    lastDay = day;
+    rendered.push(
+      <React.Fragment key={m.id}>
+        {sep && (
+          <div className="my-3 flex justify-center">
+            <span className="rounded-full bg-white/90 px-3.5 py-1 text-[11px] font-bold text-ink-400 shadow-sm ring-1 ring-ink-100">
+              {fmtDayLabel(m.created_at)}
+            </span>
+          </div>
+        )}
+        <Bubble
+          m={m}
+          me={me}
+          group={active?.conversation?.type === 'group'}
+          canModerate={canModerate}
+          onReply={(mm) => setReply(mm)}
+          onPin={doPin}
+          onEdit={doEdit}
+          onDelete={doDelete}
+        />
+      </React.Fragment>
+    );
+  }
+
+  return (
+    <div className="flex h-[calc(100vh-190px)] min-h-[540px] overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5">
+      <div className={`w-full flex-col border-r border-ink-100 lg:flex lg:w-[340px] lg:shrink-0 ${activeId ? 'hidden' : 'flex'}`}>
+        <div className="border-b border-ink-100 bg-cream/70 px-4 py-3.5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-lg font-bold text-ink-900">💬 Messagerie</h2>
+            <div className="flex gap-1.5">
+              <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Nouvelle conversation" onClick={() => setModal('dm')}>✉</button>
+              <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Nouveau groupe" onClick={() => setModal('group')}>👥</button>
+            </div>
+          </div>
+          <input
+            className="input mt-2.5 !py-2 text-sm"
+            placeholder="Rechercher une discussion…"
+            value={searchQ}
+            onChange={(e) => { setSearchQ(e.target.value); doSearch(e.target.value); }}
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {searchRes !== null ? (
+            <ul>
+              {searchRes.map((r) => (
+                <li key={r.id}>
+                  <button onClick={() => openConv(r.conversation_id)} className="flex w-full items-start gap-3 border-b border-ink-50 px-4 py-3 text-left hover:bg-cream/60">
+                    <span className="mt-0.5 text-lg">🔎</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-bold text-ink-400">{r.conversation_name} · {r.sender_name || '—'}</span>
+                      <span className="block truncate text-sm text-ink-700">{r.deleted_at ? '🚫 Message supprimé' : r.body}</span>
+                      <span className="text-[10px] text-ink-300">{fmtTime(r.created_at)}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {searchRes.length === 0 && <p className="px-4 py-10 text-center text-sm text-ink-400">Aucun message trouvé.</p>}
+            </ul>
+          ) : convs.length === 0 && openGroups.length === 0 ? (
+            <div className="grid h-full place-items-center p-6 text-center">
+              <div>
+                <p className="text-4xl">💬</p>
+                <p className="mt-3 text-sm font-bold text-ink-700">Aucune discussion pour l'instant</p>
+                <p className="mt-1 text-xs text-ink-400">Démarrez une conversation privée ou créez un groupe avec vos collègues.</p>
+                <div className="mt-4 flex justify-center gap-2">
+                  <button className="btn-primary !px-4 !py-2 text-sm" onClick={() => setModal('dm')}>+ Conversation</button>
+                  <button className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setModal('group')}>+ Groupe</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+            {convs.length > 0 && (
+            <ul>
+              {convs.map((c) => (
+                <li key={c.id}>
+                  <button
+                    onClick={() => openConv(c.id)}
+                    className={`flex w-full items-center gap-3 border-b border-ink-50 px-4 py-3.5 text-left transition-colors ${activeId === c.id ? 'bg-brand-50' : 'hover:bg-cream/60'}`}
+                  >
+                    <Avatar src={c.avatar} name={c.name} group={c.type === 'group'} size="h-12 w-12" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-bold text-ink-900">{c.name}</span>
+                        <span className="shrink-0 text-[10px] font-semibold text-ink-400">{fmtListTime(c.last_message_at)}</span>
+                      </span>
+                      <span className="mt-0.5 flex items-center justify-between gap-2">
+                        <span className="truncate text-xs text-ink-500">
+                          {c.type === 'group' && c.last_message_sender ? `${c.last_message_sender.split(' ')[0]} : ` : ''}
+                          {c.last_message_body || (c.type === 'group' ? `${c.member_count} membre(s)` : 'Discussion privée')}
+                        </span>
+                        {c.unread > 0 && (
+                          <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-brand-600 px-1.5 text-[10px] font-black text-white">
+                            {c.unread > 99 ? '99+' : c.unread}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            )}
+            {openGroups.length > 0 && (
+              <div>
+                <p className="px-4 pb-1 pt-4 text-[11px] font-bold tracking-wide text-ink-400 uppercase">Groupes ouverts</p>
+                <ul>
+                  {openGroups.map((g) => (
+                    <li key={g.id} className="border-b border-ink-50">
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <Avatar src={g.avatar} name={g.name} group size="h-10 w-10" txt="text-xs" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-bold text-ink-900">{g.name}</p>
+                          <p className="truncate text-xs text-ink-400">{g.description || `${g.member_count} membre(s)`}</p>
+                        </div>
+                        <button className="btn-primary shrink-0 !px-3 !py-1.5 text-xs" onClick={() => joinOpenGroup(g)}>Rejoindre</button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className={`min-w-0 flex-1 flex-col ${activeId ? 'flex' : 'hidden lg:flex'}`}>
+        {!active ? (
+          <div className="grid flex-1 place-items-center bg-cream/40 p-8 text-center">
+            <div>
+              <p className="text-5xl">💬</p>
+              <h3 className="mt-4 font-display text-lg font-bold text-ink-800">Messagerie d'organisation</h3>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-ink-500">
+                Discutez en privé ou par groupes avec vos collègues, épinglez les messages importants,
+                partagez des pièces jointes — comme WhatsApp, mais pour l'équipe.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 border-b border-ink-100 bg-cream/70 px-4 py-3">
+              <button className="btn-ghost !px-2.5 !py-1.5 lg:hidden" onClick={() => setActiveId(null)}>←</button>
+              <Avatar src={active.conversation.avatar} name={active.conversation.name} group={active.conversation.type === 'group'} size="h-10 w-10" txt="text-xs" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-ink-900">
+                  {active.conversation.name}
+                  {active.conversation.join_policy === 'ouvert' && active.conversation.type === 'group' && (
+                    <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">groupe ouvert</span>
+                  )}
+                </p>
+                <p className="truncate text-xs text-ink-400">
+                  {active.conversation.type === 'group'
+                    ? `${active.conversation.member_count} membre(s) · ${activeRole === 'propietaire' ? 'vous êtes propriétaire' : activeRole === 'moderateur' ? 'modérateur' : 'discussion de groupe'}`
+                    : active.conversation.other?.position || 'Discussion privée'}
+                </p>
+              </div>
+              <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Membres" onClick={() => setModal('members')}>👥</button>
+              {active.conversation.type === 'group' && (
+                <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Paramètres du groupe" onClick={() => setModal('settings')}>⚙</button>
+              )}
+            </div>
+
+            {pins.length > 0 && (
+              <div className="flex items-center gap-2.5 border-b border-accent-100 bg-accent-50 px-4 py-2">
+                <span className="text-sm">📌</span>
+                <p className="min-w-0 flex-1 truncate text-xs font-semibold text-accent-900">
+                  <strong>{pins[0].sender_name || 'Membre'} :</strong> {pins[0].body || 'Pièce jointe'}
+                  {pins.length > 1 && <span className="ml-2 text-accent-600">+{pins.length - 1} autre(s) épinglé(s)</span>}
+                </p>
+              </div>
+            )}
+
+            <div className="flex-1 space-y-2 overflow-y-auto bg-[#eef3f0] px-4 py-4">
+              {rendered}
+              <div ref={endRef} />
+            </div>
+
+            <div className="border-t border-ink-100 bg-white p-3">
+              {reply && (
+                <div className="mb-2 flex items-center gap-2.5 rounded-lg border-l-4 border-brand-500 bg-brand-50 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-brand-700">Répondre à {reply.sender_name || '—'}</p>
+                    <p className="truncate text-xs text-ink-500">{reply.body || 'Pièce jointe'}</p>
+                  </div>
+                  <button onClick={() => setReply(null)} className="text-ink-400 hover:text-ink-600">✕</button>
+                </div>
+              )}
+              {file && (
+                <div className="mb-2 flex items-center gap-2.5 rounded-lg bg-cream px-3 py-2">
+                  <span>📎</span>
+                  <p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink-700">{file.name}</p>
+                  <button onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ''; }} className="text-ink-400 hover:text-ink-600">✕</button>
+                </div>
+              )}
+              <div className="flex items-end gap-2">
+                <div className="relative">
+                  <button className="btn-ghost !px-3 !py-2.5" title="Émoticônes" onClick={() => setEmojiOpen((v) => !v)}>😊</button>
+                  {emojiOpen && (
+                    <div className="absolute bottom-12 left-0 z-10 grid w-64 grid-cols-8 gap-1 rounded-xl bg-white p-2 shadow-lift ring-1 ring-ink-100">
+                      {QUICK_EMOJIS.map((em) => (
+                        <button key={em} onClick={() => insertEmoji(em)} className="grid h-8 w-8 place-items-center rounded-lg text-lg hover:bg-cream">{em}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                />
+                <button className="btn-ghost !px-3 !py-2.5" title="Pièce jointe (image ou PDF)" onClick={() => fileRef.current?.click()}>📎</button>
+                <textarea
+                  className="input max-h-32 flex-1 resize-none !py-3"
+                  rows={1}
+                  placeholder="Écrire un message…"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                />
+                <button className="btn-primary !px-5 !py-3 text-sm" onClick={send} disabled={busy || (!text.trim() && !file)}>
+                  {busy ? '…' : 'Envoyer'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <Modal open={modal === 'group'} onClose={() => setModal(null)} title="Nouveau groupe" wide>
+        <NewGroupModal staff={staff} onCreated={createdGroup} onClose={() => setModal(null)} />
+      </Modal>
+      <Modal open={modal === 'dm'} onClose={() => setModal(null)} title="Nouvelle conversation">
+        <NewDmModal staff={staff} onOpened={startDm} onClose={() => setModal(null)} />
+      </Modal>
+      <Modal open={modal === 'settings'} onClose={() => setModal(null)} title={`Paramètres — ${active?.conversation?.name || ''}`} wide>
+        {modal === 'settings' && active && (
+          <SettingsModal conv={active.conversation} onClose={() => { setModal(null); loadConvs(); }} />
+        )}
+      </Modal>
+      <Modal open={modal === 'members'} onClose={() => setModal(null)} title={`Membres — ${active?.conversation?.name || ''}`} wide>
+        {modal === 'members' && active && (
+          <MembersModal conv={active.conversation} onClose={() => setModal(null)} onChanged={loadConvs} />
+        )}
+      </Modal>
+    </div>
+  );
+}

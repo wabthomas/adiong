@@ -1715,7 +1715,7 @@ const monthLabelFr = (m) => {
   const [y, mo] = String(m).split('-');
   return new Date(Date.UTC(Number(y), Number(mo) - 1, 1)).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 };
-const fmtMoney = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+const fmtMoney = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0).replace(/[\u202f\u00a0\u2009]/g, ' ');
 
 app.get('/api/admin/grh/payroll', ...PAY, (req, res) => {
   const month = String(req.query.month || '');
@@ -3013,6 +3013,380 @@ app.post('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), self
   res.json(db.prepare('SELECT * FROM grh_chat WHERE id = ?').get(info.lastInsertRowid));
 });
 
+// ---------- Messagerie d'équipe (style WhatsApp) : discussions privées + groupes ----------
+const CHAT = [authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard];
+const chatLimiter = rateLimit({ windowMs: 60_000, max: 30, key: (req) => `chat:${req.employee?.id || req.ip}`, message: 'Vous envoyez les messages trop rapidement — patientez un instant.' });
+const chatDir = path.join(uploadDir, 'chat');
+if (!fs.existsSync(chatDir)) fs.mkdirSync(chatDir, { recursive: true });
+const chatUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, chatDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+      cb(null, `chat-${Date.now()}-${crypto.randomBytes(3).toString('hex')}${ext}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (isAllowedUpload(file)) cb(null, true);
+    else cb(new Error('Format non supporté (images JPG/PNG/WebP/GIF/SVG ou PDF)'));
+  }
+});
+
+const CHAT_ROLE_LABELS = { proprietaire: 'Propriétaire', moderateur: 'Modérateur', membre: 'Membre' };
+const chatIsMod = (req) => req.chat && req.chat.conv.type === 'group' && ['propietaire', 'moderateur'].includes(req.chat.mem.role);
+const guardChatConv = (req, res, next) => {
+  const conv = db.prepare('SELECT * FROM chat_conversations WHERE id = ?').get(Number(req.params.id));
+  if (!conv) return res.status(404).json({ error: 'Conversation introuvable' });
+  const mem = db.prepare('SELECT * FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(conv.id, req.employee.id);
+  if (!mem) return res.status(403).json({ error: 'Vous ne faites pas partie de cette conversation' });
+  req.chat = { conv, mem };
+  next();
+};
+const chatStaffList = () =>
+  db.prepare(`SELECT e.id, e.full_name, e.position, e.photo,
+    (SELECT name FROM grh_departments d WHERE d.id = e.department_id) AS department_name
+    FROM grh_employees e WHERE e.status = 'actif' ORDER BY e.full_name`).all();
+const chatUnread = (convId, empId) =>
+  db.prepare(`SELECT COUNT(*) n FROM chat_messages
+    WHERE conversation_id = ? AND sender_id != ? AND deleted_at = ''
+    AND created_at > COALESCE((SELECT read_at FROM chat_reads WHERE conversation_id = ? AND employee_id = ?), '1970-01-01')`)
+    .get(convId, empId, convId, empId).n;
+const chatConvView = (conv, emp) => {
+  const mem = db.prepare('SELECT * FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(conv.id, emp.id);
+  const row = {
+    id: conv.id,
+    type: conv.type,
+    name: conv.name,
+    description: conv.description,
+    avatar: conv.avatar,
+    join_policy: conv.join_policy,
+    owner_id: conv.owner_id,
+    my_role: mem?.role || (conv.type === 'group' && conv.owner_id === emp.id ? 'propietaire' : 'membre'),
+    member_count: db.prepare('SELECT COUNT(*) n FROM chat_members WHERE conversation_id = ?').get(conv.id).n,
+    unread: chatUnread(conv.id, emp.id),
+    last_message_at: conv.last_message_at,
+    last_message_body: conv.last_message_body,
+    last_message_sender: conv.last_message_sender
+  };
+  if (conv.type === 'dm') {
+    const other = db.prepare('SELECT m.employee_id FROM chat_members m WHERE m.conversation_id = ? AND m.employee_id != ?').get(conv.id, emp.id);
+    const o = db.prepare('SELECT * FROM grh_employees WHERE id = ?').get(other?.employee_id);
+    row.name = o?.full_name || 'Discussion';
+    row.avatar = o?.photo || '';
+    row.other = { id: o?.id, full_name: o?.full_name, position: o?.position, photo: o?.photo, status: o?.status };
+  }
+  return row;
+};
+const chatTouchLast = (convId, msg) => {
+  const sender = db.prepare('SELECT full_name FROM grh_employees WHERE id = ?').get(msg.sender_id);
+  db.prepare('UPDATE chat_conversations SET last_message_at = ?, last_message_body = ?, last_message_sender = ? WHERE id = ?')
+    .run(msg.created_at, (msg.body || '').slice(0, 140), sender?.full_name || '', convId);
+};
+
+app.post('/api/chat/upload', ...CHAT, (req, res) => {
+  chatUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+    res.json({ url: `/uploads/chat/${req.file.filename}`, name: req.file.originalname, mime: req.file.mimetype });
+  });
+});
+
+app.get('/api/chat/unread', ...CHAT, (req, res) => {
+  const rows = db.prepare('SELECT conversation_id FROM chat_members WHERE employee_id = ?').all(req.employee.id);
+  let count = 0;
+  for (const r of rows) count += chatUnread(r.conversation_id, req.employee.id);
+  res.json({ count });
+});
+
+app.get('/api/chat/staff', ...CHAT, (req, res) => {
+  res.json(chatStaffList().map((e) => ({ ...e, is_me: e.id === req.employee.id })));
+});
+
+app.get('/api/chat/conversations', ...CHAT, (req, res) => {
+  const rows = db.prepare(`SELECT c.* FROM chat_conversations c
+    JOIN chat_members m ON m.conversation_id = c.id AND m.employee_id = ?
+    ORDER BY (c.last_message_at = '') DESC, c.last_message_at DESC, c.id DESC`).all(req.employee.id);
+  res.json(rows.map((c) => chatConvView(c, req.employee)));
+});
+
+app.post('/api/chat/dm', ...CHAT, (req, res) => {
+  const target = db.prepare('SELECT * FROM grh_employees WHERE id = ? AND status = \'actif\'').get(Number(req.body?.employee_id));
+  if (!target) return res.status(404).json({ error: 'Employé introuvable ou inactif' });
+  if (target.id === req.employee.id) return res.status(400).json({ error: 'Impossible de discuter avec soi-même' });
+  const [a, b] = [req.employee.id, target.id].sort((x, y) => x - y);
+  let conv = db.prepare(`SELECT c.* FROM chat_conversations c
+    WHERE c.type = 'dm' AND c.id IN (
+      SELECT conversation_id FROM chat_members WHERE employee_id = ?
+      INTERSECT SELECT conversation_id FROM chat_members WHERE employee_id = ?
+    ) LIMIT 1`).get(a, b);
+  if (!conv) {
+    const info = db.prepare(`INSERT INTO chat_conversations (type, created_by) VALUES ('dm', ?)`).run(req.employee.id);
+    const cid = info.lastInsertRowid;
+    db.prepare('INSERT INTO chat_members (conversation_id, employee_id, role) VALUES (?, ?, \'membre\')').run(cid, a);
+    db.prepare('INSERT INTO chat_members (conversation_id, employee_id, role) VALUES (?, ?, \'membre\')').run(cid, b);
+    conv = db.prepare('SELECT * FROM chat_conversations WHERE id = ?').get(cid);
+  }
+  res.json(chatConvView(conv, req.employee));
+});
+
+app.post('/api/chat/groups', ...CHAT, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 80);
+  if (!name) return res.status(400).json({ error: 'Nom du groupe requis' });
+  const ids = new Set([req.employee.id]);
+  for (const x of Array.isArray(b.member_ids) ? b.member_ids : []) {
+    const emp = db.prepare('SELECT id FROM grh_employees WHERE id = ? AND status = \'actif\'').get(Number(x));
+    if (emp) ids.add(emp.id);
+  }
+  if (ids.size < 2) return res.status(400).json({ error: 'Un groupe doit compter au moins 2 membres' });
+  const info = db.prepare(`INSERT INTO chat_conversations (type, name, description, avatar, owner_id, created_by)
+    VALUES ('group', ?, ?, ?, ?, ?)`)
+    .run(name, String(b.description || '').trim().slice(0, 300), String(b.avatar || '').slice(0, 300), req.employee.id, req.employee.id);
+  const cid = info.lastInsertRowid;
+  const ins = db.prepare('INSERT INTO chat_members (conversation_id, employee_id, role) VALUES (?, ?, ?)');
+  for (const id of ids) ins.run(cid, id, id === req.employee.id ? 'propietaire' : 'membre');
+  res.json(chatConvView(db.prepare('SELECT * FROM chat_conversations WHERE id = ?').get(cid), req.employee));
+});
+
+app.put('/api/chat/conversations/:id', ...CHAT, guardChatConv, (req, res) => {
+  if (req.chat.conv.type !== 'group') return res.status(400).json({ error: 'Paramétrage réservé aux groupes' });
+  if (!chatIsMod(req)) return res.status(403).json({ error: 'Réservé au propriétaire et aux modérateurs' });
+  const b = req.body || {};
+  const c = req.chat.conv;
+  db.prepare('UPDATE chat_conversations SET name = ?, description = ?, avatar = ?, join_policy = ? WHERE id = ?').run(
+    b.name !== undefined ? String(b.name).trim().slice(0, 80) || c.name : c.name,
+    b.description !== undefined ? String(b.description).trim().slice(0, 300) : c.description,
+    b.avatar !== undefined ? String(b.avatar).slice(0, 300) : c.avatar,
+    b.join_policy === 'ouvert' || b.join_policy === 'ferme' ? b.join_policy : c.join_policy,
+    c.id
+  );
+  res.json(chatConvView(db.prepare('SELECT * FROM chat_conversations WHERE id = ?').get(c.id), req.employee));
+});
+
+app.delete('/api/chat/conversations/:id', ...CHAT, guardChatConv, (req, res) => {
+  const { conv } = req.chat;
+  if (conv.type !== 'group' || conv.owner_id !== req.employee.id)
+    return res.status(403).json({ error: 'Seul le propriétaire d’un groupe peut le supprimer' });
+  const msgs = db.prepare('SELECT * FROM chat_messages WHERE conversation_id = ?').all(conv.id);
+  msgs.forEach((m) => { if (m.attachment) safeUnlink(path.join(uploadDir, m.attachment)); });
+  db.prepare('DELETE FROM chat_pins WHERE conversation_id = ?').run(conv.id);
+  db.prepare('DELETE FROM chat_reads WHERE conversation_id = ?').run(conv.id);
+  db.prepare('DELETE FROM chat_members WHERE conversation_id = ?').run(conv.id);
+  db.prepare('DELETE FROM chat_messages WHERE conversation_id = ?').run(conv.id);
+  db.prepare('DELETE FROM chat_conversations WHERE id = ?').run(conv.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/chat/conversations/:id/members', ...CHAT, guardChatConv, (req, res) => {
+  const rows = db.prepare(`SELECT m.*, e.full_name, e.position, e.photo, e.status AS emp_status
+    FROM chat_members m JOIN grh_employees e ON e.id = m.employee_id
+    WHERE m.conversation_id = ? ORDER BY
+      CASE m.role WHEN 'propietaire' THEN 0 WHEN 'moderateur' THEN 1 ELSE 2 END, e.full_name`).all(req.chat.conv.id);
+  res.json(rows.map((r) => ({
+    id: r.employee_id,
+    full_name: r.full_name, position: r.position, photo: r.photo,
+    is_active: r.emp_status === 'actif',
+    role: r.role,
+    role_label: CHAT_ROLE_LABELS[r.role] || r.role,
+    is_me: r.employee_id === req.employee.id
+  })));
+});
+
+app.post('/api/chat/conversations/:id/members', ...CHAT, guardChatConv, (req, res) => {
+  const { conv, mem } = req.chat;
+  const selfId = req.employee.id;
+  const targetId = Number(req.body?.employee_id) || selfId;
+  const isSelf = targetId === selfId;
+  if (!isSelf && !chatIsMod(req)) return res.status(403).json({ error: 'Réservé au propriétaire et aux modérateurs' });
+  if (isSelf && conv.join_policy !== 'ouvert') return res.status(403).json({ error: 'Ce groupe est fermé — demandez à un modérateur de vous y ajouter' });
+  const emp = db.prepare('SELECT * FROM grh_employees WHERE id = ? AND status = \'actif\'').get(targetId);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable ou inactif' });
+  if (db.prepare('SELECT 1 FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(conv.id, targetId))
+    return res.status(409).json({ error: 'Cette personne est déjà membre du groupe' });
+  let role = 'membre';
+  if (req.body?.role && mem.role === 'propietaire') {
+    if (!['moderateur', 'membre'].includes(req.body.role)) return res.status(400).json({ error: 'Rôle invalide' });
+    role = req.body.role;
+  }
+  db.prepare('INSERT INTO chat_members (conversation_id, employee_id, role) VALUES (?, ?, ?)').run(conv.id, targetId, role);
+  res.json({ ok: true });
+});
+
+app.put('/api/chat/conversations/:id/members/:employeeId', ...CHAT, guardChatConv, (req, res) => {
+  const { conv, mem } = req.chat;
+  const targetId = Number(req.params.employeeId);
+  if (mem.role !== 'propietaire') return res.status(403).json({ error: 'Seul le propriétaire peut changer les rôles' });
+  const target = db.prepare('SELECT * FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(conv.id, targetId);
+  if (!target) return res.status(404).json({ error: 'Membre introuvable' });
+  if (target.role === 'propietaire') return res.status(400).json({ error: 'Impossible de modifier le propriétaire' });
+  const role = ['moderateur', 'membre'].includes(req.body?.role) ? req.body.role : null;
+  if (!role) return res.status(400).json({ error: 'Rôle invalide' });
+  db.prepare('UPDATE chat_members SET role = ? WHERE conversation_id = ? AND employee_id = ?').run(role, conv.id, targetId);
+  res.json({ ok: true });
+});
+
+app.delete('/api/chat/conversations/:id/members/:employeeId', ...CHAT, guardChatConv, (req, res) => {
+  const { conv, mem } = req.chat;
+  const targetId = Number(req.params.employeeId);
+  const self = targetId === req.employee.id;
+  if (conv.type === 'dm') return res.status(400).json({ error: 'Retirez simplement la discussion de votre liste' });
+  const target = db.prepare('SELECT * FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(conv.id, targetId);
+  if (!target) return res.status(404).json({ error: 'Membre introuvable' });
+  if (self) {
+    if (target.role === 'propietaire') return res.status(400).json({ error: 'Le propriétaire ne peut pas quitter — supprimez le groupe' });
+  } else {
+    if (!chatIsMod(req)) return res.status(403).json({ error: 'Réservé au propriétaire et aux modérateurs' });
+    if (target.role === 'propietaire') return res.status(403).json({ error: 'Impossible de retirer le propriétaire' });
+  }
+  db.prepare('DELETE FROM chat_members WHERE conversation_id = ? AND employee_id = ?').run(conv.id, targetId);
+  const left = db.prepare('SELECT COUNT(*) n FROM chat_members WHERE conversation_id = ?').get(conv.id).n;
+  if (left < 2) {
+    const msgs = db.prepare('SELECT * FROM chat_messages WHERE conversation_id = ?').all(conv.id);
+    msgs.forEach((m) => { if (m.attachment) safeUnlink(path.join(uploadDir, m.attachment)); });
+    db.prepare('DELETE FROM chat_pins WHERE conversation_id = ?').run(conv.id);
+    db.prepare('DELETE FROM chat_reads WHERE conversation_id = ?').run(conv.id);
+    db.prepare('DELETE FROM chat_members WHERE conversation_id = ?').run(conv.id);
+    db.prepare('DELETE FROM chat_messages WHERE conversation_id = ?').run(conv.id);
+    db.prepare('DELETE FROM chat_conversations WHERE id = ?').run(conv.id);
+    return res.json({ ok: true, deleted: true });
+  }
+  res.json({ ok: true });
+});
+
+app.get('/api/chat/search', ...CHAT, (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+  const like = `%${q.replace(/[%_]/g, '')}%`;
+  const rows = db.prepare(`SELECT m.id, m.conversation_id, m.body, m.created_at, m.deleted_at,
+      e.full_name AS sender_name, c.type, c.name,
+      (SELECT full_name FROM grh_employees oe WHERE oe.id = (SELECT employee_id FROM chat_members cm2 WHERE cm2.conversation_id = c.id AND cm2.employee_id != ?) LIMIT 1) AS other_name
+    FROM chat_messages m
+    JOIN chat_members cm ON cm.conversation_id = m.conversation_id AND cm.employee_id = ?
+    JOIN chat_conversations c ON c.id = m.conversation_id
+    LEFT JOIN grh_employees e ON e.id = m.sender_id
+    WHERE m.body LIKE ?
+    ORDER BY m.id DESC LIMIT 50`).all(req.employee.id, req.employee.id, like);
+  res.json(rows.map((r) => ({
+    ...r,
+    conversation_name: r.type === 'group' ? r.name : (r.other_name || 'Discussion')
+  })));
+});
+
+app.get('/api/chat/open-groups', ...CHAT, (req, res) => {
+  const rows = db.prepare(`SELECT c.* FROM chat_conversations c
+    WHERE c.type = 'group' AND c.join_policy = 'ouvert'
+    AND c.id NOT IN (SELECT conversation_id FROM chat_members WHERE employee_id = ?)
+    ORDER BY c.id DESC LIMIT 20`).all(req.employee.id);
+  res.json(rows.map((c) => chatConvView(c, req.employee)));
+});
+
+app.post('/api/chat/groups/:id/join', ...CHAT, (req, res) => {
+  const conv = db.prepare('SELECT * FROM chat_conversations WHERE id = ?').get(Number(req.params.id));
+  if (!conv || conv.type !== 'group') return res.status(404).json({ error: 'Groupe introuvable' });
+  if (db.prepare('SELECT 1 FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(conv.id, req.employee.id))
+    return res.status(409).json({ error: 'Vous êtes déjà membre de ce groupe' });
+  if (conv.join_policy !== 'ouvert') return res.status(403).json({ error: 'Ce groupe est fermé — demandez à un modérateur de vous y ajouter' });
+  db.prepare('INSERT INTO chat_members (conversation_id, employee_id, role) VALUES (?, ?, \'membre\')').run(conv.id, req.employee.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/chat/:id', ...CHAT, guardChatConv, (req, res) => {
+  const convId = req.chat.conv.id;
+  const msgs = db.prepare(`SELECT m.*, e.full_name AS sender_name, e.position AS sender_position, e.photo AS sender_photo,
+      r.body AS reply_body, re.full_name AS reply_sender_name,
+      CASE WHEN p.message_id IS NOT NULL THEN 1 ELSE 0 END AS pinned
+    FROM chat_messages m
+    LEFT JOIN grh_employees e ON e.id = m.sender_id
+    LEFT JOIN chat_messages r ON r.id = m.reply_to
+    LEFT JOIN grh_employees re ON re.id = r.sender_id
+    LEFT JOIN chat_pins p ON p.message_id = m.id AND p.conversation_id = m.conversation_id
+    WHERE m.conversation_id = ?
+    ORDER BY m.id DESC LIMIT 200`).all(convId).reverse();
+  const reads = db.prepare('SELECT employee_id, read_at FROM chat_reads WHERE conversation_id = ?').all(convId);
+  msgs.forEach((m) => {
+    m.read = 0;
+    if (m.sender_id === req.employee.id)
+      m.read = reads.some((r) => r.employee_id !== req.employee.id && r.read_at >= m.created_at) ? 1 : 0;
+  });
+  db.prepare(`INSERT INTO chat_reads (conversation_id, employee_id, read_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(conversation_id, employee_id) DO UPDATE SET read_at = datetime('now')`).run(convId, req.employee.id);
+  const pins = db.prepare(`SELECT m.*, e.full_name AS sender_name, p.pinned_at
+    FROM chat_pins p JOIN chat_messages m ON m.id = p.message_id
+    LEFT JOIN grh_employees e ON e.id = m.sender_id
+    WHERE p.conversation_id = ? AND m.deleted_at = ''
+    ORDER BY p.pinned_at DESC LIMIT 10`).all(convId);
+  res.json({ conversation: chatConvView(req.chat.conv, req.employee), messages: msgs, pins, me: req.employee.id });
+});
+
+
+app.post('/api/chat/:id/messages', ...CHAT, guardChatConv, chatLimiter, (req, res) => {
+  chatUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    const { conv } = req.chat;
+    const body = String(req.body?.body || '').trim().slice(0, 4000);
+    const replyTo = Number(req.body?.reply_to) || 0;
+    const attachment = req.file ? `/uploads/chat/${req.file.filename}` : '';
+    const attachmentName = req.file ? String(req.file.originalname || 'pièce jointe').slice(0, 160) : '';
+    const attachmentMime = req.file ? String(req.file.mimetype || 'application/octet-stream').slice(0, 120) : '';
+    if (!body && !attachment) return res.status(400).json({ error: 'Message vide' });
+    if (replyTo) {
+      const rep = db.prepare('SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND deleted_at = \'\'').get(replyTo, conv.id);
+      if (!rep) return res.status(400).json({ error: 'Impossible de répondre à ce message' });
+    }
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const info = db.prepare(`INSERT INTO chat_messages (conversation_id, sender_id, body, attachment, attachment_name, attachment_mime, reply_to, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(conv.id, req.employee.id, body, attachment, attachmentName, attachmentMime, replyTo, now);
+    chatTouchLast(conv.id, { id: info.lastInsertRowid, sender_id: req.employee.id, body: body || (attachmentMime.startsWith('image/') ? '📷 Photo' : '📎 Fichier'), created_at: now });
+    res.json({ id: info.lastInsertRowid, created_at: now });
+  });
+});
+
+app.put('/api/chat/messages/:id', ...CHAT, (req, res) => {
+  const m = db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Message introuvable' });
+  if (m.sender_id !== req.employee.id) return res.status(403).json({ error: 'Seul l’auteur peut modifier son message' });
+  if (m.deleted_at) return res.status(400).json({ error: 'Message supprimé' });
+  const body = String(req.body?.body || '').trim().slice(0, 4000);
+  if (!body) return res.status(400).json({ error: 'Message vide' });
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  db.prepare('UPDATE chat_messages SET body = ?, edited_at = ? WHERE id = ?').run(body, now, m.id);
+  res.json({ ok: true, edited_at: now });
+});
+
+app.delete('/api/chat/messages/:id', ...CHAT, (req, res) => {
+  const m = db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Message introuvable' });
+  const own = m.sender_id === req.employee.id;
+  const mem = db.prepare('SELECT * FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(m.conversation_id, req.employee.id);
+  const mod = mem && ['propietaire', 'moderateur'].includes(mem.role);
+  if (!own && !mod) return res.status(403).json({ error: 'Vous ne pouvez supprimer que vos messages (ou être modérateur)' });
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  db.prepare('UPDATE chat_messages SET deleted_at = ? WHERE id = ?').run(now, m.id);
+  db.prepare('DELETE FROM chat_pins WHERE message_id = ?').run(m.id);
+  const last = db.prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND deleted_at = \'\' ORDER BY id DESC LIMIT 1').get(m.conversation_id);
+  if (last) {
+    const sender = db.prepare('SELECT full_name FROM grh_employees WHERE id = ?').get(last.sender_id);
+    db.prepare('UPDATE chat_conversations SET last_message_at = ?, last_message_body = ?, last_message_sender = ? WHERE id = ?')
+      .run(last.created_at, (last.body || '').slice(0, 140), sender?.full_name || '', m.conversation_id);
+  }
+  res.json({ ok: true });
+});
+
+app.put('/api/chat/messages/:id/pin', ...CHAT, (req, res) => {
+  const m = db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(Number(req.params.id));
+  if (!m || m.deleted_at) return res.status(404).json({ error: 'Message introuvable' });
+  const own = m.sender_id === req.employee.id;
+  const mem = db.prepare('SELECT * FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(m.conversation_id, req.employee.id);
+  if (!own && !(mem && ['propietaire', 'moderateur'].includes(mem.role)))
+    return res.status(403).json({ error: 'Épinglage réservé à l’auteur ou aux modérateurs' });
+  const pin = db.prepare('SELECT 1 FROM chat_pins WHERE conversation_id = ? AND message_id = ?').get(m.conversation_id, m.id);
+  if (pin) db.prepare('DELETE FROM chat_pins WHERE conversation_id = ? AND message_id = ?').run(m.conversation_id, m.id);
+  else db.prepare('INSERT INTO chat_pins (conversation_id, message_id, pinned_by) VALUES (?, ?, ?)').run(m.conversation_id, m.id, req.employee.id);
+  res.json({ ok: true, pinned: !pin });
+});
+
+
 // ---------- Inscription sur invitation (lien à usage unique) ----------
 const INVITE_ROLES = ['editor', 'viewer', 'admin'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -3527,7 +3901,7 @@ app.get('/api/admin/pos/sales/:id/pdf', ...POS, async (req, res) => {
     const gray = rgb(0.45, 0.5, 0.58);
     const siteName = getSetting('site_name') || 'ADI ONG';
     const tagline = getSetting('site_tagline') || '';
-    const fmtM = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+    const fmtM = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0).replace(/[\u202f\u00a0\u2009]/g, ' ');
 
     page.drawRectangle({ x: 0, y: 595.3 - 70, width: W, height: 70, color: brand });
     page.drawText(siteName.toUpperCase(), { x: 30, y: 548, size: 15, font: fontBold, color: rgb(1, 1, 1) });
@@ -3685,7 +4059,7 @@ app.get('/api/admin/pos/sales/:id/invoice', ...POS, async (req, res) => {
     const gray = rgb(0.45, 0.5, 0.58);
     const siteName = getSetting('site_name') || 'ADI ONG';
     const tagline = getSetting('site_tagline') || '';
-    const fmtM = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+    const fmtM = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0).replace(/[\u202f\u00a0\u2009]/g, ' ');
     const dt = new Date(String(s.created_at).replace(' ', 'T') + 'Z');
     const dateStr = isNaN(dt) ? s.created_at : dt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
@@ -3778,7 +4152,8 @@ app.get('/api/admin/pos/sales/:id/invoice', ...POS, async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="facture-${s.number || s.id}.pdf"`);
     res.send(Buffer.from(await doc.save()));
-  } catch {
+  } catch (err) {
+    console.error('[facture]', err);
     res.status(500).json({ error: 'Impossible de générer la facture' });
   }
 });
