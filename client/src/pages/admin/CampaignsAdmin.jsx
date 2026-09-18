@@ -132,8 +132,8 @@ export default function CampaignsAdmin() {
               <Field label={`Objectif (${currency})`}>
                 <input type="number" min="0" className="input" value={editing.goal_amount} onChange={(e) => setEditing({ ...editing, goal_amount: e.target.value })} />
               </Field>
-              <Field label={`Déjà collecté (${currency})`}>
-                <input type="number" min="0" className="input" value={editing.collected_amount} onChange={(e) => setEditing({ ...editing, collected_amount: e.target.value })} />
+              <Field label={`Collecté (${currency})`} hint="Calculé depuis les dons confirmés">
+                <input type="number" className="input bg-ink-50" value={Number(editing.collected_amount) || 0} readOnly disabled />
               </Field>
               <Field label="Échéance">
                 <input type="date" className="input" value={editing.deadline} onChange={(e) => setEditing({ ...editing, deadline: e.target.value })} />

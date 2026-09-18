@@ -133,7 +133,7 @@ setInterval(() => {
 
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, key: (req) => `login:${req.ip}:${String(req.body?.email || '').toLowerCase()}`, message: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' });
 const contactLimiter = rateLimit({ windowMs: 60 * 60_000, max: 5, key: (req) => `contact:${req.ip}`, message: 'Trop de messages envoyés depuis votre connexion. Réessayez dans une heure.' });
-const donateLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `donate:${req.ip}`, message: 'Trop de dons enregistrés depuis votre connexion. Réessayez dans une heure.' });
+const donateLimiter = rateLimit({ windowMs: 60 * 60_000, max: 30, key: (req) => `donate:${req.ip}`, message: 'Trop de dons enregistrés depuis votre connexion. Réessayez dans une heure.' });
 const registerLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `register:${req.ip}`, message: 'Trop de tentatives d’inscription. Réessayez plus tard.' });
 
 // Limiteur global de l'API (filet de sécurité anti scan/brute-force)
@@ -187,6 +187,7 @@ const STRING_SETTINGS = [
   'grh_annual_leave_days',
   'site_name','site_tagline','logo','favicon','address','phone1','phone2','email','whatsapp','facebook','twitter',
   'instagram','pinterest','video_url','copyright','footer_credit','currency',
+  'pay_airtel','pay_mpesa','pay_orange','pay_card','pay_note',
   'seo_title','seo_description','seo_keywords','og_image','twitter_handle',
   'hero_image','hero_kicker','hero_title','hero_text','hero_badge_title','hero_badge_sub','about_image',
   'mission_title','mission_text','home_mission_heading',
@@ -197,13 +198,36 @@ const STRING_SETTINGS = [
   'about_values_kicker','about_values_title',
   'about_method_kicker','about_method_title','about_method_text',
   'about_presence_title','about_presence_text',
-  'about_career_title','about_career_text'
+  'about_career_title','about_career_text',
+  'menu_footer_title','menu_footer_work_title','menu_donate_label','menu_donate_to'
 ];
 
 const JSON_SETTINGS = {
   stats: [], values: [], method: [],
   marquee_items: [], donate_amounts: [], donate_why_points: [], campaign_points: [],
-  about_header: {}, work_header: {}, news_header: {}, campaigns_header: {}, donate_header: {}, contact_header: {}
+  about_header: {}, work_header: {}, news_header: {}, campaigns_header: {}, donate_header: {}, contact_header: {},
+  menu_header: [
+    { label: 'Accueil', to: '/', mega: '' },
+    { label: 'À propos', to: '/a-propos', mega: 'about' },
+    { label: 'Notre travail', to: '/notre-travail', mega: 'work' },
+    { label: 'Actualités', to: '/actualites', mega: 'news' },
+    { label: 'Collectes', to: '/collectes', mega: 'campaigns' },
+    { label: 'Contact', to: '/contact', mega: '' }
+  ],
+  menu_footer: [
+    { label: 'Accueil', to: '/' },
+    { label: 'À propos', to: '/a-propos' },
+    { label: 'Actualités', to: '/actualites' },
+    { label: 'Nos collectes', to: '/collectes' },
+    { label: 'Contact', to: '/contact' }
+  ],
+  menu_mobile: [
+    { label: 'Accueil', to: '/' },
+    { label: 'Actus', to: '/actualites' },
+    { label: 'Don', to: '/faire-un-don' },
+    { label: 'Collectes', to: '/collectes' },
+    { label: 'Contact', to: '/contact' }
+  ]
 };
 
 const parseSetting = (raw, fallback) => {
@@ -215,6 +239,13 @@ export const publicSite = () => {
   const out = {};
   for (const k of STRING_SETTINGS) out[k] = getSetting(k);
   for (const [k, fallback] of Object.entries(JSON_SETTINGS)) out[k] = parseSetting(getSetting(k), fallback);
+  try {
+    out.article_categories = db.prepare(
+      'SELECT slug, name, sort_order FROM article_categories ORDER BY sort_order, name'
+    ).all();
+  } catch {
+    out.article_categories = [];
+  }
   return out;
 };
 
@@ -255,9 +286,31 @@ const ROLES = {
   pos: ['super_admin', 'admin', 'cashier'],
   any: ['super_admin', 'admin', 'editor', 'viewer', 'cashier']
 };
+// Droits configurables par rôle (matrice super admin) — le super admin conserve toujours tout
+const PERM_AREAS = [
+  { id: 'backoffice', label: 'Back office', desc: 'Tableau de bord, dons, messages, mon espace' },
+  { id: 'content', label: 'Contenu', desc: 'Articles, causes, campagnes, partenaires, médiathèque' },
+  { id: 'settings', label: 'Paramètres & utilisateurs', desc: 'Paramètres du site, comptes et invitations' },
+  { id: 'grh', label: 'GRH (Ressources humaines)', desc: 'Équipe, congés, présences, projets, tâches, paie' },
+  { id: 'pos', label: 'Point de vente', desc: 'Produits, ventes, stock et boutique' }
+];
+const AREA_GROUP = { backoffice: 'any', content: 'content', settings: 'admin', grh: 'hr', pos: 'pos' };
+const GROUP_AREA = Object.fromEntries(Object.entries(AREA_GROUP).map(([a, g]) => [g, a]));
+const ROLE_LIST = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
+const permEnabled = (role, area) => {
+  if (role === 'super_admin') return true;
+  const row = db.prepare('SELECT enabled FROM role_permissions WHERE role = ? AND area = ?').get(role, area);
+  return row ? row.enabled === 1 : false;
+};
 const requireRole = (group) => (req, res, next) => {
-  if (!ROLES[group].includes(req.user?.role))
+  const area = GROUP_AREA[group];
+  const inGroup = ROLES[group].includes(req.user?.role);
+  // Hors groupe : accès possible uniquement si la matrice du super admin l'accorde
+  if (!inGroup && !(area && permEnabled(req.user.role, area)))
     return res.status(403).json({ error: 'Accès refusé : rôle insuffisant' });
+  // Dans le groupe : la matrice peut retirer le droit
+  if (inGroup && area && !permEnabled(req.user.role, area))
+    return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle (paramétrage du super admin)' });
   next();
 };
 // Garde d'un module optionnel (activé/désactivé par le super admin)
@@ -598,47 +651,267 @@ app.post('/api/contact', contactLimiter, (req, res) => {
   res.json({ ok: true });
 });
 
+const DONATE_METHODS = { airtel: 'Airtel Money', mpesa: 'M-Pesa', orange: 'Orange Money', carte: 'Carte / virement' };
+const DONATE_STATUSES = ['nouvelle', 'preuve', 'confirmee', 'refusee'];
+
+/** Montant collecté d’une campagne = somme des dons confirmés (jamais de chiffre fictif). */
+function syncCampaignCollected(campaignId) {
+  if (!campaignId) return;
+  const t = db.prepare(
+    `SELECT COALESCE(SUM(amount), 0) AS t FROM donations WHERE campaign_id = ? AND status = 'confirmee'`
+  ).get(Number(campaignId)).t;
+  db.prepare('UPDATE campaigns SET collected_amount = ? WHERE id = ?').run(t, Number(campaignId));
+}
+
+function syncAllCampaignCollected() {
+  for (const row of db.prepare('SELECT id FROM campaigns').all()) syncCampaignCollected(row.id);
+}
+syncAllCampaignCollected();
+
+const newDonationReference = () => {
+  for (let i = 0; i < 5; i++) {
+    const ref = `DON-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    if (!db.prepare('SELECT id FROM donations WHERE reference = ?').get(ref)) return ref;
+  }
+  return `DON-${Date.now().toString(36).toUpperCase()}`;
+};
+
+const donationPayNumber = (method) =>
+  method === 'airtel' ? getSetting('pay_airtel') : method === 'mpesa' ? getSetting('pay_mpesa') : method === 'orange' ? getSetting('pay_orange') : '';
+
 app.post('/api/donate', donateLimiter, (req, res) => {
   const b = req.body || {};
   if (isSpam(b)) return res.json({ ok: true });
-  const name = clip(b.name, 100).trim();
+  const anonymous = b.anonymous === true || b.anonymous === '1' || b.anonymous === 'true';
+  const name = anonymous ? '' : clip(b.name, 100).trim();
   const email = clip(b.email, 120).trim();
   const amount = Number(b.amount);
   const message = clip(b.message, 500).trim();
   const campaignId = b.campaignId ? Number(b.campaignId) : null;
-  if (!name || !amount || amount <= 0 || amount > 1000000) return res.status(400).json({ error: 'Nom et montant sont requis' });
+  const method = DONATE_METHODS[b.method] ? b.method : '';
+  if (!anonymous && !name) return res.status(400).json({ error: 'Nom requis (ou don anonyme)' });
+  if (!amount || amount <= 0 || amount > 1000000) return res.status(400).json({ error: 'Montant requis' });
   if (email && !isEmail(email)) return res.status(400).json({ error: 'Adresse email invalide' });
-  db.prepare('INSERT INTO donations (campaign_id, donor_name, donor_email, amount, message) VALUES (?, ?, ?, ?, ?)')
-    .run(campaignId || null, name, email || '', Number(amount), message || '');
-  let campaignTitle = '';
-  if (campaignId) {
-    db.prepare('UPDATE campaigns SET collected_amount = collected_amount + ? WHERE id = ?').run(Number(amount), Number(campaignId));
-    campaignTitle = db.prepare('SELECT title FROM campaigns WHERE id = ?').get(campaignId)?.title || '';
-  }
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const reference = newDonationReference();
+  const displayName = anonymous ? 'Donateur anonyme' : name;
+  const currency = getSetting('currency') || 'USD';
+  db.prepare(`INSERT INTO donations (campaign_id, donor_name, donor_email, amount, message, reference, method, is_anonymous, currency)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(campaignId || null, displayName, email || '', Number(amount), message || '', reference, method, anonymous ? 1 : 0, currency);
+  // Le montant collecté de la campagne n’évolue qu’à la confirmation admin (syncCampaignCollected).
+  const campaignTitle = campaignId
+    ? (db.prepare('SELECT title FROM campaigns WHERE id = ?').get(campaignId)?.title || '')
+    : '';
+  const esc = (s) => String(s ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const methodLabel = method ? ` — ${DONATE_METHODS[method]}` : '';
   notifyEmail(
-    `Nouveau don de ${name} — ${Number(amount).toLocaleString('fr-FR')} $${campaignTitle ? ` (${campaignTitle})` : ''}`,
-    `<p><strong>${esc(name)}</strong>${email ? ` &lt;${esc(email)}&gt;` : ''} a fait un don de <strong>${Number(amount).toLocaleString('fr-FR')} $</strong>
+    `Nouveau don de ${displayName} — ${Number(amount).toLocaleString('fr-FR')} ${currency}${campaignTitle ? ` (${campaignTitle})` : ''}`,
+    `<p><strong>${esc(displayName)}</strong>${email ? ` &lt;${esc(email)}&gt;` : ''} a fait un don de <strong>${Number(amount).toLocaleString('fr-FR')} ${esc(currency)}</strong>${methodLabel}
      ${campaignTitle ? `pour la collecte <strong>${esc(campaignTitle)}</strong>` : 'de soutien'}.${message ? `<br/><em>« ${esc(message)} »</em>` : ''}</p>
-     <p style="color:#888;font-size:12px">Merci de l'enregistrer dans l'espace admin → Dons.</p>`
+     <p><strong>Référence du don : ${esc(reference)}</strong> — l'administrateur vérifiera le paiement (preuve éventuelle) dans l'espace admin → Dons.</p>`
   );
-  res.json({ ok: true });
+  res.json({ ok: true, reference });
 });
 
-app.get('/api/admin/dashboard', authRequired, (req, res) => {
+// QR code de paiement : récapitulatif scannable (référence, moyen, numéro, montant)
+app.get('/api/public/donations/qr', async (req, res) => {
+  const ref = clip(req.query.ref, 24).trim().toUpperCase();
+  const d = db.prepare('SELECT * FROM donations WHERE reference = ?').get(ref);
+  if (!d) return res.status(404).json({ error: 'Référence inconnue' });
+  const lines = [
+    `DON — ${getSetting('site_name') || 'ADI ONG'}`,
+    `Reference : ${d.reference}`,
+    `Moyen : ${DONATE_METHODS[d.method] || 'A définir'}`,
+    `Montant : ${Number(d.amount).toLocaleString('fr-FR')} ${d.currency || 'USD'}`
+  ];
+  const number = donationPayNumber(d.method);
+  if (number) lines.splice(3, 0, `Numero : ${number}`);
+  const card = getSetting('pay_card');
+  if (d.method === 'carte' && card) lines.splice(3, 0, `Carte : ${card.split('\n').join(' / ')}`);
+  try {
+    const buf = await QRCode.toBuffer(lines.join('\n'), { width: 512, margin: 2, errorCorrectionLevel: 'M' });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le QR code' });
+  }
+});
+
+// Preuves de paiement (captures d'écran) — stockées hors du site public
+const proofDir = path.join(__dirname, 'data', 'donation-proofs');
+fs.mkdirSync(proofDir, { recursive: true });
+const proofLimiter = rateLimit({ windowMs: 60 * 60_000, max: 30, key: (req) => `proof:${req.ip}`, message: 'Trop d’envois de preuve. Réessayez dans une heure.' });
+const proofUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, proofDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname || '').toLowerCase().slice(0, 5);
+      const safeExt = /\.(jpe?g|png|webp|gif|pdf)$/.test(ext) ? ext : '.bin';
+      cb(null, `proof-${Date.now()}-${Math.floor(Math.random() * 1e6)}${safeExt}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+app.post('/api/donations/proof', proofLimiter, proofUpload.single('file'), (req, res) => {
+  const ref = clip(req.body?.reference, 24).trim().toUpperCase();
+  const d = db.prepare('SELECT * FROM donations WHERE reference = ?').get(ref);
+  if (!d) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(404).json({ error: 'Référence de don inconnue' });
+  }
+  if (d.status === 'confirmee') {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(409).json({ error: 'Ce don est déjà confirmé' });
+  }
+  if (!req.file) return res.status(400).json({ error: 'Fichier de preuve requis' });
+  if (d.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
+  const txRef = clip(req.body?.tx_ref, 60).trim();
+  db.prepare('UPDATE donations SET proof = ?, proof_name = ?, tx_ref = ?, status = ? WHERE id = ?')
+    .run(req.file.path, req.file.originalname || 'preuve', txRef, 'preuve', d.id);
+  res.json({ ok: true, status: 'preuve', reference: d.reference });
+});
+
+app.get('/api/admin/dashboard', authRequired, requireRole('any'), (req, res) => {
   const q = (s) => db.prepare(s).get();
+  const confirmed = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status = 'confirmee'`);
+  const pending = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status IN ('nouvelle', 'preuve')`);
+
+  const fillDays = (rows, days = 14) => {
+    const map = new Map((rows || []).map((r) => [String(r.day).slice(0, 10), r]));
+    const out = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(12, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const row = map.get(key);
+      out.push({
+        day: key,
+        n: Number(row?.n || 0),
+        total: Number(row?.total || 0)
+      });
+    }
+    return out;
+  };
+
+  const donationsSeries = fillDays(
+    db.prepare(`
+      SELECT date(created_at) AS day, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+      FROM donations
+      WHERE date(created_at) >= date('now', '-13 days')
+      GROUP BY date(created_at)
+    `).all(),
+    14
+  );
+  const messagesSeries = fillDays(
+    db.prepare(`
+      SELECT date(created_at) AS day, COUNT(*) AS n, 0 AS total
+      FROM messages
+      WHERE date(created_at) >= date('now', '-13 days')
+      GROUP BY date(created_at)
+    `).all(),
+    14
+  );
+
+  const donationsByStatus = db.prepare(`
+    SELECT status, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+    FROM donations
+    GROUP BY status
+  `).all();
+
+  const donationsByMethod = db.prepare(`
+    SELECT COALESCE(NULLIF(TRIM(method), ''), 'autre') AS method,
+           COUNT(*) AS n,
+           COALESCE(SUM(amount), 0) AS total
+    FROM donations
+    WHERE status = 'confirmee'
+    GROUP BY COALESCE(NULLIF(TRIM(method), ''), 'autre')
+    ORDER BY total DESC
+  `).all();
+
+  const campaignsProgress = db.prepare(`
+    SELECT id, slug, title, goal_amount, collected_amount, deadline
+    FROM campaigns
+    WHERE published = 1
+    ORDER BY CASE WHEN goal_amount > 0 THEN collected_amount * 1.0 / goal_amount ELSE 0 END DESC
+    LIMIT 6
+  `).all();
+
+  const articlesByCategory = db.prepare(`
+    SELECT category, COUNT(*) AS n
+    FROM articles
+    WHERE published = 1
+    GROUP BY category
+    ORDER BY n DESC
+  `).all();
+
   res.json({
-    articles: q('SELECT COUNT(*) n FROM articles').n,
-    causes: q('SELECT COUNT(*) n FROM causes').n,
-    campaigns: q('SELECT COUNT(*) n FROM campaigns').n,
-    donations: q('SELECT COUNT(*) n FROM donations').n,
-    donations_total: q('SELECT COALESCE(SUM(amount),0) t FROM donations').t,
-    campaigns_collected: q('SELECT COALESCE(SUM(collected_amount),0) t FROM campaigns').t,
-    messages: q('SELECT COUNT(*) n FROM messages').n,
-    unread_messages: q('SELECT COUNT(*) n FROM messages WHERE read = 0').n,
+    articles: q('SELECT COUNT(*) AS n FROM articles WHERE published = 1').n,
+    articles_drafts: q('SELECT COUNT(*) AS n FROM articles WHERE published = 0').n,
+    causes: q('SELECT COUNT(*) AS n FROM causes WHERE published = 1').n,
+    campaigns: q('SELECT COUNT(*) AS n FROM campaigns WHERE published = 1').n,
+    donations: q('SELECT COUNT(*) AS n FROM donations').n,
+    donations_confirmed: confirmed.n,
+    donations_pending: pending.n,
+    donations_total: confirmed.t,
+    donations_pending_total: pending.t,
+    campaigns_collected: confirmed.t,
+    messages: q('SELECT COUNT(*) AS n FROM messages').n,
+    unread_messages: q('SELECT COUNT(*) AS n FROM messages WHERE read = 0').n,
+    donations_series: donationsSeries,
+    messages_series: messagesSeries,
+    donations_by_status: donationsByStatus,
+    donations_by_method: donationsByMethod,
+    campaigns_progress: campaignsProgress,
+    articles_by_category: articlesByCategory,
     latest_messages: db.prepare('SELECT * FROM messages ORDER BY created_at DESC LIMIT 5').all(),
     latest_donations: db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC LIMIT 5').all()
   });
+});
+
+app.get('/api/admin/article-categories', authRequired, requireRole('any'), (req, res) => {
+  res.json(db.prepare(`
+    SELECT c.*,
+      (SELECT COUNT(*) FROM articles a WHERE a.category = c.slug) AS articles
+    FROM article_categories c
+    ORDER BY c.sort_order, c.name
+  `).all());
+});
+
+app.post('/api/admin/article-categories', authRequired, requireRole('content'), (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
+  const slug = uniqueSlug('article_categories', req.body?.slug || name);
+  const max = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM article_categories').get().n;
+  const info = db.prepare('INSERT INTO article_categories (slug, name, sort_order) VALUES (?, ?, ?)').run(
+    slug, name, Number(req.body?.sort_order) || max + 10
+  );
+  res.json(db.prepare('SELECT * FROM article_categories WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/article-categories/:id', authRequired, requireRole('content'), (req, res) => {
+  const ex = db.prepare('SELECT * FROM article_categories WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
+  const slug = uniqueSlug('article_categories', req.body?.slug || name, Number(ex.id));
+  const sort = req.body?.sort_order == null ? ex.sort_order : Number(req.body.sort_order) || 0;
+  db.prepare('UPDATE article_categories SET name = ?, slug = ?, sort_order = ? WHERE id = ?').run(name, slug, sort, ex.id);
+  if (slug !== ex.slug) {
+    db.prepare('UPDATE articles SET category = ? WHERE category = ?').run(slug, ex.slug);
+  }
+  res.json(db.prepare('SELECT * FROM article_categories WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/article-categories/:id', authRequired, requireRole('content'), (req, res) => {
+  const ex = db.prepare('SELECT * FROM article_categories WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
+  const used = db.prepare('SELECT COUNT(*) n FROM articles WHERE category = ?').get(ex.slug).n;
+  if (used > 0) return res.status(409).json({ error: `Impossible : ${used} article(s) dans cette catégorie.` });
+  db.prepare('DELETE FROM article_categories WHERE id = ?').run(ex.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/admin/articles', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM articles ORDER BY date DESC').all()));
@@ -691,19 +964,21 @@ app.delete('/api/admin/causes/:id', authRequired, requireRole('content'), (req, 
 
 app.get('/api/admin/campaigns', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM campaigns ORDER BY deadline').all()));
 app.post('/api/admin/campaigns', authRequired, requireRole('content'), (req, res) => {
-  const { title, slug, description, image, goal_amount, collected_amount, deadline, cause_slug } = req.body || {};
+  const { title, slug, description, image, goal_amount, deadline, cause_slug } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
   const s = uniqueSlug('campaigns', slug || title);
   const info = db.prepare(`INSERT INTO campaigns (slug, title, description, image, goal_amount, collected_amount, deadline, cause_slug, published)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`)
-    .run(s, title, description || '', image || '', Number(goal_amount) || 0, Number(collected_amount) || 0, deadline || '', cause_slug || '');
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)`)
+    .run(s, title, description || '', image || '', Number(goal_amount) || 0, deadline || '', cause_slug || '');
   res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(info.lastInsertRowid));
 });
 app.put('/api/admin/campaigns/:id', authRequired, requireRole('content'), (req, res) => {
-  const { title, slug, description, image, goal_amount, collected_amount, deadline, cause_slug, published } = req.body || {};
-  db.prepare(`UPDATE campaigns SET title=?, slug=?, description=?, image=?, goal_amount=?, collected_amount=?, deadline=?, cause_slug=?, published=? WHERE id=?`)
-    .run(title, uniqueSlug('campaigns', slug || 'collecte', Number(req.params.id)), description || '', image || '', Number(goal_amount) || 0, Number(collected_amount) || 0, deadline || '', cause_slug || '', published ? 1 : 0, req.params.id);
-  res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(req.params.id));
+  const { title, slug, description, image, goal_amount, deadline, cause_slug, published } = req.body || {};
+  const id = Number(req.params.id);
+  db.prepare(`UPDATE campaigns SET title=?, slug=?, description=?, image=?, goal_amount=?, deadline=?, cause_slug=?, published=? WHERE id=?`)
+    .run(title, uniqueSlug('campaigns', slug || 'collecte', id), description || '', image || '', Number(goal_amount) || 0, deadline || '', cause_slug || '', published ? 1 : 0, id);
+  syncCampaignCollected(id);
+  res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id));
 });
 app.delete('/api/admin/campaigns/:id', authRequired, requireRole('content'), (req, res) => {
   db.prepare('DELETE FROM campaigns WHERE id = ?').run(req.params.id);
@@ -745,11 +1020,24 @@ app.delete('/api/admin/partners/:id', authRequired, requireRole('content'), (req
 app.get('/api/admin/donations', authRequired, requireRole('any'), (req, res) =>
   res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC').all()));
 app.put('/api/admin/donations/:id', authRequired, requireRole('content'), (req, res) => {
-  db.prepare('UPDATE donations SET status = ? WHERE id = ?').run(req.body?.status || 'nouvelle', req.params.id);
-  res.json({ ok: true });
+  const prev = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
+  if (!prev) return res.status(404).json({ error: 'Don introuvable' });
+  const status = DONATE_STATUSES.includes(req.body?.status) ? req.body.status : 'nouvelle';
+  db.prepare('UPDATE donations SET status = ? WHERE id = ?').run(status, req.params.id);
+  syncCampaignCollected(prev.campaign_id);
+  res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id));
+});
+app.get('/api/admin/donations/:id/proof', authRequired, requireRole('content'), (req, res) => {
+  const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
+  if (!d || !d.proof || !fs.existsSync(d.proof)) return res.status(404).json({ error: 'Preuve introuvable' });
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(d.proof_name || 'preuve')}"`);
+  res.sendFile(d.proof);
 });
 app.delete('/api/admin/donations/:id', authRequired, requireRole('content'), (req, res) => {
+  const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
+  if (d?.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
   db.prepare('DELETE FROM donations WHERE id = ?').run(req.params.id);
+  syncCampaignCollected(d?.campaign_id);
   res.json({ ok: true });
 });
 
@@ -1153,6 +1441,37 @@ app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => 
   });
 });
 
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
+app.get('/api/admin/permissions', authRequired, (req, res) => {
+  res.json({
+    areas: PERM_AREAS,
+    matrix: ROLE_LIST.map((role) => ({
+      role,
+      locked: role === 'super_admin',
+      permissions: PERM_AREAS.map((a) => ({ area: a.id, enabled: permEnabled(role, a.id) }))
+    })),
+    is_super: req.user.role === 'super_admin'
+  });
+});
+
+app.put('/api/admin/permissions', authRequired, requireRole('super'), (req, res) => {
+  const m = req.body?.matrix;
+  if (!m || typeof m !== 'object') return res.status(400).json({ error: 'Permission(s) invalide(s)' });
+  const stmt = db.prepare('INSERT INTO role_permissions (role, area, enabled) VALUES (?, ?, ?) ON CONFLICT(role, area) DO UPDATE SET enabled = excluded.enabled');
+  let changed = 0;
+  for (const [role, areas] of Object.entries(m)) {
+    if (role === 'super_admin') return res.status(400).json({ error: 'Le super administrateur conserve toujours tous les droits' });
+    if (!ROLES.any.includes(role)) return res.status(400).json({ error: `Rôle inconnu : ${role}` });
+    if (!areas || typeof areas !== 'object') continue;
+    for (const [area, on] of Object.entries(areas)) {
+      if (!PERM_AREAS.some((a) => a.id === area)) return res.status(400).json({ error: `Zone inconnue : ${area}` });
+      stmt.run(role, area, on ? 1 : 0);
+      changed++;
+    }
+  }
+  res.json({ ok: true, changed });
+});
+
 // ---------- GRH (rôles admin+super, module activable) ----------
 const GRH = [authRequired, requireRole('hr'), requireModule('grh_enabled', 'GRH')];
 
@@ -1191,27 +1510,72 @@ const annualLeaveAllowed = (employeeId, days, excludeLeaveId = null) => {
 };
 
 app.get('/api/admin/grh/overview', ...GRH, (req, res) => {
-  const active = db.prepare("SELECT COUNT(*) n FROM grh_employees WHERE status = 'actif'").get().n;
-  const total = db.prepare('SELECT COUNT(*) n FROM grh_employees').get().n;
-  const leavesPending = db.prepare("SELECT COUNT(*) n FROM grh_leaves WHERE status = 'en_attente'").get().n;
+  const q = (s, ...p) => { try { return db.prepare(s).get(...p); } catch { return { n: 0 }; } };
+  const all = (s, ...p) => { try { return db.prepare(s).all(...p); } catch { return []; } };
+  const active = q("SELECT COUNT(*) n FROM grh_employees WHERE status = 'actif'").n;
+  const total = q('SELECT COUNT(*) n FROM grh_employees').n;
+  const inactive = Math.max(0, total - active);
+  const leavesPending = q("SELECT COUNT(*) n FROM grh_leaves WHERE status = 'en_attente'").n;
   const today = new Date().toISOString().slice(0, 10);
-  const leavesOngoing = db.prepare(
-    "SELECT COUNT(*) n FROM grh_leaves WHERE status = 'approuve' AND start_date <= ? AND (end_date = '' OR end_date >= ?)"
-  ).get(today, today).n;
-  const byDept = db.prepare(`
+  const leavesOngoing = q(
+    "SELECT COUNT(*) n FROM grh_leaves WHERE status = 'approuve' AND start_date <= ? AND (end_date = '' OR end_date >= ?)",
+    today, today
+  ).n;
+  const byDept = all(`
     SELECT COALESCE(d.name, 'Non affecté') AS name, COUNT(e.id) AS n
     FROM grh_employees e LEFT JOIN grh_departments d ON d.id = e.department_id
     WHERE e.status = 'actif' GROUP BY d.name ORDER BY n DESC
-  `).all();
-  const recentHires = db.prepare(
-    "SELECT full_name, position, hire_date FROM grh_employees WHERE status = 'actif' AND hire_date != '' ORDER BY hire_date DESC LIMIT 5"
-  ).all();
-  const upcomingLeaves = db.prepare(`
+  `);
+  const byContract = all(`
+    SELECT COALESCE(NULLIF(TRIM(contract_type), ''), 'permanent') AS type, COUNT(*) AS n
+    FROM grh_employees WHERE status = 'actif' GROUP BY type ORDER BY n DESC
+  `);
+  const leavesByType = all(`
+    SELECT type, COUNT(*) AS n
+    FROM grh_leaves
+    WHERE status = 'approuve' AND start_date >= date('now', 'start of year')
+    GROUP BY type ORDER BY n DESC
+  `);
+  const hireRows = all(`
+    SELECT substr(hire_date, 1, 7) AS month, COUNT(*) AS n
+    FROM grh_employees
+    WHERE hire_date != '' AND hire_date >= date('now', '-11 months', 'start of month')
+    GROUP BY month
+  `);
+  const hireMap = new Map(hireRows.map((r) => [String(r.month).slice(0, 7), Number(r.n || 0)]));
+  const hiresSeries = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    hiresSeries.push({ month: key, n: hireMap.get(key) || 0 });
+  }
+  const recentHires = all(
+    "SELECT id, full_name, position, hire_date, photo FROM grh_employees WHERE status = 'actif' AND hire_date != '' ORDER BY hire_date DESC LIMIT 5"
+  );
+  const upcomingLeaves = all(`
     SELECT l.type, l.start_date, l.end_date, e.full_name
     FROM grh_leaves l JOIN grh_employees e ON e.id = l.employee_id
     WHERE l.status = 'approuve' AND l.start_date >= ? ORDER BY l.start_date LIMIT 5
-  `).all(today);
-  res.json({ active, total, leavesPending, leavesOngoing, byDept, recentHires, upcomingLeaves });
+  `, today);
+  res.json({
+    active,
+    total,
+    inactive,
+    leavesPending,
+    leavesOngoing,
+    byDept,
+    byContract,
+    leavesByType,
+    hires_series: hiresSeries,
+    presentToday: q("SELECT COUNT(*) n FROM grh_attendance WHERE date = date('now') AND clock_in != ''").n,
+    tasksOpen: q("SELECT COUNT(*) n FROM grh_tasks WHERE status != 'terminee'").n,
+    projectsActive: q("SELECT COUNT(*) n FROM grh_projects WHERE status = 'en_cours'").n,
+    candidatesOpen: q("SELECT COUNT(*) n FROM grh_candidates WHERE stage IN ('recu', 'entretien')").n,
+    recentHires,
+    upcomingLeaves
+  });
 });
 
 // Départements
@@ -1368,6 +1732,7 @@ app.get('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
 // Documents du dossier (privés : accès HR uniquement, jamais servis publiquement)
 const empDocsDir = path.join(__dirname, 'data', 'employee-docs');
 if (!fs.existsSync(empDocsDir)) fs.mkdirSync(empDocsDir, { recursive: true });
+
 const docsUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, empDocsDir),
@@ -1488,6 +1853,78 @@ app.put('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
 app.delete('/api/admin/grh/leaves/:id', ...GRH, (req, res) => {
   db.prepare('DELETE FROM grh_leaves WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------- Présences : pointage automatique (début/fin depuis l'activité dans « Mon espace ») ----------
+const ATTENDANCE_SQL = `
+  SELECT a.*, e.full_name AS employee_name, e.position AS employee_position, e.status AS employee_status
+  FROM grh_attendance a
+  JOIN grh_employees e ON e.id = a.employee_id
+`;
+const parseHm = (v) => /^\d{1,2}:\d{2}$/.test(String(v || '')) ? String(v).padStart(5, '0') : null;
+
+app.get('/api/admin/grh/attendance', ...GRH, (req, res) => {
+  const { month, employee_id, q } = req.query;
+  let sql = ATTENDANCE_SQL;
+  const where = [];
+  const params = [];
+  if (month && /^\d{4}-\d{2}$/.test(month)) { where.push('a.date >= ? AND a.date < ?'); params.push(`${month}-01`, `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)) , 1)).toISOString().slice(0, 7)}`); }
+  else { const today = new Date().toISOString().slice(0, 10); where.push('a.date >= ?'); params.push(today.slice(0, 8) + '01'); }
+  if (employee_id) { where.push('a.employee_id = ?'); params.push(employee_id); }
+  if (q) { where.push('e.full_name LIKE ?'); params.push(`%${q}%`); }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY a.date DESC, e.full_name';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.put('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
+  const a = db.prepare('SELECT * FROM grh_attendance WHERE id = ?').get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Pointage introuvable' });
+  const b = req.body || {};
+  let date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? String(b.date) : a.date;
+  let clockIn = a.clock_in, clockOut = a.clock_out, corrected = a.corrected;
+  if (date !== a.date) {
+    clockIn = clockIn ? `${date} ${String(clockIn).slice(11, 19)}` : clockIn;
+    clockOut = clockOut ? `${date} ${String(clockOut).slice(11, 19)}` : clockOut;
+  }
+  if (b.clock_in !== undefined || b.clock_out !== undefined) {
+    const inT = parseHm(b.clock_in);
+    const outT = b.clock_out === '' || b.clock_out == null ? null : parseHm(b.clock_out);
+    if (!inT) return res.status(400).json({ error: 'Heure de début invalide (format HH:MM)' });
+    if (outT && outT <= inT) return res.status(400).json({ error: 'L’heure de fin doit être postérieure à l’heure de début' });
+    clockIn = `${date} ${inT}:00`;
+    clockOut = outT ? `${date} ${outT}:00` : (a.clock_out || `${date} ${inT}:00`);
+    corrected = 1;
+  }
+  const dup = db.prepare('SELECT id FROM grh_attendance WHERE employee_id = ? AND date = ? AND id != ?').get(a.employee_id, date, a.id);
+  if (dup) return res.status(409).json({ error: 'Cet employé a déjà un pointage pour cette date' });
+  db.prepare('UPDATE grh_attendance SET date = ?, clock_in = ?, clock_out = ?, corrected = ? WHERE id = ?')
+    .run(date, clockIn, clockOut, corrected, a.id);
+  res.json(db.prepare(`${ATTENDANCE_SQL} WHERE a.id = ?`).get(a.id));
+});
+
+app.delete('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
+  db.prepare('DELETE FROM grh_attendance WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/grh/attendance/export', ...GRH, (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : new Date().toISOString().slice(0, 7);
+  const end = `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 7)}`;
+  const rows = db.prepare(`${ATTENDANCE_SQL} WHERE a.date >= ? AND a.date < ? ORDER BY a.date, e.full_name`).all(`${month}-01`, end);
+  const hm = (v) => String(v || '').slice(11, 16);
+  const dur = (a) => {
+    const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+    const e = new Date(String(a.clock_out || a.last_seen).replace(' ', 'T') + 'Z').getTime();
+    const m = Math.max(0, Math.round((e - s) / 60000));
+    return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+  };
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = ['Date;Employé;Fonction;Début;Fin;Durée;Corrigé'];
+  rows.forEach((r) => lines.push([r.date, r.employee_name, r.employee_position || '', hm(r.clock_in), hm(r.clock_out || r.last_seen), dur(r), r.corrected ? 'Oui' : 'Non'].map(esc).join(';')));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="presences-${month}.csv"`);
+  res.send('\uFEFF' + lines.join('\n'));
 });
 
 // ---------- Paie (super admin uniquement : les salaires sont confidentiels) ----------
@@ -2087,6 +2524,475 @@ app.delete('/api/admin/grh/announcements/:id', ...GRH, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Projets ----------
+const PROJECT_STATUSES = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé', annule: 'Annulé' };
+
+app.get('/api/admin/grh/projects', ...GRH, (req, res) => {
+  const rows = db.prepare(`
+    SELECT p.*,
+      (SELECT COUNT(*) FROM grh_project_members m WHERE m.project_id = p.id) AS members_count,
+      (SELECT COUNT(*) FROM grh_tasks t WHERE t.project_id = p.id) AS tasks_count,
+      (SELECT COUNT(*) FROM grh_tasks t WHERE t.project_id = p.id AND t.status != 'terminee') AS open_tasks
+    FROM grh_projects p
+    ORDER BY p.created_at DESC, p.id DESC
+  `).all();
+  rows.forEach((p) => {
+    p.members = db.prepare(`
+      SELECT e.id, e.full_name, e.position
+      FROM grh_project_members m JOIN grh_employees e ON e.id = m.employee_id
+      WHERE m.project_id = ?
+    `).all(p.id);
+  });
+  res.json(rows);
+});
+
+app.post('/api/admin/grh/projects', ...GRH, (req, res) => {
+  const b = req.body || {};
+  if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nom du projet requis' });
+  const status = PROJECT_STATUSES[b.status] ? b.status : 'planifie';
+  const memberIds = [...new Set((Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter((n) => n > 0))];
+  const info = runTx(() => {
+    const r = db.prepare(`INSERT INTO grh_projects (name, description, client, deadline, status, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)`).run(
+      String(b.name).trim().slice(0, 150),
+      String(b.description || '').slice(0, 2000),
+      String(b.client || '').trim().slice(0, 150),
+      b.deadline ? String(b.deadline).slice(0, 10) : null,
+      status,
+      req.user.id
+    );
+    const ins = db.prepare('INSERT OR IGNORE INTO grh_project_members (project_id, employee_id) VALUES (?, ?)');
+    for (const mid of memberIds) ins.run(r.lastInsertRowid, mid);
+    return r.lastInsertRowid;
+  });
+  res.json(db.prepare('SELECT * FROM grh_projects WHERE id = ?').get(info));
+});
+
+app.put('/api/admin/grh/projects/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_projects WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Projet introuvable' });
+  const b = { ...ex, ...req.body };
+  const status = PROJECT_STATUSES[b.status] ? b.status : 'planifie';
+  const memberIds = [...new Set((Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter((n) => n > 0))];
+  runTx(() => {
+    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?, updated_at = datetime('now')
+      WHERE id = ?`).run(
+      String(b.name).trim().slice(0, 150),
+      String(b.description || '').slice(0, 2000),
+      String(b.client || '').trim().slice(0, 150),
+      b.deadline ? String(b.deadline).slice(0, 10) : null,
+      status,
+      ex.id
+    );
+    db.prepare('DELETE FROM grh_project_members WHERE project_id = ?').run(ex.id);
+    const ins = db.prepare('INSERT OR IGNORE INTO grh_project_members (project_id, employee_id) VALUES (?, ?)');
+    for (const mid of memberIds) ins.run(ex.id, mid);
+  });
+  res.json(db.prepare('SELECT * FROM grh_projects WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/grh/projects/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT id FROM grh_projects WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Projet introuvable' });
+  runTx(() => {
+    db.prepare('UPDATE grh_tasks SET project_id = NULL WHERE project_id = ?').run(ex.id);
+    db.prepare('DELETE FROM grh_project_members WHERE project_id = ?').run(ex.id);
+    db.prepare('DELETE FROM grh_projects WHERE id = ?').run(ex.id);
+  });
+  res.json({ ok: true });
+});
+
+// ---------- Tâches ----------
+const TASK_STATUSES = { a_faire: 'À faire', en_cours: 'En cours', terminee: 'Terminée' };
+const TASK_PRIORITIES = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
+
+const fetchTask = (id) => {
+  const t = db.prepare(`
+    SELECT t.*,
+      a.full_name AS assignee_name, a.position AS assignee_position,
+      p.name AS project_name, p.deadline AS project_deadline
+    FROM grh_tasks t
+    LEFT JOIN grh_employees a ON a.id = t.assignee_id
+    LEFT JOIN grh_projects p ON p.id = t.project_id
+    WHERE t.id = ?
+  `).get(id);
+  if (!t) return t;
+  t.notes = db.prepare('SELECT * FROM grh_task_notes WHERE task_id = ? ORDER BY id').all(id);
+  return t;
+};
+
+const taskListSql = `
+  SELECT t.*, a.full_name AS assignee_name, p.name AS project_name
+  FROM grh_tasks t
+  LEFT JOIN grh_employees a ON a.id = t.assignee_id
+  LEFT JOIN grh_projects p ON p.id = t.project_id
+`;
+
+app.get('/api/admin/grh/tasks', ...GRH, (req, res) => {
+  const { project_id, assignee_id, status, q } = req.query;
+  const where = [];
+  const params = [];
+  if (project_id) { where.push('t.project_id = ?'); params.push(project_id); }
+  if (assignee_id) { where.push('t.assignee_id = ?'); params.push(assignee_id); }
+  if (status && TASK_STATUSES[status]) { where.push('t.status = ?'); params.push(status); }
+  if (q) { where.push('(t.title LIKE ? OR t.description LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  let sql = taskListSql;
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY t.id DESC LIMIT 300';
+  res.json(db.prepare(sql).all(...params));
+});
+
+const validateTaskBody = (b, partial = false) => {
+  const out = {};
+  if (!partial || b.title !== undefined) {
+    if (!String(b.title || '').trim()) return { error: 'Intitulé de la tâche requis' };
+    out.title = String(b.title).trim().slice(0, 200);
+  }
+  if (b.description !== undefined) out.description = String(b.description || '').slice(0, 3000);
+  if (b.project_id !== undefined) {
+    out.project_id = b.project_id ? Number(b.project_id) : null;
+    if (out.project_id && !db.prepare('SELECT id FROM grh_projects WHERE id = ?').get(out.project_id))
+      return { error: 'Projet introuvable' };
+  }
+  if (b.assignee_id !== undefined) {
+    out.assignee_id = b.assignee_id ? Number(b.assignee_id) : null;
+    if (out.assignee_id && !db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(out.assignee_id))
+      return { error: 'Employé introuvable' };
+  }
+  if (b.priority !== undefined) {
+    if (!TASK_PRIORITIES[b.priority]) return { error: 'Priorité invalide' };
+    out.priority = b.priority;
+  }
+  if (b.due_date !== undefined) out.due_date = b.due_date ? String(b.due_date).slice(0, 10) : null;
+  if (b.status !== undefined) {
+    if (!TASK_STATUSES[b.status]) return { error: 'Statut invalide' };
+    out.status = b.status;
+  }
+  return { out };
+};
+
+app.post('/api/admin/grh/tasks', ...GRH, (req, res) => {
+  const b = req.body || {};
+  const v = validateTaskBody(b);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const o = v.out;
+  const info = db.prepare(`INSERT INTO grh_tasks (title, description, project_id, assignee_id, priority, due_date, status, created_by, completed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    o.title,
+    o.description || '',
+    o.project_id ?? null,
+    o.assignee_id ?? null,
+    o.priority || 'normale',
+    o.due_date ?? null,
+    o.status || 'a_faire',
+    req.user.id,
+    o.status === 'terminee' ? new Date().toISOString().slice(0, 10) : null
+  );
+  res.json(fetchTask(info.lastInsertRowid));
+});
+
+app.put('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
+  const ex = fetchTask(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Tâche introuvable' });
+  const v = validateTaskBody(req.body || {}, true);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const o = v.out;
+  const nextStatus = o.status ?? ex.status;
+  const completedAt = nextStatus === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
+  db.prepare(`UPDATE grh_tasks SET
+      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?, updated_at = datetime('now')
+    WHERE id = ?`).run(
+    o.title ?? ex.title,
+    o.description ?? ex.description,
+    o.project_id !== undefined ? o.project_id : ex.project_id,
+    o.assignee_id !== undefined ? o.assignee_id : ex.assignee_id,
+    o.priority ?? ex.priority,
+    o.due_date !== undefined ? o.due_date : ex.due_date,
+    nextStatus,
+    completedAt,
+    ex.id
+  );
+  res.json(fetchTask(ex.id));
+});
+
+const applyTaskStatus = (id, status, { authorId, authorName, note }) => {
+  const ex = fetchTask(id);
+  if (!ex) return { fail: 404, msg: 'Tâche introuvable' };
+  if (!TASK_STATUSES[status]) return { fail: 400, msg: 'Statut invalide' };
+  if (status === ex.status && !note) return { ok: ex };
+  const completedAt = status === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
+  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`).run(status, completedAt, ex.id);
+  if (note) {
+    db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
+      .run(ex.id, authorId, authorName, String(note).slice(0, 1000));
+  }
+  return { ok: fetchTask(ex.id) };
+};
+
+app.patch('/api/admin/grh/tasks/:id/status', ...GRH, (req, res) => {
+  const r = applyTaskStatus(req.params.id, (req.body || {}).status, {
+    authorId: req.user.id,
+    authorName: req.user.full_name || req.user.email,
+    note: (req.body || {}).note
+  });
+  if (r.fail) return res.status(r.fail).json({ error: r.msg });
+  res.json(r.ok);
+});
+
+app.get('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tâche introuvable' });
+  res.json(t);
+});
+
+app.post('/api/admin/grh/tasks/:id/notes', ...GRH, (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tâche introuvable' });
+  const body = String((req.body || {}).body || '').trim().slice(0, 1000);
+  if (!body) return res.status(400).json({ error: 'Commentaire requis' });
+  const info = db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
+    .run(t.id, req.user.id, req.user.full_name || req.user.email, body);
+  res.json(db.prepare('SELECT * FROM grh_task_notes WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.delete('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
+  const ex = db.prepare('SELECT id FROM grh_tasks WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Tâche introuvable' });
+  runTx(() => {
+    db.prepare('DELETE FROM grh_task_notes WHERE task_id = ?').run(ex.id);
+    db.prepare('DELETE FROM grh_tasks WHERE id = ?').run(ex.id);
+  });
+  res.json({ ok: true });
+});
+
+// Fiche de tâche PDF (utilisée par l'admin et l'employé)
+const buildTaskPdf = async (t) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([595.28, 841.89]);
+  const W = 595.28;
+  const [font, fontBold] = await Promise.all([
+    doc.embedFont(StandardFonts.Helvetica),
+    doc.embedFont(StandardFonts.HelveticaBold)
+  ]);
+  const brand = rgb(0.059, 0.227, 0.533);
+  const ink = rgb(0.1, 0.12, 0.18);
+  const gray = rgb(0.45, 0.5, 0.58);
+  const siteName = getSetting('site_name') || 'ADI ONG';
+  const tagline = getSetting('site_tagline') || '';
+  const wrap = (text, size, maxWidth) => {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    const lines = [];
+    let line = '';
+    for (const w of words) {
+      const trial = line ? line + ' ' + w : w;
+      if (font.widthOfTextAtSize(trial, size) > maxWidth && line) { lines.push(line); line = w; }
+      else line = trial;
+    }
+    if (line) lines.push(line);
+    return lines.length ? lines : [''];
+  };
+
+  page.drawRectangle({ x: 0, y: 841.89 - 88, width: W, height: 88, color: brand });
+  page.drawText(siteName.toUpperCase(), { x: 40, y: 782, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+  if (tagline) page.drawText(tagline, { x: 40, y: 764, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+  page.drawText('FICHE DE TÂCHE', { x: (W - fontBold.widthOfTextAtSize('FICHE DE TÂCHE', 20)) / 2, y: 716, size: 20, font: fontBold, color: ink });
+  const meta = [`Tâche n° ${t.id}`, frDateLong(t.created_at)];
+  page.drawText(meta.join('  ·  '), { x: W - 40 - font.widthOfTextAtSize(meta.join('  ·  '), 10), y: 718, size: 10, font, color: gray });
+
+  let y = 676;
+  const row = (label, value) => {
+    page.drawText(label.toUpperCase(), { x: 40, y, size: 8, font: fontBold, color: gray });
+    y -= 14;
+    for (const line of wrap(value || '—', 11, 300)) {
+      page.drawText(line, { x: 40, y, size: 11, font, color: ink });
+      y -= 15;
+    }
+    y -= 8;
+  };
+
+  page.drawText(t.title, { x: 40, y, size: 15, font: fontBold, color: ink });
+  y -= 24;
+  const grid = (entries) => {
+    const colW = 240;
+    entries.forEach((e, i) => {
+      const x = 40 + (i % 2) * (colW + 25);
+      const labelY = y - Math.floor(i / 2) * 52;
+      page.drawText(e.label, { x, y: labelY, size: 8, font: fontBold, color: gray });
+      let ly = labelY - 14;
+      for (const line of wrap(e.value, 11, colW - 10)) {
+        page.drawText(line, { x, y: ly, size: 11, font, color: ink });
+        ly -= 14;
+      }
+    });
+    y -= Math.ceil(entries.length / 2) * 52 + 4;
+  };
+  grid([
+    { label: 'ASSIGNÉ À', value: [t.assignee_name, t.assignee_position].filter(Boolean).join(' — ') },
+    { label: 'PROJET', value: t.project_name || 'Projet non rattaché' },
+    { label: 'PRIORITÉ', value: TASK_PRIORITIES[t.priority] || t.priority },
+    { label: 'ÉCHÉANCE', value: t.due_date ? frDateLong(t.due_date) : 'Non définie' },
+    { label: 'STATUT', value: TASK_STATUSES[t.status] || t.status },
+    { label: 'TERMINÉE LE', value: t.completed_at ? frDateLong(t.completed_at) : 'En attente' }
+  ]);
+  if (t.project_deadline) {
+    page.drawText(`Échéance du projet : ${frDateLong(t.project_deadline)}`, { x: 40, y, size: 10, font, color: gray });
+    y -= 20;
+  }
+
+  page.drawText('DESCRIPTION', { x: 40, y, size: 8, font: fontBold, color: gray });
+  y -= 14;
+  for (const line of wrap(t.description || 'Aucune description.', 10.5, 515)) {
+    page.drawText(line, { x: 40, y, size: 10.5, font, color: ink });
+    y -= 14;
+  }
+  y -= 14;
+
+  if (t.notes && t.notes.length) {
+    page.drawText('HISTORIQUE DES ÉCHANGES', { x: 40, y, size: 8, font: fontBold, color: gray });
+    y -= 16;
+    for (const n of t.notes) {
+      const head = `${frDateLong(n.created_at)} — ${n.author_name || 'Inconnu'}`;
+      page.drawText(head, { x: 40, y, size: 9, font: fontBold, color: brand });
+      y -= 12;
+      for (const line of wrap(n.body, 9.5, 500)) {
+        page.drawText(line, { x: 40, y, size: 9.5, font, color: ink });
+        y -= 12;
+      }
+      y -= 6;
+      if (y < 130) break;
+    }
+    y -= 10;
+  }
+
+  const sigY = Math.max(y - 30, 100);
+  page.drawLine({ start: { x: 40, y: sigY + 46 }, end: { x: 555, y: sigY + 46 }, thickness: 0.7, color: rgb(0.8, 0.83, 0.88) });
+  page.drawText('Signature de l’employé', { x: 40, y: sigY, size: 9, font, color: gray });
+  page.drawLine({ start: { x: 40, y: sigY + 8 }, end: { x: 230, y: sigY + 8 }, thickness: 0.7, color: gray });
+  page.drawText('Signature de la hiérarchie', { x: 340, y: sigY, size: 9, font, color: gray });
+  page.drawLine({ start: { x: 340, y: sigY + 8 }, end: { x: 555, y: sigY + 8 }, thickness: 0.7, color: gray });
+  const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  ·  ');
+  if (footer) page.drawText(footer.slice(0, 100), { x: (W - font.widthOfTextAtSize(footer.slice(0, 100), 7.5)) / 2, y: 45, size: 7.5, font, color: gray });
+
+  return Buffer.from(await doc.save());
+};
+
+app.get('/api/admin/grh/tasks/:id/pdf', ...GRH, async (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tâche introuvable' });
+  try {
+    const buf = await buildTaskPdf(t);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="tache-${t.id}.pdf"`);
+    res.send(buf);
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le PDF' });
+  }
+});
+
+// ---------- Messagerie interne (employé ↔ administration) ----------
+const chatFor = (employeeId) =>
+  db.prepare(`SELECT c.*, u.full_name AS sender_name FROM grh_chat c LEFT JOIN users u ON u.id = c.user_id
+    WHERE c.employee_id = ? ORDER BY c.id`).all(employeeId);
+
+app.get('/api/admin/grh/chat', ...GRH, (req, res) => {
+  res.json(db.prepare(`
+    SELECT e.id, e.full_name, e.position,
+      (SELECT c.body FROM grh_chat c WHERE c.employee_id = e.id ORDER BY c.id DESC LIMIT 1) AS last_body,
+      (SELECT c.created_at FROM grh_chat c WHERE c.employee_id = e.id ORDER BY c.id DESC LIMIT 1) AS last_at,
+      (SELECT COUNT(*) FROM grh_chat c WHERE c.employee_id = e.id AND c.sender = 'employee' AND c.read_at IS NULL) AS unread
+    FROM grh_employees e
+    ORDER BY COALESCE((SELECT c.created_at FROM grh_chat c WHERE c.employee_id = e.id ORDER BY c.id DESC LIMIT 1), e.created_at) DESC, e.id
+  `).all());
+});
+
+app.get('/api/admin/grh/chat/:employeeId', ...GRH, (req, res) => {
+  const emp = db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(req.params.employeeId);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  const msgs = chatFor(emp.id);
+  db.prepare(`UPDATE grh_chat SET read_at = datetime('now')
+    WHERE employee_id = ? AND sender = 'employee' AND read_at IS NULL`).run(emp.id);
+  res.json(msgs);
+});
+
+app.post('/api/admin/grh/chat/:employeeId', ...GRH, (req, res) => {
+  const emp = db.prepare('SELECT id FROM grh_employees WHERE id = ?').get(req.params.employeeId);
+  if (!emp) return res.status(404).json({ error: 'Employé introuvable' });
+  const body = String((req.body || {}).body || '').trim().slice(0, 2000);
+  if (!body) return res.status(400).json({ error: 'Message requis' });
+  const info = db.prepare(`INSERT INTO grh_chat (employee_id, sender, user_id, body) VALUES (?, 'admin', ?, ?)`)
+    .run(emp.id, req.user.id, body);
+  res.json(db.prepare('SELECT * FROM grh_chat WHERE id = ?').get(info.lastInsertRowid));
+});
+
+// ---------- Documents administratifs ----------
+const adminDocsDir = path.join(__dirname, 'data', 'admin-docs');
+fs.mkdirSync(adminDocsDir, { recursive: true });
+const adminDocsUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, adminDocsDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase().slice(0, 8) || '.bin';
+      cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
+    }
+  }),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const ok = isAllowedUpload(file) ||
+      mime === 'application/msword' ||
+      mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      mime === 'application/pdf' ||
+      mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    if (ok) cb(null, true);
+    else cb(new Error('Format de fichier non autorisé'));
+  }
+});
+
+app.get('/api/admin/grh/admin-docs', ...GRH, (req, res) => {
+  res.json(db.prepare(`
+    SELECT d.*, u.full_name AS created_by_name
+    FROM grh_admin_docs d LEFT JOIN users u ON u.id = d.created_by
+    ORDER BY d.created_at DESC, d.id DESC
+  `).all());
+});
+
+app.post('/api/admin/grh/admin-docs', ...GRH, adminDocsUpload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
+  const b = req.body || {};
+  const name = String(b.name || req.file.originalname || 'Document').trim().slice(0, 200);
+  const info = db.prepare(`INSERT INTO grh_admin_docs (name, category, file, mime, size, expires_on, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    name,
+    String(b.category || 'autre').trim().slice(0, 40) || 'autre',
+    req.file.filename,
+    String(req.file.mimetype || ''),
+    req.file.size,
+    b.expires_on ? String(b.expires_on).slice(0, 10) : null,
+    req.user.id
+  );
+  res.json(db.prepare('SELECT * FROM grh_admin_docs WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.get('/api/admin/grh/admin-docs/:id/download', ...GRH, (req, res) => {
+  const d = db.prepare('SELECT * FROM grh_admin_docs WHERE id = ?').get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Document introuvable' });
+  const full = path.join(adminDocsDir, path.basename(d.file));
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Fichier introuvable sur le serveur' });
+  res.setHeader('Content-Type', d.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(d.name)}${path.extname(d.file)}"`);
+  res.sendFile(full);
+});
+
+app.delete('/api/admin/grh/admin-docs/:id', ...GRH, (req, res) => {
+  const d = db.prepare('SELECT * FROM grh_admin_docs WHERE id = ?').get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Document introuvable' });
+  db.prepare('DELETE FROM grh_admin_docs WHERE id = ?').run(d.id);
+  const full = path.join(adminDocsDir, path.basename(d.file));
+  fs.promises.unlink(full).catch(() => {});
+  res.json({ ok: true });
+});
+
 // ---------- Certificats PDF (attestation d'emploi / certificat de travail) ----------
 const CERT_CONTRACTS = {
   permanent: 'contrat permanent (CDI)',
@@ -2193,7 +3099,19 @@ const selfEmployeeGuard = (req, res, next) => {
   const emp = selfEmployee(req);
   if (!emp) return res.status(404).json({ error: 'Aucun dossier employé n’est lié à votre adresse email.' });
   req.employee = emp;
+  recordPresence(emp);
   next();
+};
+
+// Pointage automatique : 1ʳᵉ activité de la journée = début, dernière activité = fin (heure locale serveur, UTC)
+const recordPresence = (emp) => {
+  try {
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    db.prepare(`INSERT INTO grh_attendance (employee_id, date, clock_in, last_seen)
+      VALUES (?, date('now'), ?, ?)
+      ON CONFLICT(employee_id, date) DO UPDATE SET last_seen = excluded.last_seen`)
+      .run(emp.id, now, now);
+  } catch { /* non bloquant */ }
 };
 app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
   const emp = req.employee;
@@ -2203,6 +3121,19 @@ app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), s
 app.get('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
   res.json(db.prepare('SELECT * FROM grh_leaves WHERE employee_id = ? ORDER BY start_date DESC').all(req.employee.id));
 });
+app.get('/api/me/employee/attendance', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  res.json(db.prepare(`SELECT * FROM grh_attendance
+    WHERE employee_id = ? AND date >= date('now', '-60 days')
+    ORDER BY date DESC`).all(req.employee.id));
+});
+
+// Battement de « Mon espace » : renouvelle l'heure de fin tant que l'employé est dans son espace de travail
+app.post('/api/me/attendance/ping', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  recordPresence(req.employee);
+  const row = db.prepare('SELECT * FROM grh_attendance WHERE employee_id = ? AND date = date(\'now\')').get(req.employee.id);
+  res.json({ ok: true, ...row });
+});
+
 app.get('/api/me/employee/announcements', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   res.json(db.prepare(`
@@ -2235,6 +3166,70 @@ app.delete('/api/me/employee/leaves/:id', authRequired, requireModule('grh_enabl
   if (leave.status !== 'en_attente') return res.status(409).json({ error: 'Seule une demande en attente peut être retirée.' });
   db.prepare('DELETE FROM grh_leaves WHERE id = ?').run(leave.id);
   res.json({ ok: true });
+});
+
+app.get('/api/me/grh/tasks', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  res.json(db.prepare(`
+    SELECT t.*, p.name AS project_name
+    FROM grh_tasks t LEFT JOIN grh_projects p ON p.id = t.project_id
+    WHERE t.assignee_id = ?
+    ORDER BY CASE t.status WHEN 'a_faire' THEN 0 WHEN 'en_cours' THEN 1 ELSE 2 END, t.due_date IS NULL, t.due_date, t.id DESC
+  `).all(req.employee.id));
+});
+
+app.get('/api/me/grh/tasks/:id', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t || t.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  res.json(t);
+});
+
+app.patch('/api/me/grh/tasks/:id/status', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const ex = fetchTask(req.params.id);
+  if (!ex || ex.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  const r = applyTaskStatus(ex.id, (req.body || {}).status, {
+    authorId: req.user.id,
+    authorName: req.employee.full_name,
+    note: (req.body || {}).note
+  });
+  if (r.fail) return res.status(r.fail).json({ error: r.msg });
+  res.json(r.ok);
+});
+
+app.post('/api/me/grh/tasks/:id/notes', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const ex = fetchTask(req.params.id);
+  if (!ex || ex.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  const body = String((req.body || {}).body || '').trim().slice(0, 1000);
+  if (!body) return res.status(400).json({ error: 'Commentaire requis' });
+  const info = db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
+    .run(ex.id, req.user.id, req.employee.full_name, body);
+  res.json(db.prepare('SELECT * FROM grh_task_notes WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.get('/api/me/grh/tasks/:id/pdf', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, async (req, res) => {
+  const t = fetchTask(req.params.id);
+  if (!t || t.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
+  try {
+    const buf = await buildTaskPdf(t);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="tache-${t.id}.pdf"`);
+    res.send(buf);
+  } catch {
+    res.status(500).json({ error: 'Impossible de générer le PDF' });
+  }
+});
+
+app.get('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  db.prepare(`UPDATE grh_chat SET read_at = datetime('now')
+    WHERE employee_id = ? AND sender = 'admin' AND read_at IS NULL`).run(req.employee.id);
+  res.json(chatFor(req.employee.id));
+});
+
+app.post('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), selfEmployeeGuard, (req, res) => {
+  const body = String((req.body || {}).body || '').trim().slice(0, 2000);
+  if (!body) return res.status(400).json({ error: 'Message requis' });
+  const info = db.prepare(`INSERT INTO grh_chat (employee_id, sender, user_id, body) VALUES (?, 'employee', ?, ?)`)
+    .run(req.employee.id, req.user.id, body);
+  res.json(db.prepare('SELECT * FROM grh_chat WHERE id = ?').get(info.lastInsertRowid));
 });
 
 // ---------- Inscription sur invitation (lien à usage unique) ----------
@@ -3017,11 +4012,17 @@ const parseShopItems = (raw) => {
   const items = Array.isArray(raw) ? raw : [];
   if (items.length === 0) return { error: 'Panier vide' };
   if (items.length > 50) return { error: 'Trop de lignes de commande (50 maximum)' };
-  const clean = [];
+  const byId = new Map();
   for (const it of items) {
     const qty = Math.trunc(Number(it?.qty) || 0);
-    if (!it?.product_id || qty <= 0 || qty > 200) return { error: 'Quantités invalides (1 à 200 par ligne)' };
-    clean.push({ product_id: Number(it.product_id), qty });
+    const product_id = Number(it?.product_id) || 0;
+    if (!product_id || qty <= 0 || qty > 200) return { error: 'Quantités invalides (1 à 200 par ligne)' };
+    byId.set(product_id, (byId.get(product_id) || 0) + qty);
+  }
+  const clean = [];
+  for (const [product_id, qty] of byId) {
+    if (qty > 200) return { error: 'Quantités invalides (1 à 200 par produit)' };
+    clean.push({ product_id, qty });
   }
   return { items: clean };
 };
@@ -3059,10 +4060,16 @@ app.post('/api/public/shop/orders', (req, res) => {
       for (const it of parsed.items) {
         const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
         if (!p || !p.active) return { fail: 404, msg: 'Un produit du panier n\'est plus disponible.' };
-        if (p.stock < it.qty) return { fail: 409, msg: `Stock insuffisant pour « ${p.name} » (${p.stock} restant).` };
-        subtotal += p.price * it.qty;
+        if (p.stock < it.qty) {
+          return {
+            fail: 409,
+            msg: `Stock insuffisant pour « ${p.name} » : ${p.stock} disponible(s), ${it.qty} demandé(s).`
+          };
+        }
+        const lineTotal = money2(p.price * it.qty);
+        subtotal += lineTotal;
         lines.push({
-          product_id: p.id, product_name: p.name, qty: it.qty, price: p.price, total: p.price * it.qty
+          product_id: p.id, product_name: p.name, qty: it.qty, price: p.price, total: lineTotal
         });
       }
       subtotal = money2(subtotal);
@@ -3072,11 +4079,12 @@ app.post('/api/public/shop/orders', (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attente')`).run(
         reference, customer_name, phone, note, JSON.stringify(lines), subtotal, subtotal, payment_method
       );
-      for (const it of parsed.items) {
-        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
-        db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(p.stock - it.qty, p.id);
+      for (const line of lines) {
+        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(line.product_id);
+        const nextStock = p.stock - line.qty;
+        db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(nextStock, p.id);
         db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(p.id, 'sortie', it.qty, p.stock - it.qty, `Commande en ligne ${reference}`, null);
+          .run(p.id, 'sortie', line.qty, nextStock, `Commande en ligne ${reference}`, null);
       }
       return db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(r.lastInsertRowid);
     });
@@ -3113,13 +4121,20 @@ app.patch('/api/admin/pos/orders/:id', ...POS, (req, res) => {
   const lines = JSON.parse(o.items || '[]');
   runTx(() => {
     if (status === 'annulee') {
+      const restore = new Map();
       for (const it of lines) {
-        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
-        if (p) {
-          db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(p.stock + it.qty, p.id);
-          db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
-            .run(p.id, 'entree', it.qty, p.stock + it.qty, `Commande en ligne annulée ${o.reference}`, req.user.id);
-        }
+        const pid = Number(it.product_id) || 0;
+        const qty = Math.trunc(Number(it.qty) || 0);
+        if (!pid || qty <= 0) continue;
+        restore.set(pid, (restore.get(pid) || 0) + qty);
+      }
+      for (const [pid, qty] of restore) {
+        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(pid);
+        if (!p) continue;
+        const nextStock = p.stock + qty;
+        db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(nextStock, p.id);
+        db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(p.id, 'entree', qty, nextStock, `Commande en ligne annulée ${o.reference}`, req.user.id);
       }
     }
     db.prepare(`UPDATE shop_orders SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, o.id);

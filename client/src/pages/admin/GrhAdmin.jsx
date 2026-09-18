@@ -53,12 +53,26 @@ const CONTRACTS = {
   benevole: 'Bénévole',
   stagiaire: 'Stagiaire'
 };
+const CONTRACT_COLORS = {
+  permanent: '#0f3a88',
+  cdd: '#fc7a03',
+  vacataire: '#64748b',
+  benevole: '#0d9488',
+  stagiaire: '#7c3aed'
+};
 const LEAVE_TYPES = {
   conge: 'Congé annuel',
   maladie: 'Maladie',
   maternite: 'Maternité',
   sans_solde: 'Sans solde',
   formation: 'Formation'
+};
+const LEAVE_COLORS = {
+  conge: '#0f3a88',
+  maladie: '#dc2626',
+  maternite: '#db2777',
+  sans_solde: '#64748b',
+  formation: '#0d9488'
 };
 const LEAVE_STATUS = {
   en_attente: 'En attente',
@@ -106,25 +120,102 @@ const emptyLeave = { employee_id: null, type: 'conge', start_date: '', end_date:
 const fmtDate = (d) =>
   d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-function StatCard({ icon, label, value, sub, tone = 'brand' }) {
-  const tones = {
-    brand: 'bg-brand-50 text-brand-700',
-    accent: 'bg-accent-50 text-accent-800',
-    ink: 'bg-ink-50 text-ink-600',
-    warn: 'bg-amber-50 text-amber-800'
-  };
+function GrhKpi({ icon, label, value, hint, tone = 'bg-brand-50 text-brand-700', onClick }) {
+  const inner = (
+    <>
+      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${tone}`}>
+        <TabIcon d={icon} className="h-5 w-5 shrink-0" />
+      </span>
+      <span className="min-w-0">
+        <span className="block font-display text-2xl font-extrabold leading-none text-ink-900">{value}</span>
+        <span className="mt-0.5 block truncate text-xs font-bold text-ink-700">{label}</span>
+        {hint ? <span className="block truncate text-[11px] font-semibold text-ink-400">{hint}</span> : null}
+      </span>
+    </>
+  );
+  const cls = 'flex w-full items-center gap-3 rounded-2xl bg-white p-3.5 text-left ring-1 ring-ink-100 transition hover:shadow-soft';
+  return onClick ? (
+    <button type="button" onClick={onClick} className={cls}>{inner}</button>
+  ) : (
+    <div className={cls}>{inner}</div>
+  );
+}
+
+function GrhCard({ title, action, children, className = '' }) {
   return (
-    <div className="overflow-hidden rounded-2xl bg-white p-5 ring-1 ring-ink-950/5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-wider text-ink-400">{label}</p>
-          <p className="mt-1 font-display text-3xl font-extrabold text-ink-900">{value}</p>
-          {sub && <p className="mt-1 text-xs text-ink-400">{sub}</p>}
-        </div>
-        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${tones[tone]}`}>
-          <TabIcon d={icon} />
-        </span>
+    <section className={`rounded-2xl bg-white p-4 ring-1 ring-ink-100 sm:p-5 ${className}`}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="font-display text-sm font-bold text-ink-900 sm:text-[15px]">{title}</h3>
+        {action}
       </div>
+      {children}
+    </section>
+  );
+}
+
+function GrhDonut({ slices = [], unit = '' }) {
+  const total = slices.reduce((a, s) => a + s.value, 0) || 1;
+  const r = 42;
+  const c = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <svg viewBox="0 0 120 120" className="h-[132px] w-[132px] shrink-0">
+      <circle cx="60" cy="60" r={r} fill="none" stroke="#eef2f8" strokeWidth="16" />
+      {slices.map((s) => {
+        const dash = (s.value / total) * c;
+        const el = (
+          <circle
+            key={s.key}
+            cx="60"
+            cy="60"
+            r={r}
+            fill="none"
+            stroke={s.color}
+            strokeWidth="16"
+            strokeDasharray={`${dash} ${c - dash}`}
+            strokeDashoffset={-offset}
+            transform="rotate(-90 60 60)"
+          />
+        );
+        offset += dash;
+        return el;
+      })}
+      <text x="60" y="56" textAnchor="middle" fill="#0f172a" fontSize="18" fontWeight="800">
+        {slices.reduce((a, s) => a + s.value, 0)}
+      </text>
+      {unit ? (
+        <text x="60" y="72" textAnchor="middle" fill="#94a3b8" fontSize="9" fontWeight="700">{unit}</text>
+      ) : null}
+    </svg>
+  );
+}
+
+function monthShort(ym) {
+  const [y, m] = String(ym).split('-').map(Number);
+  if (!y || !m) return '';
+  return new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'short' }).replace('.', '');
+}
+
+function GrhBars({ series = [], valueKey = 'n', color = '#0f3a88' }) {
+  const max = Math.max(1, ...series.map((p) => Number(p[valueKey] || 0)));
+  return (
+    <div className="flex h-[148px] items-end gap-1">
+      {series.map((p, i) => {
+        const v = Number(p[valueKey] || 0);
+        const last = i === series.length - 1;
+        return (
+          <div key={p.month || i} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+            <div
+              className="w-full rounded-t-md"
+              style={{ height: `${Math.max(4, (v / max) * 118)}px`, background: last ? color : `${color}55` }}
+              title={`${monthShort(p.month)} · ${v}`}
+            />
+            {(i === 0 || last || i % 2 === 0) && (
+              <span className="text-[10px] font-semibold capitalize text-ink-400">{monthShort(p.month)}</span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -3109,6 +3200,32 @@ export default function GrhAdmin() {
   );
 
   const maxDept = Math.max(1, ...(overview?.byDept || []).map((d) => d.n));
+  const contractSlices = useMemo(
+    () =>
+      (overview?.byContract || [])
+        .map((r) => ({
+          key: r.type,
+          value: Number(r.n || 0),
+          color: CONTRACT_COLORS[r.type] || '#94a3b8',
+          label: CONTRACTS[r.type] || r.type
+        }))
+        .filter((s) => s.value > 0),
+    [overview]
+  );
+  const leaveSlices = useMemo(
+    () =>
+      (overview?.leavesByType || [])
+        .map((r) => ({
+          key: r.type,
+          value: Number(r.n || 0),
+          color: LEAVE_COLORS[r.type] || '#94a3b8',
+          label: LEAVE_TYPES[r.type] || r.type
+        }))
+        .filter((s) => s.value > 0),
+    [overview]
+  );
+  const hireYear = (overview?.hires_series || []).reduce((a, p) => a + Number(p.n || 0), 0);
+  const maxLeaveType = Math.max(1, ...leaveSlices.map((s) => s.value));
 
   const shiftMonth = (delta) => {
     const [y, m] = calMonth.split('-').map(Number);
@@ -3279,86 +3396,230 @@ export default function GrhAdmin() {
           </div>
 
       {activeId === 'overview' && (
-        <div className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-3 2xl:grid-cols-6">
+            <GrhKpi
               icon={TABS.find((t) => t.id === 'employees').icon}
-              label="Employés actifs"
+              label="Actifs"
               value={overview?.active ?? '—'}
-              sub={`${overview?.total ?? 0} au total`}
+              hint={`${overview?.inactive ?? 0} inactif${(overview?.inactive || 0) > 1 ? 's' : ''} · ${overview?.total ?? 0} total`}
+              onClick={() => setTab('employees')}
             />
-            <StatCard
-              icon={TABS.find((t) => t.id === 'departments').icon}
-              label="Départements"
-              value={departments.length}
-              tone="ink"
-            />
-            <StatCard
+            <GrhKpi
               icon={TABS.find((t) => t.id === 'leaves').icon}
-              label="Congés en attente"
+              label="Congés à valider"
               value={overview?.leavesPending ?? '—'}
-              sub="à valider dans Congés"
-              tone="warn"
+              hint="Demandes en attente"
+              tone="bg-amber-50 text-amber-800"
+              onClick={() => setTab('leaves')}
             />
-            <StatCard
+            <GrhKpi
               icon="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-              label="Congés en cours"
+              label="Absents aujourd’hui"
               value={overview?.leavesOngoing ?? '—'}
-              sub="approuvés et en cours aujourd'hui"
-              tone="accent"
+              hint="Congés en cours"
+              tone="bg-accent-50 text-accent-800"
+              onClick={() => setTab('leaves')}
+            />
+            <GrhKpi
+              icon={TABS.find((t) => t.id === 'attendance').icon}
+              label="Présents"
+              value={overview?.presentToday ?? '—'}
+              hint="Pointages du jour"
+              tone="bg-ink-50 text-ink-600"
+              onClick={() => setTab('attendance')}
+            />
+            <GrhKpi
+              icon={TABS.find((t) => t.id === 'recruit').icon}
+              label="Candidats"
+              value={overview?.candidatesOpen ?? '—'}
+              hint="Reçus ou en entretien"
+              tone="bg-accent-50 text-accent-800"
+              onClick={() => setTab('recruit')}
+            />
+            <GrhKpi
+              icon={TABS.find((t) => t.id === 'tasks').icon}
+              label="Tâches ouvertes"
+              value={overview?.tasksOpen ?? '—'}
+              hint={`${overview?.projectsActive ?? 0} projet${(overview?.projectsActive || 0) > 1 ? 's' : ''} en cours`}
+              tone="bg-ink-50 text-ink-600"
+              onClick={() => setTab('tasks')}
             />
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-2">
-            <GrhSection title="Effectif par département" desc="Répartition des employés actifs.">
-              {(overview?.byDept || []).length === 0 && <p className="text-sm text-ink-400">Aucun employé actif pour le moment.</p>}
-              <div className="space-y-4">
-                {(overview?.byDept || []).map((d) => (
-                  <div key={d.name}>
-                    <div className="mb-1.5 flex items-center justify-between text-sm">
-                      <span className="font-semibold text-ink-700">{d.name}</span>
-                      <span className="font-bold text-brand-700">{d.n}</span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-ink-100">
-                      <div className="h-full rounded-full bg-brand-500" style={{ width: `${(d.n / maxDept) * 100}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </GrhSection>
+          <div className="grid gap-3 lg:grid-cols-3">
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-700 via-brand-800 to-ink-900 p-5 text-white">
+              <div
+                className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full opacity-30"
+                style={{ background: 'radial-gradient(circle, #fc7a03 0%, transparent 70%)' }}
+              />
+              <p className="text-[11px] font-bold tracking-[0.16em] text-white/55 uppercase">Effectif actif</p>
+              <p className="mt-1.5 font-display text-3xl font-extrabold tracking-tight text-accent-300">
+                {overview?.active ?? 0}
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-white/70">
+                {departments.length} département{departments.length > 1 ? 's' : ''}
+                {(overview?.leavesOngoing || 0) > 0 && <> · {overview.leavesOngoing} en congé</>}
+              </p>
+              <p className="mt-4 text-[11px] font-semibold text-white/50">
+                {overview?.presentToday ?? 0} présent{(overview?.presentToday || 0) > 1 ? 's' : ''} aujourd’hui
+              </p>
+              <button
+                type="button"
+                onClick={() => setTab('employees')}
+                className="mt-3 inline-flex items-center gap-1 text-sm font-bold text-accent-300 hover:text-white"
+              >
+                Voir l’équipe
+                <TabIcon d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" className="h-4 w-4" />
+              </button>
+            </div>
 
-            <div className="space-y-5">
-              <GrhSection title="Dernières embauches">
-                {(overview?.recentHires || []).length === 0 && <p className="text-sm text-ink-400">Aucune embauche enregistrée.</p>}
-                <ul className="space-y-2">
-                  {(overview?.recentHires || []).map((h, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 rounded-xl bg-cream px-4 py-3 text-sm">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-ink-800">{h.full_name}</p>
-                        <p className="text-xs text-ink-400">{h.position || '—'}</p>
+            <GrhCard
+              className="lg:col-span-2"
+              title="Embauches — 12 mois"
+              action={<span className="text-xs font-bold text-ink-400">{hireYear} arrivée{hireYear > 1 ? 's' : ''}</span>}
+            >
+              {hireYear === 0 ? (
+                <p className="py-10 text-center text-sm text-ink-400">Aucune embauche sur la période.</p>
+              ) : (
+                <GrhBars series={overview?.hires_series || []} />
+              )}
+            </GrhCard>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            <GrhCard title="Contrats">
+              {contractSlices.length === 0 ? (
+                <p className="py-10 text-center text-sm text-ink-400">Aucun employé actif.</p>
+              ) : (
+                <div className="flex items-center gap-4">
+                  <GrhDonut slices={contractSlices} unit="actifs" />
+                  <ul className="min-w-0 flex-1 space-y-2">
+                    {contractSlices.map((s) => (
+                      <li key={s.key} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="flex min-w-0 items-center gap-2 font-semibold text-ink-600">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                          <span className="truncate">{s.label}</span>
+                        </span>
+                        <span className="font-extrabold text-ink-900">{s.value}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </GrhCard>
+
+            <GrhCard
+              title="Par département"
+              action={
+                <button type="button" className="text-xs font-bold text-brand-600 hover:underline" onClick={() => setTab('departments')}>
+                  Gérer
+                </button>
+              }
+            >
+              {(overview?.byDept || []).length === 0 ? (
+                <p className="py-10 text-center text-sm text-ink-400">Aucun employé actif.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {(overview?.byDept || []).map((d) => (
+                    <li key={d.name} className="flex items-center gap-3">
+                      <span className="w-28 shrink-0 truncate text-xs font-bold text-ink-700">{d.name}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-50">
+                        <div
+                          className="h-full rounded-full bg-brand-500"
+                          style={{ width: `${Math.max(8, (d.n / maxDept) * 100)}%` }}
+                        />
                       </div>
-                      <span className="shrink-0 text-xs font-bold text-ink-400">{fmtDate(h.hire_date)}</span>
+                      <span className="w-6 text-right text-xs font-extrabold text-ink-900">{d.n}</span>
                     </li>
                   ))}
                 </ul>
-              </GrhSection>
-              <GrhSection title="Prochains congés approuvés">
-                {(overview?.upcomingLeaves || []).length === 0 && <p className="text-sm text-ink-400">Aucun congé à venir.</p>}
-                <ul className="space-y-2">
-                  {(overview?.upcomingLeaves || []).map((l, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 rounded-xl bg-cream px-4 py-3 text-sm">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-ink-800">{l.full_name}</p>
-                        <p className="text-xs text-ink-400">{LEAVE_TYPES[l.type] || l.type}</p>
+              )}
+            </GrhCard>
+
+            <GrhCard title="Congés validés" action={<span className="text-[11px] font-bold text-ink-400">Cette année</span>}>
+              {leaveSlices.length === 0 ? (
+                <p className="py-10 text-center text-sm text-ink-400">Aucun congé validé.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {leaveSlices.map((s) => (
+                    <li key={s.key}>
+                      <div className="mb-1 flex items-center justify-between text-xs">
+                        <span className="font-semibold text-ink-700">{s.label}</span>
+                        <span className="font-extrabold text-ink-900">{s.value}</span>
                       </div>
-                      <span className="shrink-0 text-xs font-bold text-ink-400">
+                      <div className="h-2 overflow-hidden rounded-full bg-ink-50">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${Math.max(8, (s.value / maxLeaveType) * 100)}%`, background: s.color }}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </GrhCard>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <GrhCard
+              title="Dernières embauches"
+              action={
+                <button type="button" className="text-xs font-bold text-brand-600 hover:underline" onClick={() => setTab('employees')}>
+                  Équipe
+                </button>
+              }
+            >
+              {(overview?.recentHires || []).length === 0 ? (
+                <p className="py-8 text-center text-sm text-ink-400">Aucune embauche enregistrée.</p>
+              ) : (
+                <ul className="divide-y divide-ink-50">
+                  {(overview?.recentHires || []).map((h) => (
+                    <li key={h.id || h.full_name} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                      {h.photo ? (
+                        <img src={h.photo} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-ink-100" />
+                      ) : (
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-50 text-[10px] font-extrabold text-brand-700">
+                          {String(h.full_name || '?').slice(0, 2).toUpperCase()}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold text-ink-800">{h.full_name}</p>
+                        <p className="truncate text-[11px] font-semibold text-ink-400">{h.position || '—'}</p>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-bold text-ink-400">{fmtDate(h.hire_date)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </GrhCard>
+
+            <GrhCard
+              title="Prochains congés"
+              action={
+                <button type="button" className="text-xs font-bold text-brand-600 hover:underline" onClick={() => setTab('leaves')}>
+                  Congés
+                </button>
+              }
+            >
+              {(overview?.upcomingLeaves || []).length === 0 ? (
+                <p className="py-8 text-center text-sm text-ink-400">Aucun congé à venir.</p>
+              ) : (
+                <ul className="divide-y divide-ink-50">
+                  {(overview?.upcomingLeaves || []).map((l, i) => (
+                    <li key={`${l.full_name}-${l.start_date}-${i}`} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-ink-800">{l.full_name}</p>
+                        <p className="truncate text-[11px] font-semibold text-ink-400">{LEAVE_TYPES[l.type] || l.type}</p>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-bold text-ink-400">
                         {fmtDate(l.start_date)}{l.end_date ? ` → ${fmtDate(l.end_date)}` : ''}
                       </span>
                     </li>
                   ))}
                 </ul>
-              </GrhSection>
-            </div>
+              )}
+            </GrhCard>
           </div>
         </div>
       )}

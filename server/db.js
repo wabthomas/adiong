@@ -563,5 +563,34 @@ migrate(`CREATE TABLE IF NOT EXISTS chat_reads (
   read_at TEXT NOT NULL,
   PRIMARY KEY (conversation_id, employee_id)
 )`);
+migrate(`CREATE TABLE IF NOT EXISTS article_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+
+function ensureArticleCategories() {
+  const ins = db.prepare('INSERT OR IGNORE INTO article_categories (slug, name, sort_order) VALUES (?, ?, ?)');
+  for (const [slug, name, order] of [
+    ['plaidoyer', 'Plaidoyer', 10],
+    ['education', 'Éducation', 20],
+    ['ecologie', 'Écologie', 30],
+    ['socio_economique', 'Socio-économique', 40],
+    ['entrepreneuriat', 'Entrepreneuriat', 50],
+    ['actualites', 'Actualité', 60]
+  ]) ins.run(slug, name, order);
+
+  const used = db.prepare("SELECT DISTINCT category AS slug FROM articles WHERE category IS NOT NULL AND TRIM(category) != ''").all();
+  let extra = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM article_categories').get().n;
+  for (const row of used) {
+    if (db.prepare('SELECT id FROM article_categories WHERE slug = ?').get(row.slug)) continue;
+    extra += 10;
+    const name = String(row.slug).replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    ins.run(row.slug, name, extra);
+  }
+}
+ensureArticleCategories();
 
 export default db;

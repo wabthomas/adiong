@@ -3,6 +3,7 @@ import { Routes, Route, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import Navbar from './components/Navbar.jsx';
 import Footer from './components/Footer.jsx';
+import MobileBottomNav from './components/MobileBottomNav.jsx';
 import PartnerSlider from './components/PartnerSlider.jsx';
 import Home from './pages/Home.jsx';
 import About from './pages/About.jsx';
@@ -120,7 +121,7 @@ function Shell() {
   const loc = useLocation();
   return (
     <PublicGate>
-      <div className="flex min-h-screen flex-col">
+      <div className="flex min-h-screen flex-col pb-16 lg:pb-0">
         <Navbar />
         <main className="flex-1">
           <AnimatePresence mode="wait">
@@ -144,6 +145,7 @@ function Shell() {
         </main>
         <PartnerSlider />
         <Footer />
+        <MobileBottomNav />
       </div>
     </PublicGate>
   );

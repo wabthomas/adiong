@@ -6,17 +6,14 @@ import { ArticleCard, categoryLabel } from '../components/Cards.jsx';
 import { useSite } from '../hooks/useSite.jsx';
 import { usePageSeo } from '../hooks/useSeo.js';
 
-const CATS = [
-  ['tous', 'Toutes'],
-  ['plaidoyer', 'Plaidoyer'],
-  ['education', 'Éducation'],
-  ['ecologie', 'Écologie']
-];
-
 const PER_PAGE = 6;
 
 export default function News() {
   const { site, articles } = useSite();
+  const catFilters = [
+    ['tous', 'Toutes'],
+    ...(site.article_categories || []).map((c) => [c.slug, c.name])
+  ];
   const [cat, setCat] = useState('tous');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -78,7 +75,7 @@ export default function News() {
         </Reveal>
 
         <Reveal className="mt-8 flex flex-wrap justify-center gap-3">
-          {CATS.map(([value, label]) => (
+          {catFilters.map(([value, label]) => (
             <button
               key={value}
               onClick={() => setCat(value)}
@@ -96,7 +93,7 @@ export default function News() {
         <p className="mt-8 text-center text-sm font-semibold text-ink-400">
           {filtered.length} article{filtered.length > 1 ? 's' : ''}
           {query && <> pour « {query} »</>}
-          {cat !== 'tous' && <> · {categoryLabel(cat)}</>}
+          {cat !== 'tous' && <> · {categoryLabel(cat, site.article_categories)}</>}
         </p>
 
         <Stagger key={`${cat}-${query}-${safePage}`} className="mt-10 grid gap-7 md:grid-cols-2 lg:grid-cols-3">

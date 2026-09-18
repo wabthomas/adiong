@@ -198,13 +198,36 @@ const STRING_SETTINGS = [
   'about_values_kicker','about_values_title',
   'about_method_kicker','about_method_title','about_method_text',
   'about_presence_title','about_presence_text',
-  'about_career_title','about_career_text'
+  'about_career_title','about_career_text',
+  'menu_footer_title','menu_footer_work_title','menu_donate_label','menu_donate_to'
 ];
 
 const JSON_SETTINGS = {
   stats: [], values: [], method: [],
   marquee_items: [], donate_amounts: [], donate_why_points: [], campaign_points: [],
-  about_header: {}, work_header: {}, news_header: {}, campaigns_header: {}, donate_header: {}, contact_header: {}
+  about_header: {}, work_header: {}, news_header: {}, campaigns_header: {}, donate_header: {}, contact_header: {},
+  menu_header: [
+    { label: 'Accueil', to: '/', mega: '' },
+    { label: 'À propos', to: '/a-propos', mega: 'about' },
+    { label: 'Notre travail', to: '/notre-travail', mega: 'work' },
+    { label: 'Actualités', to: '/actualites', mega: 'news' },
+    { label: 'Collectes', to: '/collectes', mega: 'campaigns' },
+    { label: 'Contact', to: '/contact', mega: '' }
+  ],
+  menu_footer: [
+    { label: 'Accueil', to: '/' },
+    { label: 'À propos', to: '/a-propos' },
+    { label: 'Actualités', to: '/actualites' },
+    { label: 'Nos collectes', to: '/collectes' },
+    { label: 'Contact', to: '/contact' }
+  ],
+  menu_mobile: [
+    { label: 'Accueil', to: '/' },
+    { label: 'Actus', to: '/actualites' },
+    { label: 'Don', to: '/faire-un-don' },
+    { label: 'Collectes', to: '/collectes' },
+    { label: 'Contact', to: '/contact' }
+  ]
 };
 
 const parseSetting = (raw, fallback) => {
@@ -216,6 +239,13 @@ export const publicSite = () => {
   const out = {};
   for (const k of STRING_SETTINGS) out[k] = getSetting(k);
   for (const [k, fallback] of Object.entries(JSON_SETTINGS)) out[k] = parseSetting(getSetting(k), fallback);
+  try {
+    out.article_categories = db.prepare(
+      'SELECT slug, name, sort_order FROM article_categories ORDER BY sort_order, name'
+    ).all();
+  } catch {
+    out.article_categories = [];
+  }
   return out;
 };
 
@@ -624,6 +654,20 @@ app.post('/api/contact', contactLimiter, (req, res) => {
 const DONATE_METHODS = { airtel: 'Airtel Money', mpesa: 'M-Pesa', orange: 'Orange Money', carte: 'Carte / virement' };
 const DONATE_STATUSES = ['nouvelle', 'preuve', 'confirmee', 'refusee'];
 
+/** Montant collecté d’une campagne = somme des dons confirmés (jamais de chiffre fictif). */
+function syncCampaignCollected(campaignId) {
+  if (!campaignId) return;
+  const t = db.prepare(
+    `SELECT COALESCE(SUM(amount), 0) AS t FROM donations WHERE campaign_id = ? AND status = 'confirmee'`
+  ).get(Number(campaignId)).t;
+  db.prepare('UPDATE campaigns SET collected_amount = ? WHERE id = ?').run(t, Number(campaignId));
+}
+
+function syncAllCampaignCollected() {
+  for (const row of db.prepare('SELECT id FROM campaigns').all()) syncCampaignCollected(row.id);
+}
+syncAllCampaignCollected();
+
 const newDonationReference = () => {
   for (let i = 0; i < 5; i++) {
     const ref = `DON-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -654,11 +698,10 @@ app.post('/api/donate', donateLimiter, (req, res) => {
   db.prepare(`INSERT INTO donations (campaign_id, donor_name, donor_email, amount, message, reference, method, is_anonymous, currency)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(campaignId || null, displayName, email || '', Number(amount), message || '', reference, method, anonymous ? 1 : 0, currency);
-  let campaignTitle = '';
-  if (campaignId) {
-    db.prepare('UPDATE campaigns SET collected_amount = collected_amount + ? WHERE id = ?').run(Number(amount), Number(campaignId));
-    campaignTitle = db.prepare('SELECT title FROM campaigns WHERE id = ?').get(campaignId)?.title || '';
-  }
+  // Le montant collecté de la campagne n’évolue qu’à la confirmation admin (syncCampaignCollected).
+  const campaignTitle = campaignId
+    ? (db.prepare('SELECT title FROM campaigns WHERE id = ?').get(campaignId)?.title || '')
+    : '';
   const esc = (s) => String(s ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const methodLabel = method ? ` — ${DONATE_METHODS[method]}` : '';
   notifyEmail(
@@ -732,18 +775,143 @@ app.post('/api/donations/proof', proofLimiter, proofUpload.single('file'), (req,
 
 app.get('/api/admin/dashboard', authRequired, requireRole('any'), (req, res) => {
   const q = (s) => db.prepare(s).get();
+  const confirmed = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status = 'confirmee'`);
+  const pending = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status IN ('nouvelle', 'preuve')`);
+
+  const fillDays = (rows, days = 14) => {
+    const map = new Map((rows || []).map((r) => [String(r.day).slice(0, 10), r]));
+    const out = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(12, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const row = map.get(key);
+      out.push({
+        day: key,
+        n: Number(row?.n || 0),
+        total: Number(row?.total || 0)
+      });
+    }
+    return out;
+  };
+
+  const donationsSeries = fillDays(
+    db.prepare(`
+      SELECT date(created_at) AS day, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+      FROM donations
+      WHERE date(created_at) >= date('now', '-13 days')
+      GROUP BY date(created_at)
+    `).all(),
+    14
+  );
+  const messagesSeries = fillDays(
+    db.prepare(`
+      SELECT date(created_at) AS day, COUNT(*) AS n, 0 AS total
+      FROM messages
+      WHERE date(created_at) >= date('now', '-13 days')
+      GROUP BY date(created_at)
+    `).all(),
+    14
+  );
+
+  const donationsByStatus = db.prepare(`
+    SELECT status, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+    FROM donations
+    GROUP BY status
+  `).all();
+
+  const donationsByMethod = db.prepare(`
+    SELECT COALESCE(NULLIF(TRIM(method), ''), 'autre') AS method,
+           COUNT(*) AS n,
+           COALESCE(SUM(amount), 0) AS total
+    FROM donations
+    WHERE status = 'confirmee'
+    GROUP BY COALESCE(NULLIF(TRIM(method), ''), 'autre')
+    ORDER BY total DESC
+  `).all();
+
+  const campaignsProgress = db.prepare(`
+    SELECT id, slug, title, goal_amount, collected_amount, deadline
+    FROM campaigns
+    WHERE published = 1
+    ORDER BY CASE WHEN goal_amount > 0 THEN collected_amount * 1.0 / goal_amount ELSE 0 END DESC
+    LIMIT 6
+  `).all();
+
+  const articlesByCategory = db.prepare(`
+    SELECT category, COUNT(*) AS n
+    FROM articles
+    WHERE published = 1
+    GROUP BY category
+    ORDER BY n DESC
+  `).all();
+
   res.json({
-    articles: q('SELECT COUNT(*) n FROM articles').n,
-    causes: q('SELECT COUNT(*) n FROM causes').n,
-    campaigns: q('SELECT COUNT(*) n FROM campaigns').n,
-    donations: q('SELECT COUNT(*) n FROM donations').n,
-    donations_total: q('SELECT COALESCE(SUM(amount),0) t FROM donations').t,
-    campaigns_collected: q('SELECT COALESCE(SUM(collected_amount),0) t FROM campaigns').t,
-    messages: q('SELECT COUNT(*) n FROM messages').n,
-    unread_messages: q('SELECT COUNT(*) n FROM messages WHERE read = 0').n,
+    articles: q('SELECT COUNT(*) AS n FROM articles WHERE published = 1').n,
+    articles_drafts: q('SELECT COUNT(*) AS n FROM articles WHERE published = 0').n,
+    causes: q('SELECT COUNT(*) AS n FROM causes WHERE published = 1').n,
+    campaigns: q('SELECT COUNT(*) AS n FROM campaigns WHERE published = 1').n,
+    donations: q('SELECT COUNT(*) AS n FROM donations').n,
+    donations_confirmed: confirmed.n,
+    donations_pending: pending.n,
+    donations_total: confirmed.t,
+    donations_pending_total: pending.t,
+    campaigns_collected: confirmed.t,
+    messages: q('SELECT COUNT(*) AS n FROM messages').n,
+    unread_messages: q('SELECT COUNT(*) AS n FROM messages WHERE read = 0').n,
+    donations_series: donationsSeries,
+    messages_series: messagesSeries,
+    donations_by_status: donationsByStatus,
+    donations_by_method: donationsByMethod,
+    campaigns_progress: campaignsProgress,
+    articles_by_category: articlesByCategory,
     latest_messages: db.prepare('SELECT * FROM messages ORDER BY created_at DESC LIMIT 5').all(),
     latest_donations: db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC LIMIT 5').all()
   });
+});
+
+app.get('/api/admin/article-categories', authRequired, requireRole('any'), (req, res) => {
+  res.json(db.prepare(`
+    SELECT c.*,
+      (SELECT COUNT(*) FROM articles a WHERE a.category = c.slug) AS articles
+    FROM article_categories c
+    ORDER BY c.sort_order, c.name
+  `).all());
+});
+
+app.post('/api/admin/article-categories', authRequired, requireRole('content'), (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
+  const slug = uniqueSlug('article_categories', req.body?.slug || name);
+  const max = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS n FROM article_categories').get().n;
+  const info = db.prepare('INSERT INTO article_categories (slug, name, sort_order) VALUES (?, ?, ?)').run(
+    slug, name, Number(req.body?.sort_order) || max + 10
+  );
+  res.json(db.prepare('SELECT * FROM article_categories WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.put('/api/admin/article-categories/:id', authRequired, requireRole('content'), (req, res) => {
+  const ex = db.prepare('SELECT * FROM article_categories WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
+  const slug = uniqueSlug('article_categories', req.body?.slug || name, Number(ex.id));
+  const sort = req.body?.sort_order == null ? ex.sort_order : Number(req.body.sort_order) || 0;
+  db.prepare('UPDATE article_categories SET name = ?, slug = ?, sort_order = ? WHERE id = ?').run(name, slug, sort, ex.id);
+  if (slug !== ex.slug) {
+    db.prepare('UPDATE articles SET category = ? WHERE category = ?').run(slug, ex.slug);
+  }
+  res.json(db.prepare('SELECT * FROM article_categories WHERE id = ?').get(ex.id));
+});
+
+app.delete('/api/admin/article-categories/:id', authRequired, requireRole('content'), (req, res) => {
+  const ex = db.prepare('SELECT * FROM article_categories WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
+  const used = db.prepare('SELECT COUNT(*) n FROM articles WHERE category = ?').get(ex.slug).n;
+  if (used > 0) return res.status(409).json({ error: `Impossible : ${used} article(s) dans cette catégorie.` });
+  db.prepare('DELETE FROM article_categories WHERE id = ?').run(ex.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/admin/articles', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM articles ORDER BY date DESC').all()));
@@ -796,19 +964,21 @@ app.delete('/api/admin/causes/:id', authRequired, requireRole('content'), (req, 
 
 app.get('/api/admin/campaigns', authRequired, requireRole('any'), (req, res) => res.json(db.prepare('SELECT * FROM campaigns ORDER BY deadline').all()));
 app.post('/api/admin/campaigns', authRequired, requireRole('content'), (req, res) => {
-  const { title, slug, description, image, goal_amount, collected_amount, deadline, cause_slug } = req.body || {};
+  const { title, slug, description, image, goal_amount, deadline, cause_slug } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
   const s = uniqueSlug('campaigns', slug || title);
   const info = db.prepare(`INSERT INTO campaigns (slug, title, description, image, goal_amount, collected_amount, deadline, cause_slug, published)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`)
-    .run(s, title, description || '', image || '', Number(goal_amount) || 0, Number(collected_amount) || 0, deadline || '', cause_slug || '');
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1)`)
+    .run(s, title, description || '', image || '', Number(goal_amount) || 0, deadline || '', cause_slug || '');
   res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(info.lastInsertRowid));
 });
 app.put('/api/admin/campaigns/:id', authRequired, requireRole('content'), (req, res) => {
-  const { title, slug, description, image, goal_amount, collected_amount, deadline, cause_slug, published } = req.body || {};
-  db.prepare(`UPDATE campaigns SET title=?, slug=?, description=?, image=?, goal_amount=?, collected_amount=?, deadline=?, cause_slug=?, published=? WHERE id=?`)
-    .run(title, uniqueSlug('campaigns', slug || 'collecte', Number(req.params.id)), description || '', image || '', Number(goal_amount) || 0, Number(collected_amount) || 0, deadline || '', cause_slug || '', published ? 1 : 0, req.params.id);
-  res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(req.params.id));
+  const { title, slug, description, image, goal_amount, deadline, cause_slug, published } = req.body || {};
+  const id = Number(req.params.id);
+  db.prepare(`UPDATE campaigns SET title=?, slug=?, description=?, image=?, goal_amount=?, deadline=?, cause_slug=?, published=? WHERE id=?`)
+    .run(title, uniqueSlug('campaigns', slug || 'collecte', id), description || '', image || '', Number(goal_amount) || 0, deadline || '', cause_slug || '', published ? 1 : 0, id);
+  syncCampaignCollected(id);
+  res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id));
 });
 app.delete('/api/admin/campaigns/:id', authRequired, requireRole('content'), (req, res) => {
   db.prepare('DELETE FROM campaigns WHERE id = ?').run(req.params.id);
@@ -850,8 +1020,11 @@ app.delete('/api/admin/partners/:id', authRequired, requireRole('content'), (req
 app.get('/api/admin/donations', authRequired, requireRole('any'), (req, res) =>
   res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC').all()));
 app.put('/api/admin/donations/:id', authRequired, requireRole('content'), (req, res) => {
+  const prev = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
+  if (!prev) return res.status(404).json({ error: 'Don introuvable' });
   const status = DONATE_STATUSES.includes(req.body?.status) ? req.body.status : 'nouvelle';
   db.prepare('UPDATE donations SET status = ? WHERE id = ?').run(status, req.params.id);
+  syncCampaignCollected(prev.campaign_id);
   res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id));
 });
 app.get('/api/admin/donations/:id/proof', authRequired, requireRole('content'), (req, res) => {
@@ -864,6 +1037,7 @@ app.delete('/api/admin/donations/:id', authRequired, requireRole('content'), (re
   const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
   if (d?.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
   db.prepare('DELETE FROM donations WHERE id = ?').run(req.params.id);
+  syncCampaignCollected(d?.campaign_id);
   res.json({ ok: true });
 });
 
@@ -1336,27 +1510,72 @@ const annualLeaveAllowed = (employeeId, days, excludeLeaveId = null) => {
 };
 
 app.get('/api/admin/grh/overview', ...GRH, (req, res) => {
-  const active = db.prepare("SELECT COUNT(*) n FROM grh_employees WHERE status = 'actif'").get().n;
-  const total = db.prepare('SELECT COUNT(*) n FROM grh_employees').get().n;
-  const leavesPending = db.prepare("SELECT COUNT(*) n FROM grh_leaves WHERE status = 'en_attente'").get().n;
+  const q = (s, ...p) => { try { return db.prepare(s).get(...p); } catch { return { n: 0 }; } };
+  const all = (s, ...p) => { try { return db.prepare(s).all(...p); } catch { return []; } };
+  const active = q("SELECT COUNT(*) n FROM grh_employees WHERE status = 'actif'").n;
+  const total = q('SELECT COUNT(*) n FROM grh_employees').n;
+  const inactive = Math.max(0, total - active);
+  const leavesPending = q("SELECT COUNT(*) n FROM grh_leaves WHERE status = 'en_attente'").n;
   const today = new Date().toISOString().slice(0, 10);
-  const leavesOngoing = db.prepare(
-    "SELECT COUNT(*) n FROM grh_leaves WHERE status = 'approuve' AND start_date <= ? AND (end_date = '' OR end_date >= ?)"
-  ).get(today, today).n;
-  const byDept = db.prepare(`
+  const leavesOngoing = q(
+    "SELECT COUNT(*) n FROM grh_leaves WHERE status = 'approuve' AND start_date <= ? AND (end_date = '' OR end_date >= ?)",
+    today, today
+  ).n;
+  const byDept = all(`
     SELECT COALESCE(d.name, 'Non affecté') AS name, COUNT(e.id) AS n
     FROM grh_employees e LEFT JOIN grh_departments d ON d.id = e.department_id
     WHERE e.status = 'actif' GROUP BY d.name ORDER BY n DESC
-  `).all();
-  const recentHires = db.prepare(
-    "SELECT full_name, position, hire_date FROM grh_employees WHERE status = 'actif' AND hire_date != '' ORDER BY hire_date DESC LIMIT 5"
-  ).all();
-  const upcomingLeaves = db.prepare(`
+  `);
+  const byContract = all(`
+    SELECT COALESCE(NULLIF(TRIM(contract_type), ''), 'permanent') AS type, COUNT(*) AS n
+    FROM grh_employees WHERE status = 'actif' GROUP BY type ORDER BY n DESC
+  `);
+  const leavesByType = all(`
+    SELECT type, COUNT(*) AS n
+    FROM grh_leaves
+    WHERE status = 'approuve' AND start_date >= date('now', 'start of year')
+    GROUP BY type ORDER BY n DESC
+  `);
+  const hireRows = all(`
+    SELECT substr(hire_date, 1, 7) AS month, COUNT(*) AS n
+    FROM grh_employees
+    WHERE hire_date != '' AND hire_date >= date('now', '-11 months', 'start of month')
+    GROUP BY month
+  `);
+  const hireMap = new Map(hireRows.map((r) => [String(r.month).slice(0, 7), Number(r.n || 0)]));
+  const hiresSeries = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    hiresSeries.push({ month: key, n: hireMap.get(key) || 0 });
+  }
+  const recentHires = all(
+    "SELECT id, full_name, position, hire_date, photo FROM grh_employees WHERE status = 'actif' AND hire_date != '' ORDER BY hire_date DESC LIMIT 5"
+  );
+  const upcomingLeaves = all(`
     SELECT l.type, l.start_date, l.end_date, e.full_name
     FROM grh_leaves l JOIN grh_employees e ON e.id = l.employee_id
     WHERE l.status = 'approuve' AND l.start_date >= ? ORDER BY l.start_date LIMIT 5
-  `).all(today);
-  res.json({ active, total, leavesPending, leavesOngoing, byDept, recentHires, upcomingLeaves });
+  `, today);
+  res.json({
+    active,
+    total,
+    inactive,
+    leavesPending,
+    leavesOngoing,
+    byDept,
+    byContract,
+    leavesByType,
+    hires_series: hiresSeries,
+    presentToday: q("SELECT COUNT(*) n FROM grh_attendance WHERE date = date('now') AND clock_in != ''").n,
+    tasksOpen: q("SELECT COUNT(*) n FROM grh_tasks WHERE status != 'terminee'").n,
+    projectsActive: q("SELECT COUNT(*) n FROM grh_projects WHERE status = 'en_cours'").n,
+    candidatesOpen: q("SELECT COUNT(*) n FROM grh_candidates WHERE stage IN ('recu', 'entretien')").n,
+    recentHires,
+    upcomingLeaves
+  });
 });
 
 // Départements
@@ -4168,11 +4387,17 @@ const parseShopItems = (raw) => {
   const items = Array.isArray(raw) ? raw : [];
   if (items.length === 0) return { error: 'Panier vide' };
   if (items.length > 50) return { error: 'Trop de lignes de commande (50 maximum)' };
-  const clean = [];
+  const byId = new Map();
   for (const it of items) {
     const qty = Math.trunc(Number(it?.qty) || 0);
-    if (!it?.product_id || qty <= 0 || qty > 200) return { error: 'Quantités invalides (1 à 200 par ligne)' };
-    clean.push({ product_id: Number(it.product_id), qty });
+    const product_id = Number(it?.product_id) || 0;
+    if (!product_id || qty <= 0 || qty > 200) return { error: 'Quantités invalides (1 à 200 par ligne)' };
+    byId.set(product_id, (byId.get(product_id) || 0) + qty);
+  }
+  const clean = [];
+  for (const [product_id, qty] of byId) {
+    if (qty > 200) return { error: 'Quantités invalides (1 à 200 par produit)' };
+    clean.push({ product_id, qty });
   }
   return { items: clean };
 };
@@ -4210,10 +4435,16 @@ app.post('/api/public/shop/orders', (req, res) => {
       for (const it of parsed.items) {
         const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
         if (!p || !p.active) return { fail: 404, msg: 'Un produit du panier n\'est plus disponible.' };
-        if (p.stock < it.qty) return { fail: 409, msg: `Stock insuffisant pour « ${p.name} » (${p.stock} restant).` };
-        subtotal += p.price * it.qty;
+        if (p.stock < it.qty) {
+          return {
+            fail: 409,
+            msg: `Stock insuffisant pour « ${p.name} » : ${p.stock} disponible(s), ${it.qty} demandé(s).`
+          };
+        }
+        const lineTotal = money2(p.price * it.qty);
+        subtotal += lineTotal;
         lines.push({
-          product_id: p.id, product_name: p.name, qty: it.qty, price: p.price, total: p.price * it.qty
+          product_id: p.id, product_name: p.name, qty: it.qty, price: p.price, total: lineTotal
         });
       }
       subtotal = money2(subtotal);
@@ -4223,11 +4454,12 @@ app.post('/api/public/shop/orders', (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'attente')`).run(
         reference, customer_name, phone, note, JSON.stringify(lines), subtotal, subtotal, payment_method
       );
-      for (const it of parsed.items) {
-        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
-        db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(p.stock - it.qty, p.id);
+      for (const line of lines) {
+        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(line.product_id);
+        const nextStock = p.stock - line.qty;
+        db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(nextStock, p.id);
         db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(p.id, 'sortie', it.qty, p.stock - it.qty, `Commande en ligne ${reference}`, null);
+          .run(p.id, 'sortie', line.qty, nextStock, `Commande en ligne ${reference}`, null);
       }
       return db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(r.lastInsertRowid);
     });
@@ -4264,13 +4496,20 @@ app.patch('/api/admin/pos/orders/:id', ...POS, (req, res) => {
   const lines = JSON.parse(o.items || '[]');
   runTx(() => {
     if (status === 'annulee') {
+      const restore = new Map();
       for (const it of lines) {
-        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(it.product_id);
-        if (p) {
-          db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(p.stock + it.qty, p.id);
-          db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
-            .run(p.id, 'entree', it.qty, p.stock + it.qty, `Commande en ligne annulée ${o.reference}`, req.user.id);
-        }
+        const pid = Number(it.product_id) || 0;
+        const qty = Math.trunc(Number(it.qty) || 0);
+        if (!pid || qty <= 0) continue;
+        restore.set(pid, (restore.get(pid) || 0) + qty);
+      }
+      for (const [pid, qty] of restore) {
+        const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(pid);
+        if (!p) continue;
+        const nextStock = p.stock + qty;
+        db.prepare('UPDATE stock_products SET stock = ? WHERE id = ?').run(nextStock, p.id);
+        db.prepare('INSERT INTO stock_movements (product_id, type, qty, new_stock, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(p.id, 'entree', qty, nextStock, `Commande en ligne annulée ${o.reference}`, req.user.id);
       }
     }
     db.prepare(`UPDATE shop_orders SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, o.id);

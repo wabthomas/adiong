@@ -1,19 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { IconArrow, IconClose, IconHeart, IconMenu } from './Icons.jsx';
+import { IconArrow, IconClose, IconHeart, IconMail, IconMenu, IconPhone } from './Icons.jsx';
 import { useSite } from '../hooks/useSite.jsx';
 import { categoryLabel } from './Cards.jsx';
 import { api, fmtDate } from '../api.js';
-
-const links = [
-  { to: '/', label: 'Accueil' },
-  { to: '/a-propos', label: 'À propos', mega: 'about' },
-  { to: '/notre-travail', label: 'Notre travail', mega: 'work' },
-  { to: '/actualites', label: 'Actualités', mega: 'news' },
-  { to: '/collectes', label: 'Collectes', mega: 'campaigns' },
-  { to: '/contact', label: 'Contact' }
-];
+import { isExternalHref, resolveDonateCta, resolveHeaderMenu } from '../lib/menus.js';
 
 const aboutLinks = [
   { to: '/a-propos', label: 'Qui sommes-nous ?' },
@@ -38,24 +31,14 @@ export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
   const [mega, setMega] = useState(null);
-  const [mobileAcc, setMobileAcc] = useState(null);
   const [shopEnabled, setShopEnabled] = useState(false);
 
   useEffect(() => {
     api.modules.public().then((m) => setShopEnabled(!!m.pos_enabled)).catch(() => setShopEnabled(false));
   }, []);
 
-  const navLinks = shopEnabled
-    ? [
-        { to: '/', label: 'Accueil' },
-        { to: '/a-propos', label: 'À propos', mega: 'about' },
-        { to: '/notre-travail', label: 'Notre travail', mega: 'work' },
-        { to: '/actualites', label: 'Actualités', mega: 'news' },
-        { to: '/collectes', label: 'Collectes', mega: 'campaigns' },
-        { to: '/boutique', label: 'Boutique' },
-        { to: '/contact', label: 'Contact' }
-      ]
-    : links;
+  const navLinks = resolveHeaderMenu(site, { shopEnabled });
+  const donate = resolveDonateCta(site);
   const loc = useLocation();
   const reduce = useReducedMotion();
   const closeTimer = useRef(null);
@@ -74,10 +57,30 @@ export default function Navbar() {
   useEffect(() => {
     setOpen(false);
     setMega(null);
-    setMobileAcc(null);
   }, [loc.pathname]);
 
   useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const y = window.scrollY;
+    const html = document.documentElement;
+    html.classList.add('nav-drawer-open');
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${y}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.width = '100%';
+    return () => {
+      html.classList.remove('nav-drawer-open');
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.width = '';
+      window.scrollTo(0, y);
+    };
+  }, [open]);
 
   const openMega = (id) => {
     clearTimeout(closeTimer.current);
@@ -89,6 +92,9 @@ export default function Navbar() {
   };
 
   const solid = scrolled || open || mega || loc.pathname.startsWith('/admin');
+  const phone = site.phone1 || site.phone2 || '';
+  const email = site.email || '';
+  const tagline = site.site_tagline || '';
 
   const itemClass = (isActive, hasMega, isMegaOpen) => {
     if (isMegaOpen) return 'bg-accent-400 text-ink-950';
@@ -100,31 +106,31 @@ export default function Navbar() {
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-50 transition-all duration-500 ${
-        solid ? 'bg-white/95 shadow-soft backdrop-blur-lg' : 'bg-transparent'
+      className={`site-chrome-top fixed inset-x-0 top-0 z-50 bg-white shadow-soft transition-[background-color,box-shadow] duration-300 ${
+        solid ? 'lg:bg-white lg:shadow-soft' : 'lg:bg-transparent lg:shadow-none'
       }`}
     >
       <div onMouseEnter={() => clearTimeout(closeTimer.current)} onMouseLeave={scheduleCloseMega}>
-        <nav className="container-x flex h-[76px] items-center justify-between gap-4">
-          <Link to="/" className="group flex items-center gap-3" aria-label="Accueil ADI ONG" onMouseEnter={() => openMega(null)}>
+        <nav className="container-x flex h-16 items-center justify-between gap-3 sm:h-[76px] sm:gap-4">
+          <Link to="/" className="group flex min-w-0 items-center gap-3" aria-label="Accueil ADI ONG" onMouseEnter={() => openMega(null)}>
             {site.logo ? (
-              <span className="rounded-xl bg-white px-2.5 py-1.5 shadow-soft ring-1 ring-ink-950/5">
+              <span className="rounded-xl bg-white px-2 py-1 shadow-soft ring-1 ring-ink-950/5 sm:px-2.5 sm:py-1.5">
                 <img
                   src={site.logo}
                   alt={site.site_name || 'ADI ONG'}
-                  className="h-9 max-w-[160px] object-contain sm:h-10 sm:max-w-[200px] lg:max-w-[220px] transition-transform duration-300 group-hover:scale-105"
+                  className="h-8 max-w-[132px] object-contain sm:h-10 sm:max-w-[200px] lg:max-w-[220px] transition-transform duration-300 group-hover:scale-105"
                 />
               </span>
             ) : (
               <>
-                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-brand-600 text-white shadow-soft transition-transform duration-300 group-hover:rotate-6">
+                <span className="grid h-10 w-10 place-items-center rounded-2xl bg-brand-600 text-white shadow-soft transition-transform duration-300 group-hover:rotate-6 sm:h-11 sm:w-11">
                   <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
                     <circle cx="12" cy="8" r="3" fill="#fc7a03" stroke="none" />
                     <path d="M5 18.5c1.4-4 4-5.5 7-5.5s5.6 1.5 7 5.5" strokeLinecap="round" />
                   </svg>
                 </span>
                 <span className="leading-tight">
-                  <span className={`block font-display text-lg font-bold ${solid ? 'text-ink-900' : 'text-white'}`}>
+                  <span className={`block font-display text-base font-bold text-ink-900 sm:text-lg ${solid ? '' : 'lg:text-white'}`}>
                     {site.site_name || 'ADI ONG'}
                   </span>
                 </span>
@@ -135,27 +141,38 @@ export default function Navbar() {
           <ul className="hidden items-center gap-0.5 lg:flex">
             {navLinks.map((l) => (
               <li
-                key={l.to}
+                key={`${l.to}-${l.label}`}
                 className="static"
                 onMouseEnter={() => openMega(l.mega || null)}
               >
-                <NavLink
-                  to={l.to}
-                  end={l.to === '/'}
-                  className={({ isActive }) =>
-                    `inline-flex items-center gap-1 rounded-lg px-3.5 py-2 text-[15px] font-semibold transition-colors ${itemClass(
-                      isActive,
-                      !!l.mega,
-                      mega === l.mega
-                    )}`
-                  }
-                  aria-expanded={l.mega ? mega === l.mega : undefined}
-                  aria-haspopup={l.mega ? 'true' : undefined}
-                >
-                  {l.label}
-                  {l.mega && <Chevron className="h-3.5 w-3.5 opacity-70" />}
-                </NavLink>
-                {l.mega && (
+                {isExternalHref(l.to) ? (
+                  <a
+                    href={l.to}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`inline-flex items-center gap-1 rounded-lg px-3.5 py-2 text-[15px] font-semibold transition-colors ${itemClass(false, !!l.mega, mega === l.mega)}`}
+                  >
+                    {l.label}
+                  </a>
+                ) : (
+                  <NavLink
+                    to={l.to}
+                    end={l.to === '/'}
+                    className={({ isActive }) =>
+                      `inline-flex items-center gap-1 rounded-lg px-3.5 py-2 text-[15px] font-semibold transition-colors ${itemClass(
+                        isActive,
+                        !!l.mega,
+                        mega === l.mega
+                      )}`
+                    }
+                    aria-expanded={l.mega ? mega === l.mega : undefined}
+                    aria-haspopup={l.mega ? 'true' : undefined}
+                  >
+                    {l.label}
+                    {l.mega && <Chevron className="h-3.5 w-3.5 opacity-70" />}
+                  </NavLink>
+                )}
+                {l.mega && !isExternalHref(l.to) && (
                   <div
                     className={`absolute inset-x-0 top-[calc(100%-10px)] z-50 pt-2.5 transition-opacity duration-150 ${
                       mega === l.mega ? 'visible opacity-100' : 'invisible opacity-0 pointer-events-none'
@@ -164,7 +181,9 @@ export default function Navbar() {
                   >
                     <div className="border-t-4 border-accent-400 bg-white shadow-lift">
                       <div className="container-x py-6">
-                        {l.mega === 'news' && <NewsMega featured={featured} more={moreNews} />}
+                        {l.mega === 'news' && (
+                          <NewsMega featured={featured} more={moreNews} categories={site.article_categories} />
+                        )}
                         {l.mega === 'work' && <WorkMega causes={causes} />}
                         {l.mega === 'campaigns' && <CampaignsMega campaigns={campaigns} />}
                         {l.mega === 'about' && <AboutMega />}
@@ -176,17 +195,24 @@ export default function Navbar() {
             ))}
           </ul>
 
-          <div className="flex items-center gap-3" onMouseEnter={() => openMega(null)}>
-            <Link to="/faire-un-don" className="btn-accent hidden !px-5 !py-2.5 text-sm sm:inline-flex">
-              <IconHeart className="h-4 w-4" />
-              Faire un don
-            </Link>
+          <div className="flex items-center gap-2 sm:gap-3" onMouseEnter={() => openMega(null)}>
+            {isExternalHref(donate.to) ? (
+              <a href={donate.to} target="_blank" rel="noreferrer" className="btn-accent hidden !px-5 !py-2.5 text-sm sm:inline-flex">
+                <IconHeart className="h-4 w-4" />
+                {donate.label}
+              </a>
+            ) : (
+              <Link to={donate.to} className="btn-accent hidden !px-5 !py-2.5 text-sm sm:inline-flex">
+                <IconHeart className="h-4 w-4" />
+                {donate.label}
+              </Link>
+            )}
             <button
-              className={`grid h-11 w-11 place-items-center rounded-xl lg:hidden ${
-                solid ? 'bg-ink-50 text-ink-800' : 'bg-white/15 text-white backdrop-blur'
-              }`}
+              type="button"
+              className="grid h-11 w-11 place-items-center rounded-xl bg-ink-50 text-ink-800 lg:hidden"
               onClick={() => setOpen((v) => !v)}
-              aria-label="Menu"
+              aria-label={open ? 'Fermer le menu' : 'Ouvrir le menu'}
+              aria-expanded={open}
             >
               {open ? <IconClose className="h-5 w-5" /> : <IconMenu className="h-5 w-5" />}
             </button>
@@ -194,113 +220,136 @@ export default function Navbar() {
         </nav>
       </div>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={reduce ? false : { opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.35, ease: 'easeOut' }}
-            className="overflow-hidden border-t border-ink-100 bg-white shadow-lift lg:hidden"
-          >
-            <ul className="container-x flex flex-col gap-1 py-4">
-              {navLinks.map((l, i) => (
-                <motion.li
-                  key={l.to}
-                  initial={reduce ? false : { opacity: 0, x: -14 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.05 * i }}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                key="mobile-nav"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="fixed inset-0 z-[100] lg:hidden"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Menu"
+              >
+                <button
+                  type="button"
+                  className="absolute inset-0 bg-ink-950/55"
+                  aria-label="Fermer le menu"
+                  onClick={() => setOpen(false)}
+                />
+                <motion.aside
+                  initial={reduce ? false : { x: '100%' }}
+                  animate={{ x: 0 }}
+                  exit={reduce ? undefined : { x: '100%' }}
+                  transition={{ type: 'spring', stiffness: 420, damping: 38 }}
+                  className="absolute inset-y-0 right-0 flex w-[min(100vw,22rem)] flex-col bg-cream shadow-lift"
+                  style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
                 >
-                  {l.mega ? (
-                    <div>
-                      <button
-                        type="button"
-                        className="flex w-full items-center justify-between rounded-xl px-4 py-3 font-semibold text-ink-700 hover:bg-cream"
-                        onClick={() => setMobileAcc(mobileAcc === l.mega ? null : l.mega)}
-                      >
-                        {l.label}
-                        <Chevron className={`h-4 w-4 transition-transform ${mobileAcc === l.mega ? 'rotate-180' : ''}`} />
-                      </button>
-                      {mobileAcc === l.mega && (
-                        <div className="mb-2 ml-3 space-y-1 border-l-2 border-brand-100 pl-3">
-                          {l.mega === 'news' &&
-                            latest.map((a) => (
-                              <Link
-                                key={a.id}
-                                to={`/actualites/${a.slug}`}
-                                className="block rounded-lg px-3 py-2 text-sm font-semibold text-ink-600 hover:bg-brand-50 hover:text-brand-700"
-                              >
-                                {a.title}
-                              </Link>
-                            ))}
-                          {l.mega === 'work' &&
-                            causes.map((c) => (
-                              <Link
-                                key={c.id}
-                                to={`/notre-travail/${c.slug}`}
-                                className="block rounded-lg px-3 py-2 text-sm font-semibold text-ink-600 hover:bg-brand-50 hover:text-brand-700"
-                              >
-                                {c.title}
-                              </Link>
-                            ))}
-                          {l.mega === 'campaigns' &&
-                            campaigns.map((c) => (
-                              <Link
-                                key={c.id}
-                                to={`/collectes/${c.slug}`}
-                                className="block rounded-lg px-3 py-2 text-sm font-semibold text-ink-600 hover:bg-brand-50 hover:text-brand-700"
-                              >
-                                {c.title}
-                              </Link>
-                            ))}
-                          {l.mega === 'about' &&
-                            aboutLinks.map((s) => (
-                              <Link
-                                key={s.to}
-                                to={s.to}
-                                className="block rounded-lg px-3 py-2 text-sm font-semibold text-ink-600 hover:bg-brand-50 hover:text-brand-700"
-                              >
-                                {s.label}
-                              </Link>
-                            ))}
-                          <Link
-                            to={l.to}
-                            className="block px-3 py-2 text-xs font-bold tracking-wide text-brand-600 uppercase"
-                          >
-                            Tout voir
-                          </Link>
-                        </div>
-                      )}
+                  <div className="flex items-center gap-3 border-b border-ink-100 bg-white px-4 py-4">
+                    {site.logo ? (
+                      <img src={site.logo} alt="" className="h-9 max-w-[7.5rem] object-contain" />
+                    ) : (
+                      <span className="grid h-10 w-10 place-items-center rounded-2xl bg-brand-600 text-white">
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <circle cx="12" cy="8" r="3" fill="#fc7a03" stroke="none" />
+                          <path d="M5 18.5c1.4-4 4-5.5 7-5.5s5.6 1.5 7 5.5" strokeLinecap="round" />
+                        </svg>
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-display text-base font-bold text-ink-900">{site.site_name || 'ADI ONG'}</p>
+                      {tagline && <p className="truncate text-xs text-ink-400">{tagline}</p>}
                     </div>
-                  ) : (
-                    <NavLink
-                      to={l.to}
-                      end={l.to === '/'}
-                      className={({ isActive }) =>
-                        `block rounded-xl px-4 py-3 font-semibold ${
-                          isActive ? 'bg-brand-50 text-brand-700' : 'text-ink-700 hover:bg-cream'
-                        }`
-                      }
+                    <button
+                      type="button"
+                      onClick={() => setOpen(false)}
+                      className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-ink-50 text-ink-700"
+                      aria-label="Fermer"
                     >
-                      {l.label}
-                    </NavLink>
-                  )}
-                </motion.li>
-              ))}
-              <li className="pt-2">
-                <Link to="/faire-un-don" className="btn-accent w-full">
-                  <IconHeart className="h-4 w-4" /> Faire un don
-                </Link>
-              </li>
-            </ul>
-          </motion.div>
+                      <IconClose className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <nav className="flex-1 overflow-y-auto overscroll-contain px-3 py-4">
+                    <p className="mb-2 px-2 text-[11px] font-bold tracking-wide text-ink-400 uppercase">Navigation</p>
+                    <ul className="flex flex-col gap-1">
+                      {navLinks.map((l) => (
+                        <li key={`${l.to}-${l.label}`}>
+                          {isExternalHref(l.to) ? (
+                            <a
+                              href={l.to}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3.5 text-[15px] font-semibold text-ink-800 shadow-soft ring-1 ring-ink-950/5"
+                              onClick={() => setOpen(false)}
+                            >
+                              <span>{l.label}</span>
+                              <IconArrow className="h-4 w-4 shrink-0 text-ink-300" />
+                            </a>
+                          ) : (
+                            <NavLink
+                              to={l.to}
+                              end={l.to === '/'}
+                              onClick={() => setOpen(false)}
+                              className={({ isActive }) =>
+                                `flex items-center justify-between gap-3 rounded-2xl px-4 py-3.5 text-[15px] font-semibold shadow-soft ring-1 ${
+                                  isActive
+                                    ? 'bg-brand-600 text-white ring-brand-600'
+                                    : 'bg-white text-ink-800 ring-ink-950/5'
+                                }`
+                              }
+                            >
+                              <span>{l.label}</span>
+                              <IconArrow className="h-4 w-4 shrink-0 opacity-50" />
+                            </NavLink>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </nav>
+
+                  <div className="space-y-3 border-t border-ink-100 bg-white p-4">
+                    {isExternalHref(donate.to) ? (
+                      <a href={donate.to} target="_blank" rel="noreferrer" className="btn-accent w-full !py-3.5" onClick={() => setOpen(false)}>
+                        <IconHeart className="h-4 w-4" /> {donate.label}
+                      </a>
+                    ) : (
+                      <Link to={donate.to} className="btn-accent w-full !py-3.5" onClick={() => setOpen(false)}>
+                        <IconHeart className="h-4 w-4" /> {donate.label}
+                      </Link>
+                    )}
+                    {(phone || email) && (
+                      <div className="space-y-1.5 pt-1">
+                        {phone && (
+                          <a href={`tel:${phone.replace(/\s+/g, '')}`} className="flex items-center gap-2 text-sm font-semibold text-ink-600">
+                            <IconPhone className="h-4 w-4 text-brand-600" />
+                            {phone}
+                          </a>
+                        )}
+                        {email && (
+                          <a href={`mailto:${email}`} className="flex items-center gap-2 text-sm font-semibold text-ink-600">
+                            <IconMail className="h-4 w-4 text-brand-600" />
+                            {email}
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </motion.aside>
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
     </header>
   );
 }
 
-function NewsMega({ featured, more }) {
+function NewsMega({ featured, more, categories }) {
   if (!featured) {
     return (
       <p className="text-sm text-ink-500">
@@ -324,7 +373,7 @@ function NewsMega({ featured, more }) {
         <div className="flex flex-col justify-center">
           <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">
             {megaDate(featured.date)}
-            {featured.category ? ` — ${categoryLabel(featured.category)}` : ''}
+            {featured.category ? ` — ${categoryLabel(featured.category, categories)}` : ''}
           </p>
           <h3 className="mt-2 font-display text-lg font-bold leading-snug text-ink-900 group-hover:text-brand-700">
             {featured.title}
@@ -336,7 +385,7 @@ function NewsMega({ featured, more }) {
           <Link key={a.id} to={`/actualites/${a.slug}`} className="group py-3 first:pt-0 last:pb-0">
             <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">
               {megaDate(a.date)}
-              {a.category ? ` — ${categoryLabel(a.category)}` : ''}
+              {a.category ? ` — ${categoryLabel(a.category, categories)}` : ''}
             </p>
             <p className="mt-0.5 font-display text-[15px] font-bold leading-snug text-ink-900 group-hover:text-brand-700">
               {a.title}
