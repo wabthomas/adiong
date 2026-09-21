@@ -1,6 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, getSavedUser } from '../../api.js';
+import { api, getSavedUser, getToken } from '../../api.js';
 import { Modal, Field } from './AdminUI.jsx';
+
+
+const chatFileUrl = (url) => {
+  if (!url) return '';
+  const t = getToken();
+  if (!t || !String(url).startsWith('/uploads/chat/')) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}access=${encodeURIComponent(t)}`;
+};
 
 const QUICK_EMOJIS = ['😀', '😂', '😊', '😅', '😉', '😍', '🤔', '🙃', '🙏', '', '🙌', '🎯', '❤️', '🎉', '✅', '❌', '️', '💡', '🌟', '🔥', '', '☕', '🌍', '🕐'];
 const SENDER_COLORS = ['text-brand-700', 'text-emerald-600', 'text-accent-700', 'text-violet-600', 'text-rose-600', 'text-sky-600', 'text-lime-700'];
@@ -40,7 +48,8 @@ const fmtListTime = (v) => {
 };
 
 function Avatar({ src, name, group = false, size = 'h-12 w-12', txt = 'text-sm' }) {
-  if (src) return <img src={src} alt="" className={`${size} shrink-0 rounded-full object-cover ring-1 ring-ink-100`} />;
+  const url = chatFileUrl(src);
+  if (url) return <img src={url} alt="" className={`${size} shrink-0 rounded-full object-cover ring-1 ring-ink-100`} />;
   const initials = (name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   return (
     <span className={`${size} grid shrink-0 place-items-center rounded-full ${group ? 'bg-accent-100 font-bold text-accent-800' : 'bg-brand-100 font-display font-bold text-brand-700'} ${txt}`}>
@@ -63,19 +72,19 @@ function Attachment({ m, onZoom }) {
     return (
       <div className="flex items-center gap-2.5 py-1">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/10 text-lg">🎤</span>
-        <audio controls src={m.attachment} className="h-10 w-56 max-w-full" />
+        <audio controls src={chatFileUrl(m.attachment)} className="h-10 w-56 max-w-full" />
       </div>
     );
   }
   if (mime.startsWith('image/')) {
     return (
-      <button onClick={() => onZoom?.(m.attachment, m.attachment_name)} className="block cursor-zoom-in" title="Agrandir">
-        <img src={m.attachment} alt={m.attachment_name} className="max-h-64 w-auto rounded-lg ring-1 ring-ink-100" />
+      <button onClick={() => onZoom?.(chatFileUrl(m.attachment), m.attachment_name)} className="block cursor-zoom-in" title="Agrandir">
+        <img src={chatFileUrl(m.attachment)} alt={m.attachment_name} className="max-h-64 w-auto rounded-lg ring-1 ring-ink-100" />
       </button>
     );
   }
   return (
-    <a href={m.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg bg-black/5 px-3 py-2 text-xs font-bold hover:bg-black/10">
+    <a href={chatFileUrl(m.attachment)} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg bg-black/5 px-3 py-2 text-xs font-bold hover:bg-black/10">
       📄 <span className="max-w-[180px] truncate">{m.attachment_name || 'Fichier'}</span>
     </a>
   );
@@ -268,7 +277,7 @@ function NewDmModal({ staff, onOpened, onClose }) {
 }
 
 function SettingsModal({ conv, isSuperRole, onClose }) {
-  const isOwner = conv.my_role === 'propietaire';
+  const isOwner = conv.my_role === 'proprietaire';
   const isMod = isOwner || conv.my_role === 'moderateur';
   const [f, setF] = useState({ name: conv.name || '', description: conv.description || '', avatar: conv.avatar || '', join_policy: conv.join_policy || 'ferme' });
   const [error, setError] = useState('');
@@ -364,7 +373,7 @@ function SettingsModal({ conv, isSuperRole, onClose }) {
 }
 
 function MembersModal({ conv, onClose, onChanged }) {
-  const isOwner = conv.my_role === 'propietaire';
+  const isOwner = conv.my_role === 'proprietaire';
   const isMod = isOwner || conv.my_role === 'moderateur';
   const [members, setMembers] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -379,7 +388,7 @@ function MembersModal({ conv, onClose, onChanged }) {
     api.chat.staff().then(setStaff).catch(() => {});
   }, [load]);
 
-  const canRemove = (m) => m.is_me ? conv.my_role !== 'propietaire' : isMod && m.role !== 'propietaire';
+  const canRemove = (m) => m.is_me ? conv.my_role !== 'proprietaire' : isMod && m.role !== 'proprietaire';
   const remove = async (m) => {
     const label = m.is_me ? 'quitter le groupe' : `retirer ${m.full_name} du groupe`;
     if (!confirm(`Confirmer : ${label} ?`)) return;
@@ -402,7 +411,7 @@ function MembersModal({ conv, onClose, onChanged }) {
   };
   const add = async (id) => {
     try {
-      await api.chat.addMember(conv.id, { employee_id: Number(id) });
+      await api.chat.addMember(conv.id, { user_id: Number(id) });
       setAddOpen(false);
       load();
       onChanged();
@@ -451,7 +460,7 @@ function MembersModal({ conv, onClose, onChanged }) {
               <select
                 className="input !w-32 !py-1 text-xs font-bold"
                 value={m.role}
-                disabled={m.role === 'propietaire'}
+                disabled={m.role === 'proprietaire'}
                 onChange={(e) => setRole(m, e.target.value)}
               >
                 <option value="membre">Membre</option>
@@ -459,20 +468,20 @@ function MembersModal({ conv, onClose, onChanged }) {
               </select>
             )}
             {!isOwner && m.role_label && (
-              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${m.role === 'propietaire' ? 'bg-accent-100 text-accent-800' : m.role === 'moderateur' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${m.role === 'proprietaire' ? 'bg-accent-100 text-accent-800' : m.role === 'moderateur' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
                 {m.role_label}
               </span>
             )}
-            {isOwner && m.role !== 'propietaire' && (
+            {isOwner && m.role !== 'proprietaire' && (
               <button onClick={() => remove(m)} title="Retirer du groupe" className="grid h-8 w-8 place-items-center rounded-lg bg-red-50 text-red-600 hover:bg-red-100">✕</button>
             )}
           </li>
         ))}
       </ul>
-      {conv.type === 'group' && conv.my_role !== 'propietaire' && (
+      {conv.type === 'group' && conv.my_role !== 'proprietaire' && (
         <div className="border-t border-ink-100 pt-3">
           <button onClick={() => remove(members.find((m) => m.is_me))} className="btn-ghost !px-4 !py-2 text-sm !text-red-600">
-            Quitar le groupe
+            Quitter le groupe
           </button>
         </div>
       )}
@@ -481,6 +490,7 @@ function MembersModal({ conv, onClose, onChanged }) {
 }
 
 export default function Chat() {
+  const canCreateGroup = ['super_admin', 'admin'].includes(getSavedUser()?.role || '');
   const [convs, setConvs] = useState([]);
   const [openGroups, setOpenGroups] = useState([]);
   const [activeId, setActiveId] = useState(null);
@@ -495,14 +505,13 @@ export default function Chat() {
   const [searchQ, setSearchQ] = useState('');
   const [searchRes, setSearchRes] = useState(null);
   const [modal, setModal] = useState(null);
-  const [notLinked, setNotLinked] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [typing, setTyping] = useState(null);
   const [atBottom, setAtBottom] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const [zoom, setZoom] = useState(null);
   const [recording, setRecording] = useState(null);
+  const [sideTab, setSideTab] = useState('chats'); // chats | contacts | groups
   const endRef = useRef(null);
   const fileRef = useRef(null);
   const searchTimer = useRef(null);
@@ -519,7 +528,7 @@ export default function Chat() {
   const meRef = useRef(null);
   useEffect(() => { meRef.current = me; }, [me]);
   const activeRole = active?.conversation?.my_role || 'membre';
-  const canModerate = active?.conversation?.type === 'group' && ['propietaire', 'moderateur'].includes(activeRole);
+  const canModerate = active?.conversation?.type === 'group' && ['proprietaire', 'moderateur'].includes(activeRole);
   const typingFresh = typing && typing.at && Date.now() - ts(typing.at) < 6000;
 
   const askNotifyPermission = () => {
@@ -560,9 +569,7 @@ export default function Chat() {
   };
 
   const loadConvs = useCallback(() => {
-    api.chat.conversations().then(setConvs).catch((e) => {
-      if (String(e.message).includes('dossier employé')) setNotLinked(true);
-    });
+    api.chat.conversations().then(setConvs).catch(() => {});
     api.chat.openGroups().then(setOpenGroups).catch(() => {});
   }, []);
   useEffect(() => {
@@ -786,20 +793,6 @@ export default function Chat() {
     }
   };
 
-  if (notLinked) {
-    return (
-      <div className="mx-auto max-w-xl rounded-3xl border border-dashed border-ink-200 bg-white p-10 text-center">
-        <p className="text-4xl">💬</p>
-        <h3 className="mt-4 font-display text-xl font-bold text-ink-900">Messagerie d'équipe indisponible</h3>
-        <p className="mt-3 text-sm leading-relaxed text-ink-500">
-          La messagerie d'organisation est réservée aux collaborateurs ayant un dossier dans le module GRH.
-          Si vous faites partie de l'équipe, demandez aux ressources humaines de renseigner votre adresse email
-          dans votre fiche employé.
-        </p>
-      </div>
-    );
-  }
-
   const rendered = [];
   let lastDay = '';
   for (const m of messages) {
@@ -831,26 +824,68 @@ export default function Chat() {
     );
   }
 
+  const contacts = staff.filter((e) => !e.is_me);
+  const myGroups = convs.filter((c) => c.type === 'group');
+  const chatList = sideTab === 'groups' ? myGroups : sideTab === 'contacts' ? [] : convs;
+
   return (
     <div className="flex h-[calc(100vh-190px)] min-h-[540px] overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5">
       <div className={`w-full flex-col border-r border-ink-100 lg:flex lg:w-[340px] lg:shrink-0 ${activeId ? 'hidden' : 'flex'}`}>
         <div className="border-b border-ink-100 bg-cream/70 px-4 py-3.5">
           <div className="flex items-center justify-between">
-            <h2 className="font-display text-lg font-bold text-ink-900">💬 Messagerie</h2>
+            <h2 className="font-display text-lg font-bold text-ink-900">Messages</h2>
             <div className="flex gap-1.5">
-              <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Nouvelle conversation" onClick={() => setModal('dm')}>✉</button>
-              <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Nouveau groupe" onClick={() => setModal('group')}>👥</button>
+              <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Nouvelle discussion" onClick={() => { setSideTab('contacts'); setModal('dm'); }}>✉</button>
+              {canCreateGroup && (
+                <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Nouveau groupe" onClick={() => setModal('group')}>👥</button>
+              )}
             </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl bg-white p-1 ring-1 ring-ink-100">
+            {[
+              { id: 'chats', label: 'Discussions' },
+              { id: 'contacts', label: 'Contacts' },
+              { id: 'groups', label: 'Groupes' }
+            ].map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => { setSideTab(t.id); setSearchRes(null); setSearchQ(''); }}
+                className={`rounded-lg px-2 py-1.5 text-[11px] font-bold ${sideTab === t.id ? 'bg-brand-600 text-white' : 'text-ink-500 hover:bg-cream'}`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
           <input
             className="input mt-2.5 !py-2 text-sm"
-            placeholder="Rechercher une discussion…"
+            placeholder={sideTab === 'contacts' ? 'Rechercher un contact…' : sideTab === 'groups' ? 'Rechercher un groupe…' : 'Rechercher une discussion…'}
             value={searchQ}
-            onChange={(e) => { setSearchQ(e.target.value); doSearch(e.target.value); }}
+            onChange={(e) => {
+              setSearchQ(e.target.value);
+              if (sideTab === 'chats') doSearch(e.target.value);
+            }}
           />
         </div>
         <div className="flex-1 overflow-y-auto">
-          {searchRes !== null ? (
+          {sideTab === 'contacts' ? (
+            <ul>
+              {contacts
+                .filter((e) => !searchQ.trim() || `${e.full_name} ${e.position || ''} ${e.email || ''}`.toLowerCase().includes(searchQ.toLowerCase()))
+                .map((e) => (
+                  <li key={e.id}>
+                    <button type="button" onClick={() => startDm(e)} className="flex w-full items-center gap-3 border-b border-ink-50 px-4 py-3 text-left hover:bg-cream/60">
+                      <Avatar src={e.photo} name={e.full_name} size="h-11 w-11" txt="text-xs" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-bold text-ink-900">{e.full_name}</span>
+                        <span className="block truncate text-xs text-ink-400">{e.position || e.department_name || '—'}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              {contacts.length === 0 && <p className="px-4 py-10 text-center text-sm text-ink-400">Aucun autre compte.</p>}
+            </ul>
+          ) : searchRes !== null && sideTab === 'chats' ? (
             <ul>
               {searchRes.map((r) => (
                 <li key={r.id}>
@@ -858,81 +893,83 @@ export default function Chat() {
                     <span className="mt-0.5 text-lg">🔎</span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-xs font-bold text-ink-400">{r.conversation_name} · {r.sender_name || '—'}</span>
-                      <span className="block truncate text-sm text-ink-700">{r.deleted_at ? '🚫 Message supprimé' : r.body}</span>
-                      <span className="text-[10px] text-ink-300">{fmtTime(r.created_at)}</span>
+                      <span className="block truncate text-sm text-ink-700">{r.deleted_at ? 'Message supprimé' : r.body}</span>
                     </span>
                   </button>
                 </li>
               ))}
               {searchRes.length === 0 && <p className="px-4 py-10 text-center text-sm text-ink-400">Aucun message trouvé.</p>}
             </ul>
-          ) : convs.length === 0 && openGroups.length === 0 ? (
+          ) : chatList.length === 0 && (sideTab !== 'groups' || openGroups.length === 0) ? (
             <div className="grid h-full place-items-center p-6 text-center">
               <div>
-                <p className="text-4xl">💬</p>
-                <p className="mt-3 text-sm font-bold text-ink-700">Aucune discussion pour l'instant</p>
-                <p className="mt-1 text-xs text-ink-400">Démarrez une conversation privée ou créez un groupe avec vos collègues.</p>
+                <p className="mt-3 text-sm font-bold text-ink-700">{sideTab === 'groups' ? 'Aucun groupe' : 'Aucune discussion'}</p>
+                <p className="mt-1 text-xs text-ink-400">
+                  {sideTab === 'groups'
+                    ? (canCreateGroup ? 'Créez un groupe et invitez l’équipe.' : 'Les groupes sont créés par un administrateur.')
+                    : 'Onglet Contacts pour démarrer une discussion privée.'}
+                </p>
                 <div className="mt-4 flex justify-center gap-2">
-                  <button className="btn-primary !px-4 !py-2 text-sm" onClick={() => setModal('dm')}>+ Conversation</button>
-                  <button className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setModal('group')}>+ Groupe</button>
+                  {sideTab !== 'groups' && <button className="btn-primary !px-4 !py-2 text-sm" onClick={() => { setSideTab('contacts'); setModal('dm'); }}>+ Discussion</button>}
+                  {canCreateGroup && <button className="btn-ghost !px-4 !py-2 text-sm" onClick={() => setModal('group')}>+ Groupe</button>}
                 </div>
               </div>
             </div>
           ) : (
             <>
-            {convs.length > 0 && (
-            <ul>
-              {convs.map((c) => (
-                <li key={c.id}>
-                  <button
-                    onClick={() => openConv(c.id)}
-                    className={`flex w-full items-center gap-3 border-b border-ink-50 px-4 py-3.5 text-left transition-colors ${activeId === c.id ? 'bg-brand-50' : 'hover:bg-cream/60'}`}
-                  >
-                    <Avatar src={c.avatar} name={c.name} group={c.type === 'group'} size="h-12 w-12" />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-bold text-ink-900">
-                          {c.name}
-                          {c.muted && <span className="ml-1.5 text-xs opacity-70" title="Sourdine activée">🔕</span>}
-                        </span>
-                        <span className="shrink-0 text-[10px] font-semibold text-ink-400">{fmtListTime(c.last_message_at)}</span>
-                      </span>
-                      <span className="mt-0.5 flex items-center justify-between gap-2">
-                        <span className={`truncate text-xs ${c.muted ? 'text-ink-300' : 'text-ink-500'}`}>
-                          {c.type === 'group' && c.last_message_sender ? `${c.last_message_sender.split(' ')[0]} : ` : ''}
-                          {c.last_message_body || (c.type === 'group' ? `${c.member_count} membre(s)` : 'Discussion privée')}
-                        </span>
-                        {c.unread > 0 && !c.muted && (
-                          <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-brand-600 px-1.5 text-[10px] font-black text-white">
-                            {c.unread > 99 ? '99+' : c.unread}
-                          </span>
-                        )}
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            )}
-            {openGroups.length > 0 && (
-              <div>
-                <p className="px-4 pb-1 pt-4 text-[11px] font-bold tracking-wide text-ink-400 uppercase">Groupes ouverts</p>
+              {chatList.length > 0 && (
                 <ul>
-                  {openGroups.map((g) => (
-                    <li key={g.id} className="border-b border-ink-50">
-                      <div className="flex items-center gap-3 px-4 py-3">
-                        <Avatar src={g.avatar} name={g.name} group size="h-10 w-10" txt="text-xs" />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-bold text-ink-900">{g.name}</p>
-                          <p className="truncate text-xs text-ink-400">{g.description || `${g.member_count} membre(s)`}</p>
-                        </div>
-                        <button className="btn-primary shrink-0 !px-3 !py-1.5 text-xs" onClick={() => joinOpenGroup(g)}>Rejoindre</button>
-                      </div>
+                  {chatList.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        onClick={() => openConv(c.id)}
+                        className={`flex w-full items-center gap-3 border-b border-ink-50 px-4 py-3.5 text-left transition-colors ${activeId === c.id ? 'bg-brand-50' : 'hover:bg-cream/60'}`}
+                      >
+                        <Avatar src={c.avatar} name={c.name} group={c.type === 'group'} size="h-12 w-12" />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-2">
+                            <span className="truncate text-sm font-bold text-ink-900">
+                              {c.name}
+                              {c.muted && <span className="ml-1.5 text-xs opacity-70" title="Sourdine">🔕</span>}
+                            </span>
+                            <span className="shrink-0 text-[10px] font-semibold text-ink-400">{fmtListTime(c.last_message_at)}</span>
+                          </span>
+                          <span className="mt-0.5 flex items-center justify-between gap-2">
+                            <span className={`truncate text-xs ${c.muted ? 'text-ink-300' : 'text-ink-500'}`}>
+                              {c.type === 'group' && c.last_message_sender ? `${c.last_message_sender.split(' ')[0]} : ` : ''}
+                              {c.last_message_body || (c.type === 'group' ? `${c.member_count} membre(s)` : 'Discussion privée')}
+                            </span>
+                            {c.unread > 0 && !c.muted && (
+                              <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-brand-600 px-1.5 text-[10px] font-black text-white">
+                                {c.unread > 99 ? '99+' : c.unread}
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                      </button>
                     </li>
                   ))}
                 </ul>
-              </div>
-            )}
+              )}
+              {sideTab === 'groups' && openGroups.length > 0 && (
+                <div>
+                  <p className="px-4 pb-1 pt-4 text-[11px] font-bold tracking-wide text-ink-400 uppercase">Groupes ouverts</p>
+                  <ul>
+                    {openGroups.map((g) => (
+                      <li key={g.id} className="border-b border-ink-50">
+                        <div className="flex items-center gap-3 px-4 py-3">
+                          <Avatar src={g.avatar} name={g.name} group size="h-10 w-10" txt="text-xs" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold text-ink-900">{g.name}</p>
+                            <p className="truncate text-xs text-ink-400">{g.description || `${g.member_count} membre(s)`}</p>
+                          </div>
+                          <button className="btn-primary shrink-0 !px-3 !py-1.5 text-xs" onClick={() => joinOpenGroup(g)}>Rejoindre</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -943,10 +980,9 @@ export default function Chat() {
           <div className="grid flex-1 place-items-center bg-cream/40 p-8 text-center">
             <div>
               <p className="text-5xl">💬</p>
-              <h3 className="mt-4 font-display text-lg font-bold text-ink-800">Messagerie d'organisation</h3>
+              <h3 className="mt-4 font-display text-lg font-bold text-ink-800">Espace Messages</h3>
               <p className="mx-auto mt-2 max-w-sm text-sm text-ink-500">
-                Discutez en privé ou par groupes avec vos collègues, épinglez les messages importants,
-                partagez des pièces jointes — comme WhatsApp, mais pour l'équipe.
+                Discussions privées, groupes créés par l’admin, documents, vocaux, emoji et indicateurs de saisie — comme WhatsApp, pour l’équipe.
               </p>
             </div>
           </div>
@@ -968,7 +1004,7 @@ export default function Chat() {
                         ? `${(typing.name || '').split(' ')[0]} est en train d'écrire…`
                         : 'est en train d’écrire…')
                     : (active.conversation.type === 'group'
-                      ? `${active.conversation.member_count} membre(s) · ${activeRole === 'propietaire' ? 'vous êtes propriétaire' : activeRole === 'moderateur' ? 'modérateur' : 'discussion de groupe'}`
+                      ? `${active.conversation.member_count} membre(s) · ${activeRole === 'proprietaire' ? 'vous êtes propriétaire' : activeRole === 'moderateur' ? 'modérateur' : 'discussion de groupe'}`
                       : active.conversation.other?.position || 'Discussion privée')}
                 </p>
               </div>
@@ -1050,11 +1086,11 @@ export default function Chat() {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept="image/*,application/pdf"
+                  accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.csv,audio/*"
                   className="hidden"
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                 />
-                <button className="btn-ghost !px-3 !py-2.5" title="Pièce jointe (image ou PDF)" onClick={() => fileRef.current?.click()}>📎</button>
+                <button className="btn-ghost !px-3 !py-2.5" title="Pièce jointe (image, PDF, document…)" onClick={() => fileRef.current?.click()}>📎</button>
                 <button className="btn-ghost !px-3 !py-2.5" title="Message vocal (micro)" onClick={startRec}>🎤</button>
                 <textarea
                   className="input max-h-32 flex-1 resize-none !py-3"
@@ -1079,7 +1115,7 @@ export default function Chat() {
         )}
       </div>
 
-      <Modal open={modal === 'group'} onClose={() => setModal(null)} title="Nouveau groupe" wide>
+      <Modal open={modal === 'group' && canCreateGroup} onClose={() => setModal(null)} title="Nouveau groupe" wide>
         <NewGroupModal staff={staff} onCreated={createdGroup} onClose={() => setModal(null)} />
       </Modal>
       <Modal open={modal === 'dm'} onClose={() => setModal(null)} title="Nouvelle conversation">

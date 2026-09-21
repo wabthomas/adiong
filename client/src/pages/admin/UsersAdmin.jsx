@@ -1,12 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getSavedUser, setSavedUser } from '../../api.js';
 import { PageTitle, Modal, DeleteButton, Field } from './AdminUI.jsx';
-import { emptyUser, ROLE_STYLES, ROLE_LABELS, ROLE_DESCRIPTIONS, UserProfileFields, MemberQrCard } from './UserProfileFields.jsx';
+import { emptyUser, ROLE_STYLES, ROLE_LABELS, UserProfileFields, MemberQrCard } from './UserProfileFields.jsx';
+
+const TABS = [
+  { id: 'users', label: 'Comptes' },
+  { id: 'invites', label: 'Invitations' },
+  { id: 'perms', label: 'Permissions' },
+  { id: 'security', label: 'Sécurité' }
+];
 
 const INVITE_ROLES = [
-  ['editor', 'Éditeur', 'Publie les articles, causes, campagnes ; gère la médiathèque'],
-  ['viewer', 'Consultation', 'Consulte le tableau de bord, dons et messages'],
-  ['admin', 'Administrateur', 'Accès complet (hors modules et super admin)']
+  ['editor', 'Éditeur'],
+  ['viewer', 'Consultation'],
+  ['admin', 'Administrateur']
 ];
 const INVITE_STATE = {
   available: { label: 'Disponible', cls: 'bg-brand-100 text-brand-700' },
@@ -15,7 +22,21 @@ const INVITE_STATE = {
 };
 const emptyInvite = { email: '', role: 'editor', label: '', days: 7 };
 
-function PermissionsCard() {
+const ROLE_ORDER = ['super_admin', 'admin', 'editor', 'cashier', 'viewer'];
+
+function fmtDate(v) {
+  if (!v) return '—';
+  const s = String(v);
+  return new Date(s + (s.includes('T') || s.includes('Z') ? '' : 'Z')).toLocaleDateString('fr-FR');
+}
+function fmtDateTime(v) {
+  if (!v) return '—';
+  return new Date(String(v) + (String(v).includes('Z') ? '' : 'Z')).toLocaleString('fr-FR', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+  });
+}
+
+function PermissionsPanel() {
   const me = getSavedUser();
   const isSuper = me?.role === 'super_admin';
   const [areas, setAreas] = useState([]);
@@ -40,6 +61,7 @@ function PermissionsCard() {
         ? r
         : { ...r, permissions: r.permissions.map((p) => (p.area === area ? { ...p, enabled: !p.enabled } : p)) }
     ));
+
   const save = async () => {
     setSaving(true);
     setError('');
@@ -50,7 +72,7 @@ function PermissionsCard() {
         matrix[r.role] = Object.fromEntries(r.permissions.map((p) => [p.area, p.enabled]));
       });
       await api.permissions.save(matrix);
-      setMsg('✓ Permissions enregistrées — appliquées immédiatement.');
+      setMsg('Enregistré');
       load();
     } catch (e) {
       setError(e.message);
@@ -58,67 +80,66 @@ function PermissionsCard() {
       setSaving(false);
     }
   };
-  const reset = () => {
-    setDraft(rows.map((r) => ({ ...r, permissions: r.permissions.map((p) => ({ ...p })) })));
-    setMsg('');
-    setError('');
-  };
 
-  if (!draft) return null;
+  if (!draft) {
+    return <p className="py-10 text-center text-sm text-ink-400">Chargement…</p>;
+  }
 
   return (
-    <div className="card mt-6 overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-cream/70 px-6 py-4">
-        <div>
-          <h3 className="font-display text-lg font-bold text-ink-900">Droits d'accès par rôle</h3>
-          <p className="mt-0.5 text-sm text-ink-400">
-            Cochez les zones accessibles à chaque rôle. Le super admin conserve toujours tous les droits.
-          </p>
-        </div>
+    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 px-4 py-3">
+        <p className="text-sm font-bold text-ink-800">
+          Zones par rôle
+          {!isSuper && <span className="ml-2 text-xs font-semibold text-ink-400">lecture seule</span>}
+        </p>
         {isSuper && (
           <div className="flex gap-2">
-            <button className="btn-ghost !px-4 !py-2 text-sm" onClick={reset}>Réinitialiser</button>
-            <button className="btn-primary !px-5 !py-2 text-sm" onClick={save} disabled={saving}>
-              {saving ? 'Enregistrement…' : 'Enregistrer'}
+            <button
+              type="button"
+              className="btn-ghost !px-3 !py-1.5 text-xs"
+              onClick={() => {
+                setDraft(rows.map((r) => ({ ...r, permissions: r.permissions.map((p) => ({ ...p })) })));
+                setMsg('');
+                setError('');
+              }}
+            >
+              Annuler
+            </button>
+            <button type="button" className="btn-primary !px-4 !py-1.5 text-xs" onClick={save} disabled={saving}>
+              {saving ? '…' : 'Enregistrer'}
             </button>
           </div>
         )}
       </div>
-      {!isSuper && (
-        <p className="border-b border-ink-100 bg-accent-50 px-6 py-3 text-sm font-semibold text-accent-900">
-          Lecture seule — seul le super administrateur peut modifier les permissions.
-        </p>
-      )}
-      {msg && <p className="border-b border-ink-100 bg-brand-50 px-6 py-3 text-sm font-semibold text-brand-700">{msg}</p>}
-      {error && <p className="border-b border-ink-100 bg-red-50 px-6 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      {msg && <p className="border-b border-ink-100 bg-brand-50 px-4 py-2 text-xs font-semibold text-brand-700">{msg}</p>}
+      {error && <p className="border-b border-ink-100 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700">{error}</p>}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-left text-sm">
-          <thead className="border-b border-ink-100 bg-cream/40 text-xs font-bold tracking-wide text-ink-400 uppercase">
+        <table className="w-full min-w-[920px] text-left text-sm">
+          <thead className="border-b border-ink-100 bg-cream/50 text-[10px] font-bold uppercase tracking-wide text-ink-400">
             <tr>
-              <th className="px-6 py-3.5">Rôle</th>
+              <th className="sticky left-0 z-10 bg-cream/95 px-4 py-2.5">Rôle</th>
               {areas.map((a) => (
-                <th key={a.id} className="px-4 py-3.5 text-center" title={a.desc}>{a.label}</th>
+                <th key={a.id} className="max-w-[5.5rem] px-2 py-2.5 text-center leading-tight" title={a.desc}>
+                  {a.label}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {draft.map((r) => (
               <tr key={r.role} className="border-b border-ink-50 last:border-0">
-                <td className="px-6 py-3.5">
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${ROLE_STYLES[r.role] || 'bg-ink-100 text-ink-600'}`}>
+                <td className="sticky left-0 z-10 bg-white px-4 py-2.5">
+                  <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${ROLE_STYLES[r.role] || 'bg-ink-100 text-ink-600'}`}>
                     {ROLE_LABELS[r.role] || r.role}
                   </span>
-                  {r.locked && (
-                    <span className="ml-2 rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-bold text-ink-500">accès complet</span>
-                  )}
                 </td>
                 {areas.map((a) => {
                   const p = r.permissions.find((x) => x.area === a.id);
                   return (
-                    <td key={a.id} className="px-4 py-3.5 text-center">
+                    <td key={a.id} className="px-2 py-2.5 text-center" title={a.desc}>
                       <input
                         type="checkbox"
-                        className="h-5 w-5 accent-[#0f3a88]"
+                        className="h-4 w-4 accent-[#0f3a88]"
                         checked={!!p?.enabled}
                         disabled={r.locked || !isSuper}
                         onChange={() => toggle(r.role, a.id)}
@@ -136,10 +157,12 @@ function PermissionsCard() {
 }
 
 export default function UsersAdmin() {
+  const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [q, setQ] = useState('');
 
   const [invites, setInvites] = useState([]);
   const [inviteModal, setInviteModal] = useState(null);
@@ -169,6 +192,7 @@ export default function UsersAdmin() {
       const inv = await api.invites.create(inviteModal);
       setInviteModal(null);
       setCreated(inv);
+      setTab('invites');
       loadInvites();
     } catch (e) {
       setInviteError(e.message);
@@ -176,7 +200,7 @@ export default function UsersAdmin() {
   };
 
   const revokeInvite = async (inv) => {
-    if (!confirm(`Révoquer ce lien${inv.label ? ` « ${inv.label} »` : ''} ? L'invité ne pourra plus s'inscrire avec.`)) return;
+    if (!confirm(`Révoquer ce lien ?`)) return;
     try {
       await api.invites.remove(inv.id);
       if (created?.id === inv.id) setCreated(null);
@@ -187,6 +211,26 @@ export default function UsersAdmin() {
   };
 
   const meUser = useMemo(() => getSavedUser(), [users]);
+
+  const roleCounts = useMemo(() => {
+    const map = Object.fromEntries(ROLE_ORDER.map((r) => [r, 0]));
+    for (const u of users) if (map[u.role] != null) map[u.role] += 1;
+    return map;
+  }, [users]);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return users;
+    return users.filter((u) =>
+      [u.full_name, u.email, u.job_title, u.unique_code, ROLE_LABELS[u.role]]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(s)
+    );
+  }, [users, q]);
+
+  const openInvites = invites.filter((i) => i.state === 'available').length;
 
   const save = async () => {
     setSaving(true);
@@ -224,7 +268,7 @@ export default function UsersAdmin() {
 
   const regenerate = async () => {
     if (!editing?.id) return;
-    if (!confirm('Générer un nouveau code ? L’ancien QR code ne fonctionnera plus.')) return;
+    if (!confirm('Générer un nouveau code ? L’ancien QR ne fonctionnera plus.')) return;
     try {
       const updated = await api.adminUsers.regenerateCode(editing.id);
       setEditing({ ...updated, password: '' });
@@ -235,7 +279,7 @@ export default function UsersAdmin() {
   };
 
   const remove = async (u) => {
-    if (!confirm(`Supprimer le compte « ${u.email} » ?`)) return;
+    if (!confirm(`Supprimer « ${u.email} » ?`)) return;
     try {
       await api.adminUsers.remove(u.id);
       load();
@@ -245,272 +289,271 @@ export default function UsersAdmin() {
   };
 
   return (
-    <div>
+    <div className="mx-auto max-w-7xl space-y-4">
       <PageTitle
-        title="Utilisateurs & rôles"
-        subtitle={`${users.length} compte(s) — fiche complète, photo, code unique et QR code`}
+        title="Utilisateurs"
+        subtitle={`${users.length} compte${users.length > 1 ? 's' : ''}${openInvites ? ` · ${openInvites} invitation${openInvites > 1 ? 's' : ''}` : ''}`}
         action={
-          <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => setEditing({ ...emptyUser })}>
-            + Nouveau utilisateur
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-full bg-white px-4 py-2 text-sm font-bold text-ink-700 ring-1 ring-ink-100 hover:bg-cream"
+              onClick={() => { setInviteError(''); setCreated(null); setInviteModal({ ...emptyInvite }); }}
+            >
+              + Invitation
+            </button>
+            <button type="button" className="btn-primary !px-4 !py-2 text-sm" onClick={() => setEditing({ ...emptyUser })}>
+              + Compte
+            </button>
+          </div>
         }
       />
 
-      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        {Object.entries(ROLE_DESCRIPTIONS).map(([role, desc]) => (
-          <div key={role} className="card p-5">
-            <span className={`inline-block rounded-full px-3 py-1 text-xs font-bold ${ROLE_STYLES[role]}`}>
-              {users.find((u) => u.role === role)?.role_label || role}
-            </span>
-            <p className="mt-2 text-sm leading-relaxed text-ink-500">{desc}</p>
-            <p className="mt-2 text-xs font-bold text-ink-400">
-              {users.filter((u) => u.role === role).length} compte(s)
-            </p>
-          </div>
+      <div className="flex flex-wrap gap-2">
+        {ROLE_ORDER.map((role) => (
+          <span
+            key={role}
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${ROLE_STYLES[role]}`}
+          >
+            {ROLE_LABELS[role]}
+            <span className="opacity-80">{roleCounts[role] || 0}</span>
+          </span>
         ))}
       </div>
 
-      <div className="card mt-6 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="border-b border-ink-100 bg-cream/70 text-xs font-bold tracking-wide text-ink-400 uppercase">
-              <tr>
-                <th className="px-6 py-4">Utilisateur</th>
-                <th className="px-6 py-4">Code</th>
-                <th className="px-6 py-4">Rôle</th>
-                <th className="px-6 py-4">Créé le</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      {u.photo ? (
-                        <img src={u.photo} alt="" className="h-10 w-10 rounded-full object-cover ring-1 ring-brand-100" />
-                      ) : (
-                      <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-100 font-display text-sm font-bold text-brand-700">
-                        {(u.full_name || u.email).slice(0, 2).toUpperCase()}
-                      </span>
-                      )}
-                      <div>
-                        <p className="font-semibold text-ink-900">
-                          {u.full_name}
-                          {meUser?.email === u.email && <span className="ml-2 rounded-full bg-accent-400 px-2 py-0.5 text-[10px] font-bold text-ink-950">VOUS</span>}
-                        </p>
-                        <p className="text-xs text-ink-400">{u.job_title || u.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="rounded-full bg-brand-50 px-2.5 py-1 font-mono text-xs font-bold text-brand-700">
-                      {u.unique_code || '—'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <select
-                      value={u.role}
-                      disabled={meUser?.email === u.email}
-                      onChange={async (e) => {
-                        try {
-                          await api.adminUsers.update(u.id, { role: e.target.value });
-                          load();
-                        } catch (err) {
-                          alert(err.message);
-                        }
-                      }}
-                      className={`rounded-full px-3 py-1.5 text-xs font-bold outline-none disabled:opacity-60 ${ROLE_STYLES[u.role]}`}
-                    >
-                      <option value="super_admin">Super admin</option>
-                      <option value="admin">Administrateur</option>
-                      <option value="cashier">Caissier</option>
-                      <option value="editor">Éditeur</option>
-                      <option value="viewer">Consultation</option>
-                    </select>
-                  </td>
-                  <td className="px-6 py-4 text-ink-500">
-                    {new Date((u.created_at || '') + (u.created_at?.includes('T') ? '' : 'Z')).toLocaleDateString('fr-FR')}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => setEditing({ ...emptyUser, ...u, password: '' })}
-                        className="rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100"
-                      >
-                        Modifier
-                      </button>
-                      <DeleteButton onConfirm={() => remove(u)} disabled={meUser?.email === u.email} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="flex gap-1 overflow-x-auto rounded-xl bg-white p-1 ring-1 ring-ink-100">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`shrink-0 rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
+              tab === t.id ? 'bg-brand-600 text-white' : 'text-ink-500 hover:bg-cream'
+            }`}
+          >
+            {t.label}
+            {t.id === 'invites' && openInvites > 0 && (
+              <span className={`ml-1.5 ${tab === t.id ? 'text-white/80' : 'text-brand-600'}`}>{openInvites}</span>
+            )}
+          </button>
+        ))}
       </div>
 
-      <PermissionsCard />
-
-      <div className="card mt-6 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-cream/70 px-6 py-4">
-          <div>
-            <h3 className="font-display text-lg font-bold text-ink-900">Liens d'invitation</h3>
-            <p className="mt-0.5 text-sm text-ink-400">
-              Génerez un lien privé à envoyer à un employé : il crée lui-même son compte (mot de passe inclus).
-              L'inscription n'est jamais ouverte au public.
-            </p>
+      {tab === 'users' && (
+        <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
+          <div className="border-b border-ink-100 px-3 py-2.5">
+            <input
+              className="input !py-2 text-sm"
+              placeholder="Rechercher…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
           </div>
-          <button className="btn-primary !px-5 !py-2.5 text-sm" onClick={() => { setInviteError(''); setCreated(null); setInviteModal({ ...emptyInvite }); }}>
-            + Générer un lien
-          </button>
-        </div>
-
-        {created && (
-          <div className="border-b border-ink-100 bg-brand-50 px-6 py-5">
-            <p className="text-xs font-bold tracking-wide text-brand-700 uppercase">Nouveau lien généré — envoyez-le à votre invité :</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-ink-800 ring-1 ring-brand-200">
-                {inviteUrl(created)}
-              </code>
-              <button onClick={() => copyInvite(created)} className="btn-primary shrink-0 !px-4 !py-2.5 text-sm">
-                {copied === created.token ? '✓ Copié' : 'Copier le lien'}
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-ink-400">
-              Lien à usage unique, expirant le {new Date(created.expires_at + 'T12:00:00').toLocaleDateString('fr-FR')}.
-            </p>
-          </div>
-        )}
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="border-b border-ink-100 text-xs font-bold tracking-wide text-ink-400 uppercase">
-              <tr>
-                <th className="px-6 py-3.5">Invitation</th>
-                <th className="px-6 py-3.5">Rôle</th>
-                <th className="px-6 py-3.5">Statut</th>
-                <th className="px-6 py-3.5">Créée par</th>
-                <th className="px-6 py-3.5">Expire le</th>
-                <th className="px-6 py-3.5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invites.map((inv) => {
-                const st = INVITE_STATE[inv.state] || INVITE_STATE.available;
-                return (
-                  <tr key={inv.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/50">
-                    <td className="px-6 py-4">
-                      <p className="font-semibold text-ink-900">{inv.label || inv.email || 'Sans objet'}</p>
-                      <p className="text-xs text-ink-400">{inv.email || 'Email choisi par l’invité'}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-bold ${ROLE_STYLES[inv.role] || 'bg-ink-100 text-ink-600'}`}>
-                        {ROLE_LABELS[inv.role] || inv.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-bold ${st.cls}`}>{st.label}</span>
-                    </td>
-                    <td className="px-6 py-4 text-ink-500">{inv.created_by_name || '—'}</td>
-                    <td className="px-6 py-4 text-ink-500">
-                      {new Date(inv.expires_at + 'T12:00:00').toLocaleDateString('fr-FR')}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex justify-end gap-1.5">
-                        {inv.state === 'available' && (
-                          <>
-                            <button onClick={() => copyInvite(inv)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
-                              {copied === inv.token ? '✓' : 'Copier'}
-                            </button>
-                            <button onClick={() => revokeInvite(inv)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100">
-                              Révoquer
-                            </button>
-                          </>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[700px] text-left text-sm">
+              <thead className="border-b border-ink-100 bg-cream/50 text-[10px] font-bold uppercase tracking-wide text-ink-400">
+                <tr>
+                  <th className="px-4 py-2.5">Utilisateur</th>
+                  <th className="px-4 py-2.5">Code</th>
+                  <th className="px-4 py-2.5">Rôle</th>
+                  <th className="px-4 py-2.5">Créé</th>
+                  <th className="px-4 py-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((u) => (
+                  <tr key={u.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/40">
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2.5">
+                        {u.photo ? (
+                          <img src={u.photo} alt="" className="h-8 w-8 rounded-full object-cover ring-1 ring-ink-100" />
+                        ) : (
+                          <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-50 font-display text-[11px] font-bold text-brand-700">
+                            {(u.full_name || u.email).slice(0, 2).toUpperCase()}
+                          </span>
                         )}
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-ink-900">
+                            {u.full_name}
+                            {meUser?.email === u.email && (
+                              <span className="ml-1.5 rounded bg-accent-400/80 px-1.5 py-0.5 text-[9px] font-extrabold text-ink-950">vous</span>
+                            )}
+                          </p>
+                          <p className="truncate text-[11px] text-ink-400">{u.job_title || u.email}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="font-mono text-[11px] font-bold text-brand-700">{u.unique_code || '—'}</span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <select
+                        value={u.role}
+                        disabled={meUser?.email === u.email}
+                        onChange={async (e) => {
+                          try {
+                            await api.adminUsers.update(u.id, { role: e.target.value });
+                            load();
+                          } catch (err) {
+                            alert(err.message);
+                          }
+                        }}
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-bold outline-none disabled:opacity-60 ${ROLE_STYLES[u.role]}`}
+                      >
+                        {ROLE_ORDER.map((r) => (
+                          <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-ink-400">{fmtDate(u.created_at)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditing({ ...emptyUser, ...u, password: '' })}
+                          className="rounded-lg bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-700 hover:bg-brand-100"
+                        >
+                          Modifier
+                        </button>
+                        <DeleteButton onConfirm={() => remove(u)} disabled={meUser?.email === u.email} />
                       </div>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {invites.length === 0 && (
-            <p className="py-10 text-center text-ink-400">Aucun lien d'invitation — générez-en un pour inviter un employé.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="card mt-6 overflow-hidden">
-        <div className="border-b border-ink-100 bg-cream/70 px-6 py-4">
-          <h3 className="font-display text-lg font-bold text-ink-900">Sécurité — derniers événements</h3>
-          <p className="mt-0.5 text-sm text-ink-400">Connexions réussies/échouées et déconnexions (100 derniers) — utile pour repérer des tentatives d'intrusion.</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="border-b border-ink-100 text-xs font-bold tracking-wide text-ink-400 uppercase">
-              <tr>
-                <th className="px-6 py-3.5">Événement</th>
-                <th className="px-6 py-3.5">Email</th>
-                <th className="px-6 py-3.5">Adresse IP</th>
-                <th className="px-6 py-3.5 text-right">Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {securityEvents.map((ev) => (
-                <tr key={ev.id} className="border-b border-ink-50 last:border-0">
-                  <td className="px-6 py-3">
-                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${
-                      ev.type === 'login_fail' ? 'bg-red-100 text-red-700' : ev.type === 'login_ok' ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'
-                    }`}>
-                      {ev.type === 'login_fail' ? 'Échec connexion' : ev.type === 'login_ok' ? 'Connexion' : ev.type === 'logout' ? 'Déconnexion' : ev.type}
-                    </span>
-                  </td>
-                  <td className="px-6 py-3 text-ink-600">{ev.email || '—'}</td>
-                  <td className="px-6 py-3 font-mono text-xs text-ink-500">{ev.ip || '—'}</td>
-                  <td className="px-6 py-3 text-right text-ink-400">
-                    {new Date((ev.created_at || '') + 'Z').toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {securityEvents.length === 0 && (
-            <p className="py-10 text-center text-ink-400">Aucun événement enregistré pour le moment.</p>
-          )}
-        </div>
-      </div>
-
-      <Modal open={!!inviteModal} onClose={() => setInviteModal(null)} title="Générer un lien d'invitation">
-        {inviteModal && (
-          <div className="space-y-5">
-            <Field label="Email de l'invité (optionnel)" hint="S'il est renseigné, seul cet email pourra créer le compte">
-              <input className="input" type="email" value={inviteModal.email} onChange={(e) => setInviteModal({ ...inviteModal, email: e.target.value })} placeholder="prenom@adiong.org" />
-            </Field>
-            <Field label="Rôle du compte">
-              <div className="space-y-2">
-                {INVITE_ROLES.map(([value, label, desc]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setInviteModal({ ...inviteModal, role: value })}
-                    className={`flex w-full items-start gap-3 rounded-xl border p-3.5 text-left transition-all ${
-                      inviteModal.role === value
-                        ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-200'
-                        : 'border-ink-200 hover:border-brand-300'
-                    }`}
-                  >
-                    <span className={`mt-0.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${ROLE_STYLES[value]}`}>{label}</span>
-                    <span className="text-sm leading-snug text-ink-600">{desc}</span>
-                  </button>
                 ))}
-              </div>
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Objet (optionnel)" hint="Ex. « Poste de rédacteur »">
-                <input className="input" value={inviteModal.label} onChange={(e) => setInviteModal({ ...inviteModal, label: e.target.value })} placeholder="Poste de rédacteur" />
+              </tbody>
+            </table>
+            {filtered.length === 0 && (
+              <p className="py-8 text-center text-sm text-ink-400">Aucun compte.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'invites' && (
+        <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
+          {created && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-brand-100 bg-brand-50 px-4 py-3">
+              <code className="min-w-0 flex-1 truncate rounded-lg bg-white px-3 py-2 text-xs font-semibold text-ink-800 ring-1 ring-brand-100">
+                {inviteUrl(created)}
+              </code>
+              <button type="button" onClick={() => copyInvite(created)} className="btn-primary shrink-0 !px-3 !py-2 text-xs">
+                {copied === created.token ? 'Copié' : 'Copier'}
+              </button>
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead className="border-b border-ink-100 bg-cream/50 text-[10px] font-bold uppercase tracking-wide text-ink-400">
+                <tr>
+                  <th className="px-4 py-2.5">Invitation</th>
+                  <th className="px-4 py-2.5">Rôle</th>
+                  <th className="px-4 py-2.5">Statut</th>
+                  <th className="px-4 py-2.5">Expire</th>
+                  <th className="px-4 py-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invites.map((inv) => {
+                  const st = INVITE_STATE[inv.state] || INVITE_STATE.available;
+                  return (
+                    <tr key={inv.id} className="border-b border-ink-50 last:border-0 hover:bg-cream/40">
+                      <td className="px-4 py-2.5">
+                        <p className="font-semibold text-ink-900">{inv.label || inv.email || 'Sans objet'}</p>
+                        <p className="text-[11px] text-ink-400">{inv.email || inv.created_by_name || '—'}</p>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${ROLE_STYLES[inv.role] || 'bg-ink-100 text-ink-600'}`}>
+                          {ROLE_LABELS[inv.role] || inv.role}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${st.cls}`}>{st.label}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-ink-400">{fmtDate(inv.expires_at)}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex justify-end gap-1">
+                          {inv.state === 'available' && (
+                            <>
+                              <button type="button" onClick={() => copyInvite(inv)} className="rounded-lg bg-brand-50 px-2 py-1 text-[11px] font-bold text-brand-700 hover:bg-brand-100">
+                                {copied === inv.token ? '✓' : 'Copier'}
+                              </button>
+                              <button type="button" onClick={() => revokeInvite(inv)} className="rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-red-600 hover:bg-red-100">
+                                Révoquer
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {invites.length === 0 && (
+              <p className="py-8 text-center text-sm text-ink-400">Aucune invitation.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'perms' && <PermissionsPanel />}
+
+      {tab === 'security' && (
+        <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead className="border-b border-ink-100 bg-cream/50 text-[10px] font-bold uppercase tracking-wide text-ink-400">
+                <tr>
+                  <th className="px-4 py-2.5">Événement</th>
+                  <th className="px-4 py-2.5">Email</th>
+                  <th className="px-4 py-2.5">IP</th>
+                  <th className="px-4 py-2.5 text-right">Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {securityEvents.map((ev) => (
+                  <tr key={ev.id} className="border-b border-ink-50 last:border-0">
+                    <td className="px-4 py-2">
+                      <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                        ev.type === 'login_fail' ? 'bg-red-100 text-red-700'
+                          : ev.type === 'login_ok' ? 'bg-brand-100 text-brand-700'
+                            : 'bg-ink-100 text-ink-500'
+                      }`}>
+                        {ev.type === 'login_fail' ? 'Échec' : ev.type === 'login_ok' ? 'Connexion' : ev.type === 'logout' ? 'Déconnexion' : ev.type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-xs text-ink-600">{ev.email || '—'}</td>
+                    <td className="px-4 py-2 font-mono text-[11px] text-ink-400">{ev.ip || '—'}</td>
+                    <td className="px-4 py-2 text-right text-xs text-ink-400">{fmtDateTime(ev.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {securityEvents.length === 0 && (
+              <p className="py-8 text-center text-sm text-ink-400">Aucun événement.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <Modal open={!!inviteModal} onClose={() => setInviteModal(null)} title="Nouvelle invitation">
+        {inviteModal && (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Email (optionnel)">
+                <input className="input" type="email" value={inviteModal.email} onChange={(e) => setInviteModal({ ...inviteModal, email: e.target.value })} placeholder="prenom@adiong.org" />
               </Field>
-              <Field label="Validité du lien">
+              <Field label="Rôle">
+                <select className="input" value={inviteModal.role} onChange={(e) => setInviteModal({ ...inviteModal, role: e.target.value })}>
+                  {INVITE_ROLES.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Libellé">
+                <input className="input" value={inviteModal.label} onChange={(e) => setInviteModal({ ...inviteModal, label: e.target.value })} placeholder="Ex. Rédacteur" />
+              </Field>
+              <Field label="Validité">
                 <select className="input" value={inviteModal.days} onChange={(e) => setInviteModal({ ...inviteModal, days: Number(e.target.value) })}>
                   <option value={3}>3 jours</option>
                   <option value={7}>7 jours</option>
@@ -519,20 +562,17 @@ export default function UsersAdmin() {
                 </select>
               </Field>
             </div>
-
-            {inviteError && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{inviteError}</p>}
-            <div className="flex justify-end gap-3 border-t border-ink-100 pt-5">
-              <button className="btn-primary !px-6 !py-2.5 text-sm" onClick={createInvite}>
-                Générer le lien
-              </button>
+            {inviteError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{inviteError}</p>}
+            <div className="flex justify-end border-t border-ink-100 pt-4">
+              <button type="button" className="btn-primary !px-5 !py-2 text-sm" onClick={createInvite}>Générer</button>
             </div>
           </div>
         )}
       </Modal>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing?.id ? 'Modifier l’utilisateur' : 'Nouvel utilisateur'} wide>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing?.id ? 'Modifier le compte' : 'Nouveau compte'} wide>
         {editing && (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px]">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_200px]">
             <div>
               <UserProfileFields
                 value={editing}
@@ -540,14 +580,15 @@ export default function UsersAdmin() {
                 showRole
                 passwordRequired={!editing.id}
               />
-              {error && <p className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
-              <div className="mt-6 flex justify-end gap-3 border-t border-ink-100 pt-5">
+              {error && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
+              <div className="mt-5 flex justify-end border-t border-ink-100 pt-4">
                 <button
-                  className="btn-primary !px-6 !py-2.5 text-sm"
+                  type="button"
+                  className="btn-primary !px-5 !py-2 text-sm"
                   onClick={save}
                   disabled={saving || !editing.email || (!editing.id && !editing.password)}
                 >
-                  {saving ? 'Enregistrement…' : 'Enregistrer'}
+                  {saving ? '…' : 'Enregistrer'}
                 </button>
               </div>
             </div>

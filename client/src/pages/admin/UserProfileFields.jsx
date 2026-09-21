@@ -23,14 +23,6 @@ const ROLE_STYLES = {
 
 export const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', cashier: 'Caissier', editor: 'Éditeur', viewer: 'Consultation' };
 
-export const ROLE_DESCRIPTIONS = {
-  super_admin: "Tout, y compris l'activation des modules (GRH) et la gestion des super admins",
-  admin: 'Accès complet : contenu, paramètres, utilisateurs, GRH (si activée)',
-  cashier: 'Point de vente : encaisser, suivre les ventes et les commandes en ligne (pas de gestion du catalogue ni des rapports)',
-  editor: 'Gère les articles, causes, campagnes et la médiathèque',
-  viewer: 'Consultation seule (tableau de bord)'
-};
-
 export { ROLE_STYLES };
 
 export function memberPublicUrl(code) {
@@ -64,12 +56,12 @@ export function UserProfileFields({ value, onChange, showRole = false, passwordR
           <input className="input" value={value.phone || ''} onChange={set('phone')} placeholder="+243 …" />
         </Field>
       </div>
-      <Field label="Présentation" hint="Quelques lignes affichées sur la fiche membre">
-        <textarea className="input min-h-[110px]" value={value.bio || ''} onChange={set('bio')} placeholder="Rôle au sein de l'ONG, mission…" />
+      <Field label="Présentation">
+        <textarea className="input min-h-[80px]" value={value.bio || ''} onChange={set('bio')} placeholder="Optionnel" />
       </Field>
       <Field
-        label={value.id ? 'Nouveau mot de passe (laisser vide pour conserver)' : 'Mot de passe *'}
-        hint="8 caractères minimum"
+        label={value.id ? 'Nouveau mot de passe' : 'Mot de passe *'}
+        hint={value.id ? 'Laisser vide pour conserver' : '8 caractères minimum'}
       >
         <input
           className="input"
@@ -83,25 +75,11 @@ export function UserProfileFields({ value, onChange, showRole = false, passwordR
       </Field>
       {showRole && (
         <Field label="Rôle">
-          <div className="space-y-2">
-            {Object.entries(ROLE_DESCRIPTIONS).map(([role, desc]) => (
-              <button
-                key={role}
-                type="button"
-                onClick={() => onChange({ ...value, role })}
-                className={`flex w-full items-start gap-3 rounded-xl border p-3.5 text-left transition-all ${
-                  value.role === role
-                    ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-200'
-                    : 'border-ink-200 hover:border-brand-300'
-                }`}
-              >
-                <span className={`mt-0.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${ROLE_STYLES[role]}`}>
-                  {ROLE_LABELS[role]}
-                </span>
-                <span className="text-sm leading-snug text-ink-600">{desc}</span>
-              </button>
+          <select className="input" value={value.role || 'editor'} onChange={set('role')}>
+            {Object.entries(ROLE_LABELS).map(([role, label]) => (
+              <option key={role} value={role}>{label}</option>
             ))}
-          </div>
+          </select>
         </Field>
       )}
     </div>
@@ -125,47 +103,34 @@ export function MemberQrCard({ user, canRegenerate = false, onRegenerate }) {
 
   if (!code) {
     return (
-      <div className="rounded-2xl border border-dashed border-ink-200 bg-ink-50 p-5 text-sm text-ink-500">
-        Le code unique et le QR code seront attribués à l'enregistrement.
+      <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50 p-4 text-xs text-ink-400">
+        Code et QR attribués à l’enregistrement.
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-ink-100 bg-cream/60 p-5">
-      <p className="text-[11px] font-bold tracking-wider text-ink-400 uppercase">Identifiant ADI</p>
-      <p className="mt-1 font-display text-2xl font-extrabold tracking-wide text-brand-700">{code}</p>
-      <div className="mt-4 overflow-hidden rounded-2xl bg-white p-3 ring-1 ring-ink-100">
-        <img src={`/api/public/member/${encodeURIComponent(code)}/qr`} alt={`QR ${code}`} className="mx-auto h-44 w-44" />
+    <div className="rounded-xl bg-cream/60 p-4 ring-1 ring-ink-100">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-ink-400">Code membre</p>
+      <p className="mt-0.5 font-display text-xl font-extrabold tracking-wide text-brand-700">{code}</p>
+      <div className="mt-3 overflow-hidden rounded-xl bg-white p-2 ring-1 ring-ink-100">
+        <img src={`/api/public/member/${encodeURIComponent(code)}/qr`} alt={`QR ${code}`} className="mx-auto h-36 w-36" />
       </div>
-      <p className="mt-3 break-all text-xs text-ink-500">{url}</p>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="btn-ghost !px-3 !py-2 text-xs" onClick={() => copy(code, 'code')}>
-          {copied === 'code' ? 'Code copié' : 'Copier le code'}
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <button type="button" className="btn-ghost !px-2.5 !py-1.5 text-[11px]" onClick={() => copy(code, 'code')}>
+          {copied === 'code' ? 'Copié' : 'Code'}
         </button>
-        <button type="button" className="btn-ghost !px-3 !py-2 text-xs" onClick={() => copy(url, 'url')}>
-          {copied === 'url' ? 'Lien copié' : 'Copier le lien'}
+        <button type="button" className="btn-ghost !px-2.5 !py-1.5 text-[11px]" onClick={() => copy(url, 'url')}>
+          {copied === 'url' ? 'Copié' : 'Lien'}
         </button>
-        <a
-          className="btn-ghost !px-3 !py-2 text-xs"
-          href={`/api/public/member/${encodeURIComponent(code)}/qr`}
-          download={`qr-${code}.png`}
-        >
-          Télécharger le QR
+        <a className="btn-ghost !px-2.5 !py-1.5 text-[11px]" href={`/api/public/member/${encodeURIComponent(code)}/qr`} download={`qr-${code}.png`}>
+          QR
         </a>
-        <a className="btn-ghost !px-3 !py-2 text-xs" href={url} target="_blank" rel="noreferrer">
-          Voir la fiche
-        </a>
-        <a className="btn-ghost !px-3 !py-2 text-xs" href={`${url}/carte`} target="_blank" rel="noreferrer">
-          Carte imprimable
-        </a>
+        <a className="btn-ghost !px-2.5 !py-1.5 text-[11px]" href={url} target="_blank" rel="noreferrer">Fiche</a>
+        <a className="btn-ghost !px-2.5 !py-1.5 text-[11px]" href={`${url}/carte`} target="_blank" rel="noreferrer">Carte</a>
         {canRegenerate && onRegenerate && (
-          <button
-            type="button"
-            className="btn-ghost !px-3 !py-2 text-xs text-red-600"
-            onClick={onRegenerate}
-          >
-            Régénérer le code
+          <button type="button" className="btn-ghost !px-2.5 !py-1.5 text-[11px] text-red-600" onClick={onRegenerate}>
+            Régénérer
           </button>
         )}
       </div>

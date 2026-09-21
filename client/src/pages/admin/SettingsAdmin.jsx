@@ -310,8 +310,8 @@ export default function SettingsAdmin() {
       const m = await api.modules.update({ chat_enabled: value });
       setModules(m);
       setModMsg(value
-        ? '✓ Messagerie d’équipe activée — visible dans le menu pour les employés reliés.'
-        : '✓ Messagerie d’équipe désactivée — le menu est masqué et l’API chat fermée.');
+        ? '✓ Messagerie d’équipe activée — visible dans le menu Messages.'
+        : '✓ Messagerie d’équipe désactivée — le menu est masqué et l’API fermée.');
     } catch (e) {
       setModMsg(`✗ ${e.message}`);
     }
@@ -920,10 +920,9 @@ export default function SettingsAdmin() {
                 </span>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
-                Chat interne style WhatsApp professionnel : discussions privées, groupes avec rôles
-                (propriétaire, modérateur, membre), pièces jointes, épinglage et non-lus. Ouvert à tout compte
-                relié à un <strong>dossier employé</strong> (module GRH requis). La désactivation masque le menu
-                « Messagerie » et ferme l'API chat (les données restent conservées).
+                Chat interne style WhatsApp entre les comptes de la plateforme : discussions privées,
+                groupes (créés par un admin), documents, messages vocaux, emoji, réactions et indicateur
+                « en train d’écrire ». Indépendant des fiches GRH. La désactivation masque le menu « Messages » et ferme l’API.
               </p>
             </div>
             <button

@@ -505,14 +505,31 @@ migrate(`CREATE TABLE IF NOT EXISTS role_permissions (
   enabled INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (role, area)
 )`);
-// Droits par défaut : identiques aux rôles codés en dur (seed une seule fois)
+// Droits par défaut : seed une seule fois (INSERT OR IGNORE) — nouvelles zones ajoutées sans écraser les réglages existants
 const permSeed = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
 for (const [role, area, on] of [
-  ['super_admin', 'backoffice', 1], ['super_admin', 'content', 1], ['super_admin', 'settings', 1], ['super_admin', 'grh', 1], ['super_admin', 'pos', 1],
-  ['admin', 'backoffice', 1], ['admin', 'content', 1], ['admin', 'settings', 1], ['admin', 'grh', 1], ['admin', 'pos', 1],
-  ['editor', 'backoffice', 1], ['editor', 'content', 1], ['editor', 'settings', 0], ['editor', 'grh', 0], ['editor', 'pos', 0],
-  ['viewer', 'backoffice', 1], ['viewer', 'content', 0], ['viewer', 'settings', 0], ['viewer', 'grh', 0], ['viewer', 'pos', 0],
-  ['cashier', 'backoffice', 1], ['cashier', 'content', 0], ['cashier', 'settings', 0], ['cashier', 'grh', 0], ['cashier', 'pos', 1]
+  // super_admin : tout (même si le code force déjà true)
+  ['super_admin', 'dashboard', 1], ['super_admin', 'chat', 1], ['super_admin', 'inbox', 1], ['super_admin', 'donations', 1],
+  ['super_admin', 'content', 1], ['super_admin', 'media', 1], ['super_admin', 'grh', 1], ['super_admin', 'leave', 1],
+  ['super_admin', 'pos', 1], ['super_admin', 'users', 1], ['super_admin', 'settings', 1],
+  // admin
+  ['admin', 'dashboard', 1], ['admin', 'chat', 1], ['admin', 'inbox', 1], ['admin', 'donations', 1],
+  ['admin', 'content', 1], ['admin', 'media', 1], ['admin', 'grh', 1], ['admin', 'leave', 1],
+  ['admin', 'pos', 1], ['admin', 'users', 1], ['admin', 'settings', 1],
+  // editor
+  ['editor', 'dashboard', 1], ['editor', 'chat', 1], ['editor', 'inbox', 1], ['editor', 'donations', 1],
+  ['editor', 'content', 1], ['editor', 'media', 1], ['editor', 'grh', 0], ['editor', 'leave', 1],
+  ['editor', 'pos', 0], ['editor', 'users', 0], ['editor', 'settings', 0],
+  // viewer
+  ['viewer', 'dashboard', 1], ['viewer', 'chat', 1], ['viewer', 'inbox', 1], ['viewer', 'donations', 1],
+  ['viewer', 'content', 0], ['viewer', 'media', 0], ['viewer', 'grh', 0], ['viewer', 'leave', 1],
+  ['viewer', 'pos', 0], ['viewer', 'users', 0], ['viewer', 'settings', 0],
+  // cashier
+  ['cashier', 'dashboard', 1], ['cashier', 'chat', 1], ['cashier', 'inbox', 0], ['cashier', 'donations', 0],
+  ['cashier', 'content', 0], ['cashier', 'media', 0], ['cashier', 'grh', 0], ['cashier', 'leave', 0],
+  ['cashier', 'pos', 1], ['cashier', 'users', 0], ['cashier', 'settings', 0],
+  // compat anciennes clés (backoffice → ignorées si la UI ne les affiche plus)
+  ['super_admin', 'backoffice', 1], ['admin', 'backoffice', 1], ['editor', 'backoffice', 1], ['viewer', 'backoffice', 1], ['cashier', 'backoffice', 1]
 ]) permSeed.run(role, area, on);
 
 migrate(`CREATE TABLE IF NOT EXISTS chat_conversations (
@@ -531,10 +548,10 @@ migrate(`CREATE TABLE IF NOT EXISTS chat_conversations (
 )`);
 migrate(`CREATE TABLE IF NOT EXISTS chat_members (
   conversation_id INTEGER NOT NULL,
-  employee_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
   role TEXT NOT NULL DEFAULT 'membre',
   joined_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (conversation_id, employee_id)
+  PRIMARY KEY (conversation_id, user_id)
 )`);
 migrate(`CREATE TABLE IF NOT EXISTS chat_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -556,9 +573,9 @@ migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_by INTEGER NOT NU
 migrate('ALTER TABLE chat_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0');
 migrate(`CREATE TABLE IF NOT EXISTS chat_reactions (
   message_id INTEGER NOT NULL,
-  employee_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
   emoji TEXT NOT NULL,
-  PRIMARY KEY (message_id, employee_id)
+  PRIMARY KEY (message_id, user_id)
 )`);
 migrate(`CREATE TABLE IF NOT EXISTS chat_pins (
   conversation_id INTEGER NOT NULL,
@@ -569,10 +586,100 @@ migrate(`CREATE TABLE IF NOT EXISTS chat_pins (
 )`);
 migrate(`CREATE TABLE IF NOT EXISTS chat_reads (
   conversation_id INTEGER NOT NULL,
-  employee_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
   read_at TEXT NOT NULL,
-  PRIMARY KEY (conversation_id, employee_id)
+  PRIMARY KEY (conversation_id, user_id)
 )`);
+
+/** Bascule la messagerie d’équipe : membres = comptes users, plus fiches GRH. */
+(() => {
+  try {
+    const cols = db.prepare('PRAGMA table_info(chat_members)').all();
+    if (cols.some((c) => c.name === 'user_id')) return;
+    db.exec(`
+      CREATE TABLE chat_members_u (
+        conversation_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        role TEXT NOT NULL DEFAULT 'membre',
+        joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (conversation_id, user_id)
+      );
+      CREATE TABLE chat_reads_u (
+        conversation_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        read_at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, user_id)
+      );
+    `);
+    const userByEmp = (empId) => {
+      const emp = db.prepare('SELECT email FROM grh_employees WHERE id = ?').get(empId);
+      if (!emp?.email) return null;
+      return db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(emp.email);
+    };
+    const insM = db.prepare('INSERT OR IGNORE INTO chat_members_u (conversation_id, user_id, role, joined_at) VALUES (?,?,?,?)');
+    for (const m of db.prepare('SELECT * FROM chat_members').all()) {
+      const u = userByEmp(m.employee_id);
+      if (!u) continue;
+      const role = m.role === 'propietaire' ? 'proprietaire' : (m.role || 'membre');
+      insM.run(m.conversation_id, u.id, role, m.joined_at || '');
+    }
+    const insR = db.prepare('INSERT OR IGNORE INTO chat_reads_u (conversation_id, user_id, read_at) VALUES (?,?,?)');
+    for (const r of db.prepare('SELECT * FROM chat_reads').all()) {
+      const u = userByEmp(r.employee_id);
+      if (u) insR.run(r.conversation_id, u.id, r.read_at);
+    }
+    const updMsg = db.prepare('UPDATE chat_messages SET sender_id = ? WHERE id = ?');
+    for (const m of db.prepare('SELECT id, sender_id FROM chat_messages').all()) {
+      const u = userByEmp(m.sender_id);
+      if (u) updMsg.run(u.id, m.id);
+    }
+    const updConv = db.prepare('UPDATE chat_conversations SET owner_id = ?, created_by = ? WHERE id = ?');
+    for (const c of db.prepare('SELECT id, owner_id, created_by FROM chat_conversations').all()) {
+      const o = userByEmp(c.owner_id)?.id || c.owner_id;
+      const cr = userByEmp(c.created_by)?.id || c.created_by;
+      updConv.run(o, cr, c.id);
+    }
+    db.exec(`
+      DROP TABLE chat_members;
+      DROP TABLE chat_reads;
+      ALTER TABLE chat_members_u RENAME TO chat_members;
+      ALTER TABLE chat_reads_u RENAME TO chat_reads;
+    `);
+  } catch (e) {
+    console.error('[chat migrate user_id]', e.message);
+  }
+})();
+
+/** Réactions : employee_id → user_id */
+(() => {
+  try {
+    const cols = db.prepare('PRAGMA table_info(chat_reactions)').all();
+    if (!cols.length || cols.some((c) => c.name === 'user_id')) return;
+    if (!cols.some((c) => c.name === 'employee_id')) return;
+    db.exec(`
+      CREATE TABLE chat_reactions_u (
+        message_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        emoji TEXT NOT NULL,
+        PRIMARY KEY (message_id, user_id)
+      );
+    `);
+    const userByEmp = (empId) => {
+      const emp = db.prepare('SELECT email FROM grh_employees WHERE id = ?').get(empId);
+      if (!emp?.email) return null;
+      return db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(emp.email);
+    };
+    const ins = db.prepare('INSERT OR IGNORE INTO chat_reactions_u (message_id, user_id, emoji) VALUES (?,?,?)');
+    for (const r of db.prepare('SELECT * FROM chat_reactions').all()) {
+      const u = userByEmp(r.employee_id);
+      if (u) ins.run(r.message_id, u.id, r.emoji);
+    }
+    db.exec(`DROP TABLE chat_reactions; ALTER TABLE chat_reactions_u RENAME TO chat_reactions;`);
+  } catch (e) {
+    console.error('[chat migrate reactions]', e.message);
+  }
+})();
+
 migrate(`CREATE TABLE IF NOT EXISTS article_categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   slug TEXT UNIQUE NOT NULL,

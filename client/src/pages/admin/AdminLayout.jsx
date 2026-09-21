@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, getToken, setToken, getSavedUser, setSavedUser } from '../../api.js';
 
@@ -6,23 +6,125 @@ const ALL_ROLES = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
 const HR_ROLES = ['super_admin', 'admin'];
 const POS_ROLES = ['super_admin', 'admin', 'cashier'];
 
-const items = [
-  { to: '/admin', label: 'Tableau de bord', roles: ALL_ROLES, icon: 'M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z', end: true },
-  { to: '/admin/messagerie', label: 'Messagerie', roles: ALL_ROLES, chat: true, icon: 'M20.25 8.511c.884.284 1.5 1.123 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155' },
-  { to: '/admin/articles', label: 'Articles', roles: ['super_admin', 'admin', 'editor'], icon: 'M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V19.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.375c0-.621.504-1.125 1.125-1.125H2.25m12-1.5h3.375c.62 0 1.125.504 1.125 1.125V4.5m-2.625 5.5h5.25m-5.625 5h5.625' },
-  { to: '/admin/causes', label: 'Causes', roles: ['super_admin', 'admin', 'editor'], icon: 'M12 3v2.25M6.375 6.375l1.59 1.59m5.46 0 1.59-1.59M3 12h2.25M18.75 12H21m-2.625 5.625-1.59-1.59m-5.46 0-1.59 1.59M12 18.75V21m0-3.75a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z' },
-  { to: '/admin/campagnes', label: 'Campagnes', roles: ['super_admin', 'admin', 'editor'], icon: 'M21 11.25v8.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 1 0 9.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1 1 14.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z' },
-  { to: '/admin/partenaires', label: 'Partenaires', roles: ['super_admin', 'admin', 'editor'], icon: 'M11.42 15.17 17.25 21A2.625 2.625 0 0 0 21 18.25v-5.5A3.375 3.375 0 0 0 17.625 9H3.375A3.375 3.375 0 0 0 0 12.25v5.5A2.625 2.625 0 0 0 3.75 21l5.83-5.83a2.625 2.625 0 0 1 3.75 0ZM9.75 3.375A2.625 2.625 0 1 1 15 3.375 2.625 2.625 0 0 1 9.75 3.375Z' },
-  { to: '/admin/dons', label: 'Dons', roles: ALL_ROLES, icon: 'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z' },
-  { to: '/admin/messages', label: 'Messages', icon: 'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75' },
-  { to: '/admin/grh', label: 'GRH (Ressources humaines)', roles: HR_ROLES, grh: true, icon: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0ZM7.5 14.25h9a3.375 3.375 0 0 1 0 6.75h-9a3.375 3.375 0 0 1 0-6.75Zm0 3.75a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm3.75 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm.75 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z' },
-  { to: '/admin/pos', label: 'Point de vente (POS)', roles: POS_ROLES, pos: true, icon: 'M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 0 0-16.536-1.84M7.5 14.25 5.106 5.272M6 20.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm12.75 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z' },
-  { to: '/admin/medias', label: 'Médiathèque', roles: ['super_admin', 'admin', 'editor'], icon: 'M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z' },
-  { to: '/admin/mon-espace', label: 'Mon espace (congés)', roles: ['super_admin', 'admin', 'editor', 'viewer'], grh: true, icon: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-9-6h.008v.008H12v-.008ZM12 15h.008v.008H12V15Zm0 2.25h.008v.008H12v-.008ZM9.75 15h.008v.008H9.75V15Zm0 2.25h.008v.008H9.75v-.008ZM7.5 15h.008v.008H7.5V15Zm0 2.25h.008v.008H7.5v-.008Zm6.75-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H16.5v-.008Zm0 2.25h.008v.008H16.5V15Z' },
-  { to: '/admin/profil', label: 'Mon profil', roles: ALL_ROLES, icon: 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z' },
-  { to: '/admin/utilisateurs', label: 'Utilisateurs', roles: ['super_admin', 'admin'], icon: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z' },
-  { to: '/admin/parametres', label: 'Paramètres', roles: ['super_admin', 'admin'], icon: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z' }
+const ICONS = {
+  dashboard: 'M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z',
+  chat: 'M20.25 8.511c.884.284 1.5 1.123 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155',
+  articles: 'M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V19.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.375c0-.621.504-1.125 1.125-1.125H2.25m12-1.5h3.375c.62 0 1.125.504 1.125 1.125V4.5m-2.625 5.5h5.25m-5.625 5h5.625',
+  causes: 'M12 3v2.25M6.375 6.375l1.59 1.59m5.46 0 1.59-1.59M3 12h2.25M18.75 12H21m-2.625 5.625-1.59-1.59m-5.46 0-1.59 1.59M12 18.75V21m0-3.75a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z',
+  campaigns: 'M21 11.25v8.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 1 0 9.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1 1 14.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z',
+  partners: 'M11.42 15.17 17.25 21A2.625 2.625 0 0 0 21 18.25v-5.5A3.375 3.375 0 0 0 17.625 9H3.375A3.375 3.375 0 0 0 0 12.25v5.5A2.625 2.625 0 0 0 3.75 21l5.83-5.83a2.625 2.625 0 0 1 3.75 0ZM9.75 3.375A2.625 2.625 0 1 1 15 3.375 2.625 2.625 0 0 1 9.75 3.375Z',
+  donate: 'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
+  inbox: 'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75',
+  grh: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z',
+  pos: 'M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 0 0-16.536-1.84M7.5 14.25 5.106 5.272M6 20.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm12.75 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z',
+  media: 'M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',
+  leave: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5',
+  profile: 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z',
+  users: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z',
+  settings: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z',
+  content: 'M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25',
+  team: 'M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z',
+  admin: 'M11.42 15.17 17.25 21A2.625 2.625 0 0 0 21 18.25v-5.5A3.375 3.375 0 0 0 17.625 9H3.375A3.375 3.375 0 0 0 0 12.25v5.5A2.625 2.625 0 0 0 3.75 21l5.83-5.83',
+  chevron: 'm19.5 8.25-7.5 7.5-7.5-7.5'
+};
+
+/** Structure menus → sous-menus (collapse). */
+const NAV_TREE = [
+  {
+    id: 'overview',
+    type: 'link',
+    to: '/admin',
+    label: 'Tableau de bord',
+    roles: ALL_ROLES,
+    icon: ICONS.dashboard,
+    end: true
+  },
+  {
+    id: 'comms',
+    type: 'group',
+    label: 'Communication',
+    icon: ICONS.chat,
+    children: [
+      { to: '/admin/messagerie', label: 'Messages', roles: ALL_ROLES, chat: true, icon: ICONS.chat },
+      { to: '/admin/messages', label: 'Boîte contact', roles: ALL_ROLES, icon: ICONS.inbox }
+    ]
+  },
+  {
+    id: 'content',
+    type: 'group',
+    label: 'Contenu',
+    icon: ICONS.content,
+    children: [
+      { to: '/admin/articles', label: 'Articles', roles: ['super_admin', 'admin', 'editor'], icon: ICONS.articles },
+      { to: '/admin/causes', label: 'Causes', roles: ['super_admin', 'admin', 'editor'], icon: ICONS.causes },
+      { to: '/admin/campagnes', label: 'Campagnes', roles: ['super_admin', 'admin', 'editor'], icon: ICONS.campaigns },
+      { to: '/admin/partenaires', label: 'Partenaires', roles: ['super_admin', 'admin', 'editor'], icon: ICONS.partners },
+      { to: '/admin/medias', label: 'Médiathèque', roles: ['super_admin', 'admin', 'editor'], icon: ICONS.media }
+    ]
+  },
+  {
+    id: 'engagement',
+    type: 'link',
+    to: '/admin/dons',
+    label: 'Dons',
+    roles: ALL_ROLES,
+    icon: ICONS.donate
+  },
+  {
+    id: 'hr',
+    type: 'group',
+    label: 'Ressources humaines',
+    icon: ICONS.team,
+    grh: true,
+    children: [
+      { to: '/admin/grh', label: 'GRH', roles: HR_ROLES, grh: true, icon: ICONS.grh },
+      { to: '/admin/mon-espace', label: 'Mon espace', roles: ['super_admin', 'admin', 'editor', 'viewer'], grh: true, icon: ICONS.leave }
+    ]
+  },
+  {
+    id: 'pos',
+    type: 'link',
+    to: '/admin/pos',
+    label: 'Point de vente',
+    roles: POS_ROLES,
+    pos: true,
+    icon: ICONS.pos
+  },
+  {
+    id: 'admin',
+    type: 'group',
+    label: 'Administration',
+    icon: ICONS.admin,
+    children: [
+      { to: '/admin/profil', label: 'Mon profil', roles: ALL_ROLES, icon: ICONS.profile },
+      { to: '/admin/utilisateurs', label: 'Utilisateurs', roles: ['super_admin', 'admin'], icon: ICONS.users },
+      { to: '/admin/parametres', label: 'Paramètres', roles: ['super_admin', 'admin'], icon: ICONS.settings }
+    ]
+  }
 ];
+
+const FLAT_ITEMS = NAV_TREE.flatMap((n) => (n.type === 'group' ? n.children : [n]));
+
+const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation', cashier: 'Caissier' };
+
+const ITEM_AREAS = {
+  '/admin': 'dashboard',
+  '/admin/articles': 'content',
+  '/admin/causes': 'content',
+  '/admin/campagnes': 'content',
+  '/admin/partenaires': 'content',
+  '/admin/medias': 'media',
+  '/admin/dons': 'donations',
+  '/admin/messages': 'inbox',
+  '/admin/messagerie': 'chat',
+  '/admin/mon-espace': 'leave',
+  '/admin/grh': 'grh',
+  '/admin/pos': 'pos',
+  '/admin/utilisateurs': 'users',
+  '/admin/parametres': 'settings'
+};
+
+const COLLAPSE_KEY = 'adiong_admin_nav_open';
 
 function MiniIcon({ d, className = 'h-5 w-5' }) {
   return (
@@ -32,31 +134,37 @@ function MiniIcon({ d, className = 'h-5 w-5' }) {
   );
 }
 
-const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation', cashier: 'Caissier' };
+function itemVisible(it, { role, grhEnabled, posEnabled, chatEnabled, permMap }) {
+  if (!(it.roles || ALL_ROLES).includes(role)) return false;
+  if (it.grh && !grhEnabled) return false;
+  if (it.pos && !posEnabled) return false;
+  if (it.chat && !chatEnabled) return false;
+  const area = ITEM_AREAS[it.to];
+  if (area && permMap !== null && permMap[area] === false) return false;
+  return true;
+}
 
-const ITEM_AREAS = {
-  '/admin': 'backoffice',
-  '/admin/articles': 'content',
-  '/admin/causes': 'content',
-  '/admin/campagnes': 'content',
-  '/admin/partenaires': 'content',
-  '/admin/medias': 'content',
-  '/admin/dons': 'backoffice',
-  '/admin/messages': 'backoffice',
-  '/admin/messagerie': 'backoffice',
-  '/admin/mon-espace': 'backoffice',
-  '/admin/profil': 'backoffice',
-  '/admin/grh': 'grh',
-  '/admin/pos': 'pos',
-  '/admin/utilisateurs': 'settings',
-  '/admin/parametres': 'settings'
-};
+function pathActive(pathname, to, end) {
+  if (end) return pathname === to;
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
 
 function currentPage(pathname) {
   if (pathname === '/admin/profil') return { label: 'Mon profil' };
-  return [...items]
+  return [...FLAT_ITEMS]
     .sort((a, b) => b.to.length - a.to.length)
-    .find((it) => (it.end ? pathname === it.to : pathname === it.to || pathname.startsWith(`${it.to}/`)));
+    .find((it) => pathActive(pathname, it.to, it.end));
+}
+
+function loadOpenGroups() {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 export default function AdminLayout() {
@@ -71,10 +179,48 @@ export default function AdminLayout() {
   const [chatEnabled, setChatEnabled] = useState(true);
   const [permMap, setPermMap] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
+  const [openGroups, setOpenGroups] = useState(loadOpenGroups);
   const menuRef = useRef(null);
   const role = savedUser?.role || 'admin';
   const page = currentPage(pathname);
   const initials = (savedUser?.full_name || savedUser?.email || 'A').slice(0, 2).toUpperCase();
+
+  const ctx = useMemo(
+    () => ({ role, grhEnabled, posEnabled, chatEnabled, permMap }),
+    [role, grhEnabled, posEnabled, chatEnabled, permMap]
+  );
+
+  const visibleTree = useMemo(() => {
+    return NAV_TREE.map((node) => {
+      if (node.type === 'link') {
+        return itemVisible(node, ctx) ? node : null;
+      }
+      if (node.grh && !grhEnabled) return null;
+      if (node.pos && !posEnabled) return null;
+      const children = (node.children || []).filter((c) => itemVisible(c, ctx));
+      if (!children.length) return null;
+      return { ...node, children };
+    }).filter(Boolean);
+  }, [ctx, grhEnabled, posEnabled]);
+
+  const visibleCount = useMemo(
+    () => visibleTree.reduce((n, node) => n + (node.type === 'group' ? node.children.length : 1), 0),
+    [visibleTree]
+  );
+
+  // Ouvre automatiquement le groupe de la page active
+  useEffect(() => {
+    const activeGroup = visibleTree.find(
+      (node) => node.type === 'group' && node.children.some((c) => pathActive(pathname, c.to, c.end))
+    );
+    if (!activeGroup) return;
+    setOpenGroups((cur) => {
+      if (cur[activeGroup.id]) return cur;
+      const next = { ...cur, [activeGroup.id]: true };
+      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, [pathname, visibleTree]);
 
   useEffect(() => {
     if (!getToken()) nav('/admin/login', { replace: true });
@@ -126,13 +272,6 @@ export default function AdminLayout() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const visibleItems = items
-    .filter((it) => (it.roles || ALL_ROLES).includes(role))
-    .filter((it) => !it.grh || grhEnabled)
-    .filter((it) => !it.pos || posEnabled)
-    .filter((it) => !it.chat || (grhEnabled && chatEnabled))
-    .filter((it) => permMap === null || permMap[ITEM_AREAS[it.to]] !== false);
-
   if (!authed) return null;
 
   const logout = () => {
@@ -141,10 +280,41 @@ export default function AdminLayout() {
     nav('/admin/login', { replace: true });
   };
 
-  const navCls = ({ isActive }) =>
+  const toggleGroup = (id) => {
+    setOpenGroups((cur) => {
+      const next = { ...cur, [id]: !cur[id] };
+      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  const linkCls = ({ isActive }) =>
     `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
       isActive ? 'bg-brand-600 text-white shadow-soft' : 'text-ink-600 hover:bg-brand-50 hover:text-brand-700'
     }`;
+
+  const subLinkCls = ({ isActive }) =>
+    `flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors ${
+      isActive ? 'bg-brand-600 text-white shadow-soft' : 'text-ink-500 hover:bg-brand-50 hover:text-brand-700'
+    }`;
+
+  const renderLink = (it, { sub = false } = {}) => (
+    <NavLink
+      key={it.to}
+      to={it.to}
+      end={it.end}
+      className={sub ? subLinkCls : linkCls}
+      onClick={() => setOpen(false)}
+    >
+      <MiniIcon d={it.icon} className={sub ? 'h-4 w-4 shrink-0' : 'h-5 w-5 shrink-0'} />
+      <span className="flex-1 truncate">{it.label}</span>
+      {it.chat && chatUnread > 0 && (
+        <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-accent-500 px-1.5 text-[10px] font-black text-white">
+          {chatUnread > 99 ? '99+' : chatUnread}
+        </span>
+      )}
+    </NavLink>
+  );
 
   const sidebar = (
     <div className="flex h-full flex-col bg-white">
@@ -160,19 +330,47 @@ export default function AdminLayout() {
           <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Admin</p>
         </div>
       </div>
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">
-        {visibleItems.map((it) => (
-          <NavLink key={it.to} to={it.to} end={it.end} className={navCls} onClick={() => setOpen(false)}>
-            <MiniIcon d={it.icon} />
-            <span className="flex-1 truncate">{it.label}</span>
-            {it.chat && chatUnread > 0 && (
-              <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-brand-600 px-1.5 text-[10px] font-black text-white">
-                {chatUnread > 99 ? '99+' : chatUnread}
-              </span>
-            )}
-          </NavLink>
-        ))}
-        {visibleItems.length === 0 && permMap !== null && (
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4">
+        {visibleTree.map((node) => {
+          if (node.type === 'link') return renderLink(node);
+
+          const expanded = !!openGroups[node.id];
+          const childActive = node.children.some((c) => pathActive(pathname, c.to, c.end));
+
+          return (
+            <div key={node.id} className="pt-0.5">
+              <button
+                type="button"
+                onClick={() => toggleGroup(node.id)}
+                aria-expanded={expanded}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-bold transition-colors ${
+                  childActive && !expanded
+                    ? 'bg-brand-50 text-brand-800'
+                    : 'text-ink-700 hover:bg-ink-50'
+                }`}
+              >
+                <MiniIcon d={node.icon} className="h-5 w-5 shrink-0" />
+                <span className="flex-1 truncate">{node.label}</span>
+                <MiniIcon
+                  d={ICONS.chevron}
+                  className={`h-4 w-4 shrink-0 text-ink-400 transition-transform duration-200 ${expanded ? 'rotate-0' : '-rotate-90'}`}
+                />
+              </button>
+              <div
+                className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                  expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <div className="ml-3 space-y-0.5 border-l border-ink-100 py-1 pl-2">
+                    {node.children.map((c) => renderLink(c, { sub: true }))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {visibleCount === 0 && permMap !== null && (
           <p className="px-3 py-4 text-xs font-semibold leading-relaxed text-ink-400">
             Aucun accès accordé à votre rôle — contactez le super administrateur.
           </p>
@@ -242,7 +440,7 @@ export default function AdminLayout() {
                     </span>
                     <span className="block text-[11px] font-semibold text-brand-600">{ROLE_LABELS[role] || role}</span>
                   </span>
-                  <MiniIcon d="m19.5 8.25-7.5 7.5-7.5-7.5" className="hidden h-4 w-4 text-ink-400 sm:block" />
+                  <MiniIcon d={ICONS.chevron} className="hidden h-4 w-4 text-ink-400 sm:block" />
                 </button>
                 {menu && (
                   <div className="absolute right-0 mt-2 w-60 overflow-hidden rounded-2xl bg-white py-2 shadow-lift ring-1 ring-ink-950/5">
@@ -264,7 +462,7 @@ export default function AdminLayout() {
                       onClick={() => nav('/admin/profil')}
                       className="flex w-full items-center gap-3 px-4 py-2.5 text-sm font-semibold text-ink-600 hover:bg-cream"
                     >
-                      <MiniIcon d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" className="h-4 w-4" />
+                      <MiniIcon d={ICONS.profile} className="h-4 w-4" />
                       Mon profil
                     </button>
                     {['admin', 'super_admin'].includes(role) && (
@@ -273,7 +471,7 @@ export default function AdminLayout() {
                         onClick={() => nav('/admin/parametres')}
                         className="flex w-full items-center gap-3 px-4 py-2.5 text-sm font-semibold text-ink-600 hover:bg-cream"
                       >
-                        <MiniIcon d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" className="h-4 w-4" />
+                        <MiniIcon d={ICONS.settings} className="h-4 w-4" />
                         Paramètres
                       </button>
                     )}
@@ -292,19 +490,19 @@ export default function AdminLayout() {
           </header>
 
           <main className="min-w-0 flex-1 px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
-          <Suspense
-            fallback={
-              <div className="grid min-h-[40vh] place-items-center">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
-                  <p className="text-sm font-semibold text-ink-400">Chargement…</p>
+            <Suspense
+              fallback={
+                <div className="grid min-h-[40vh] place-items-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+                    <p className="text-sm font-semibold text-ink-400">Chargement…</p>
+                  </div>
                 </div>
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
-        </main>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </main>
         </div>
       </div>
     </div>
