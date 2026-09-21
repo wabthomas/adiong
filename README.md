@@ -27,7 +27,7 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
 ## Espace administrateur
 
 - URL : `/admin` (lien « Espace admin » dans le pied de page)
-- Identifiants initiaux : **admin@adiong.org** / **AdiOng2026!**
+- Compte initial : créé au premier seed (`server/seed.js`) — **changez le mot de passe dès la première connexion** ; ne documentez jamais le mot de passe par défaut dans le dépôt.
 - Fonctionnalités :
   - **Tableau de bord** : statistiques, derniers dons et messages
   - **Articles** : publication/édition/suppression des actualités (catégories : plaidoyer, éducation, écologie, socio-économique), brouillons
@@ -60,7 +60,8 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
     `super_admin` (tout + modules + salaires), `admin` (tout sauf modules/salaires),
     `editor` (articles, causes, campagnes, médiathèque), `viewer` (consultation).
     **Droits d'accès par rôle** : matrice configurable par le super admin (rôles × zones
-    *Back office / Contenu / Paramètres & utilisateurs / GRH / Point de vente*) — elle peut retirer
+    *Tableau de bord / Messages / Boîte contact / Dons / Contenu / Médiathèque / GRH /
+    Mon espace / Point de vente / Utilisateurs / Paramètres*) — elle peut retirer
     ou accorder finement l'accès à chaque zone (le menu et l'API s'adaptent ; le super admin conserve
     toujours tous les droits et seul lui peut modifier la matrice).
     Garde-fous : impossible de supprimer/rétrograder le dernier compte privilégié, ni de supprimer son
