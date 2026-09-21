@@ -550,6 +550,16 @@ migrate(`CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 migrate('CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages(conversation_id, id)');
+migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_at TEXT NOT NULL DEFAULT \'\'');
+migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_name TEXT NOT NULL DEFAULT \'\'');
+migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_by INTEGER NOT NULL DEFAULT 0');
+migrate('ALTER TABLE chat_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0');
+migrate(`CREATE TABLE IF NOT EXISTS chat_reactions (
+  message_id INTEGER NOT NULL,
+  employee_id INTEGER NOT NULL,
+  emoji TEXT NOT NULL,
+  PRIMARY KEY (message_id, employee_id)
+)`);
 migrate(`CREATE TABLE IF NOT EXISTS chat_pins (
   conversation_id INTEGER NOT NULL,
   message_id INTEGER NOT NULL,

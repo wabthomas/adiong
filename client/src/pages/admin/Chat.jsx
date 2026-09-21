@@ -57,17 +57,32 @@ function CheckMarks({ read }) {
   );
 }
 
-function Attachment({ m }) {
-  const isImg = String(m.attachment_mime || '').startsWith('image/');
-  if (isImg) return <img src={m.attachment} alt={m.attachment_name} className="max-h-64 w-auto rounded-lg ring-1 ring-ink-100" />;
+function Attachment({ m, onZoom }) {
+  const mime = String(m.attachment_mime || '');
+  if (mime.startsWith('audio/')) {
+    return (
+      <div className="flex items-center gap-2.5 py-1">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/10 text-lg">🎤</span>
+        <audio controls src={m.attachment} className="h-10 w-56 max-w-full" />
+      </div>
+    );
+  }
+  if (mime.startsWith('image/')) {
+    return (
+      <button onClick={() => onZoom?.(m.attachment, m.attachment_name)} className="block cursor-zoom-in" title="Agrandir">
+        <img src={m.attachment} alt={m.attachment_name} className="max-h-64 w-auto rounded-lg ring-1 ring-ink-100" />
+      </button>
+    );
+  }
   return (
     <a href={m.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg bg-black/5 px-3 py-2 text-xs font-bold hover:bg-black/10">
       📄 <span className="max-w-[180px] truncate">{m.attachment_name || 'Fichier'}</span>
     </a>
   );
 }
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
-function Bubble({ m, me, group, canModerate, onReply, onPin, onEdit, onDelete }) {
+function Bubble({ m, me, group, canModerate, onReply, onPin, onEdit, onDelete, onReact, onZoom }) {
   const mine = m.sender_id === me;
   const color = SENDER_COLORS[(m.sender_id || 0) % SENDER_COLORS.length];
   if (m.deleted_at) {
@@ -90,7 +105,7 @@ function Bubble({ m, me, group, canModerate, onReply, onPin, onEdit, onDelete })
             <p className="line-clamp-2 opacity-80">{m.reply_body}</p>
           </div>
         )}
-        {m.attachment && <Attachment m={m} />}
+        {m.attachment && <Attachment m={m} onZoom={onZoom} />}
         {m.body && <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{m.body}</p>}
         <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${mine ? 'text-white/70' : 'text-ink-400'}`}>
           {m.pinned === 1 && <span title="Épinglé">📌</span>}
@@ -98,15 +113,38 @@ function Bubble({ m, me, group, canModerate, onReply, onPin, onEdit, onDelete })
           <span>{fmtTime(m.created_at)}</span>
           {mine && <CheckMarks read={!!m.read} />}
         </div>
-        <div className={`absolute top-1/2 hidden -translate-y-1/2 gap-1 group-hover:flex ${mine ? 'right-full mr-1.5' : 'left-full ml-1.5'}`}>
-          <button onClick={() => onReply(m)} title="Répondre" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">↩</button>
-          <button onClick={() => onPin(m)} title={m.pinned === 1 ? 'Désépingler' : 'Épingler'} className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">📌</button>
-          {mine && (
-            <button onClick={() => onEdit(m)} title="Modifier" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">✎</button>
-          )}
-          {(mine || canModerate) && (
-            <button onClick={() => onDelete(m)} title="Supprimer" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-red-100 text-red-500 hover:bg-red-50">🗑</button>
-          )}
+        {m.reactions?.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {m.reactions.map((r) => (
+              <button
+                key={r.emoji}
+                onClick={() => onReact?.(m, r.emoji)}
+                title={r.mine ? 'Retirer ma réaction' : `Réagir ${r.emoji}`}
+                className={`rounded-full px-1.5 py-0.5 text-[11px] font-bold ring-1 transition-colors ${r.mine ? 'bg-brand-100 ring-brand-300' : 'bg-white/85 ring-ink-100 hover:bg-cream'}`}
+              >
+                {r.emoji} {r.count > 1 ? r.count : ''}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className={`absolute top-1/2 hidden -translate-y-1/2 flex-col gap-1 group-hover:flex ${mine ? 'right-full mr-1.5' : 'left-full ml-1.5'}`}>
+          <div className="flex gap-1">
+            <button onClick={() => onReply(m)} title="Répondre" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">↩</button>
+            <button onClick={() => onPin(m)} title={m.pinned === 1 ? 'Désépingler' : 'Épingler'} className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">📌</button>
+            {mine && (
+              <button onClick={() => onEdit(m)} title="Modifier" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-ink-100 hover:bg-cream">✎</button>
+            )}
+            {(mine || canModerate) && (
+              <button onClick={() => onDelete(m)} title="Supprimer" className="grid h-7 w-7 place-items-center rounded-full bg-white text-xs shadow-soft ring-1 ring-red-100 text-red-500 hover:bg-red-50">🗑</button>
+            )}
+          </div>
+          <div className="flex gap-0.5 rounded-full bg-white px-1 py-0.5 shadow-soft ring-1 ring-ink-100">
+            {REACTION_EMOJIS.map((em) => (
+              <button key={em} onClick={() => onReact?.(m, em)} title={`Réagir ${em}`} className="grid h-6 w-6 place-items-center rounded-full text-sm hover:bg-cream">
+                {em}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -460,13 +498,66 @@ export default function Chat() {
   const [notLinked, setNotLinked] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [typing, setTyping] = useState(null);
+  const [atBottom, setAtBottom] = useState(true);
+  const [newCount, setNewCount] = useState(0);
+  const [zoom, setZoom] = useState(null);
+  const [recording, setRecording] = useState(null);
   const endRef = useRef(null);
   const fileRef = useRef(null);
   const searchTimer = useRef(null);
+  const scrollRef = useRef(null);
+  const atBottomRef = useRef(true);
+  const prevLastMsgRef = useRef(0);
+  const typingSentAtRef = useRef(0);
+  const recorderRef = useRef(null);
+  const recTimerRef = useRef(null);
+  const recChunksRef = useRef([]);
+  const recSendRef = useRef(true);
 
   const me = active?.me;
+  const meRef = useRef(null);
+  useEffect(() => { meRef.current = me; }, [me]);
   const activeRole = active?.conversation?.my_role || 'membre';
   const canModerate = active?.conversation?.type === 'group' && ['propietaire', 'moderateur'].includes(activeRole);
+  const typingFresh = typing && typing.at && Date.now() - ts(typing.at) < 6000;
+
+  const askNotifyPermission = () => {
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  };
+  const playBeep = () => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.type = 'sine';
+      o.frequency.setValueAtTime(880, ctx.currentTime);
+      o.frequency.setValueAtTime(1174, ctx.currentTime + 0.09);
+      g.gain.setValueAtTime(0.07, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      o.start();
+      o.stop(ctx.currentTime + 0.42);
+      o.onended = () => ctx.close();
+    } catch { /* audio indisponible */ }
+  };
+  const notifyFresh = (d) => {
+    const conv = d.conversation;
+    if (!conv || conv.muted) return;
+    playBeep();
+    const lastOther = [...d.messages].reverse().find((m) => m.sender_id !== meRef.current);
+    if (!lastOther) return;
+    const preview = lastOther.body
+      || (String(lastOther.attachment_mime || '').startsWith('audio/') ? '🎤 Message vocal'
+        : String(lastOther.attachment_mime || '').startsWith('image/') ? '📷 Photo' : '📎 Pièce jointe');
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(`${conv.name}${lastOther.sender_name ? ' — ' + lastOther.sender_name : ''}`, { body: preview.slice(0, 140), tag: `adiong-chat-${conv.id}` });
+      } catch { /* notification refusée */ }
+    }
+  };
 
   const loadConvs = useCallback(() => {
     api.chat.conversations().then(setConvs).catch((e) => {
@@ -483,28 +574,84 @@ export default function Chat() {
     api.chat.staff().then(setStaff).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!activeId) { setActive(null); setMessages([]); setPins([]); return; }
-    const load = () => {
-      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
-    };
-    load();
-    const id = setInterval(load, 5000);
-    return () => clearInterval(id);
+  const loadMsgs = useCallback(() => {
+    if (!activeId) return;
+    api.chat.messages(activeId).then((d) => {
+      const prevLast = prevLastMsgRef.current;
+      const fresh = d.messages.filter((m) => m.id > prevLast && m.sender_id !== meRef.current).length;
+      setActive(d);
+      setPins(d.pins);
+      setTyping(d.typing || null);
+      setMessages(d.messages);
+      if (d.messages.length) prevLastMsgRef.current = d.messages[d.messages.length - 1].id;
+      if (fresh > 0) {
+        if (document.visibilityState === 'hidden') notifyFresh(d);
+        else if (!atBottomRef.current) setNewCount((c) => c + fresh);
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
+  useEffect(() => {
+    if (!activeId) { setActive(null); setMessages([]); setPins([]); setTyping(null); return; }
+    prevLastMsgRef.current = 0;
+    setNewCount(0);
+    atBottomRef.current = true;
+    setAtBottom(true);
+    loadMsgs();
+    const id = setInterval(loadMsgs, 5000);
+    return () => clearInterval(id);
+  }, [activeId, loadMsgs]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, activeId]);
+    const last = messages[messages.length - 1];
+    if (last && (atBottomRef.current || last.sender_id === me)) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [messages, me]);
 
   useEffect(() => {
     if (!activeId) return;
-    const onVis = () => {
-      if (document.visibilityState === 'visible') api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
-    };
+    const onVis = () => { if (document.visibilityState === 'visible') loadMsgs(); };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
-  }, [activeId]);
+  }, [activeId, loadMsgs]);
+
+  const onScrollChat = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+    atBottomRef.current = nearEnd;
+    setAtBottom(nearEnd);
+    if (nearEnd) setNewCount(0);
+  };
+  const scrollBottom = () => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    setNewCount(0);
+  };
+  const sendTyping = () => {
+    if (!activeId) return;
+    const now = Date.now();
+    if (now - typingSentAtRef.current < 1800) return;
+    typingSentAtRef.current = now;
+    api.chat.typing(activeId).catch(() => {});
+  };
+  const doMute = async (muted) => {
+    try {
+      await api.chat.mute(activeId, muted);
+      loadMsgs();
+      loadConvs();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  const doReact = async (m, emoji) => {
+    try {
+      await api.chat.react(m.id, emoji);
+      loadMsgs();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
 
   const openConv = (id) => {
     setActiveId(id);
@@ -537,13 +684,14 @@ export default function Chat() {
   const send = async () => {
     if ((!text.trim() && !file) || !activeId) return;
     setBusy(true);
+    askNotifyPermission();
     try {
       await api.chat.send(activeId, text.trim(), reply?.id || 0, file);
       setText('');
       setFile(null);
       setReply(null);
       if (fileRef.current) fileRef.current.value = '';
-      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+      loadMsgs();
       loadConvs();
     } catch (e) {
       alert(e.message);
@@ -551,12 +699,57 @@ export default function Chat() {
       setBusy(false);
     }
   };
+  const sendVoice = async (f) => {
+    if (!activeId) return;
+    setBusy(true);
+    askNotifyPermission();
+    try {
+      await api.chat.send(activeId, '', 0, f);
+      loadMsgs();
+      loadConvs();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const startRec = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recChunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) recChunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        clearInterval(recTimerRef.current);
+        setRecording(null);
+        const blob = new Blob(recChunksRef.current, { type: rec.mimeType || 'audio/webm' });
+        recChunksRef.current = [];
+        if (recSendRef.current && blob.size > 0) {
+          const ext = String(rec.mimeType || '').includes('mp4') ? 'm4a' : 'webm';
+          sendVoice(new File([blob], `message-vocal-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.${ext}`, { type: blob.type }));
+        }
+      };
+      rec.start();
+      recorderRef.current = rec;
+      setRecording({ sec: 0 });
+      recTimerRef.current = setInterval(() => setRecording((r) => (r ? { ...r, sec: r.sec + 1 } : r)), 1000);
+    } catch {
+      alert('Microphone inaccessible — vérifiez les autorisations du navigateur.');
+    }
+  };
+  const stopRec = (sendIt) => {
+    recSendRef.current = !!sendIt;
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+  };
   const doEdit = async (m) => {
     const v = prompt('Modifier le message :', m.body || '');
     if (v === null || !v.trim() || v.trim() === m.body) return;
     try {
       await api.chat.editMessage(m.id, v.trim());
-      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+      loadMsgs();
     } catch (e) {
       alert(e.message);
     }
@@ -565,7 +758,7 @@ export default function Chat() {
     if (!confirm('Supprimer ce message pour tout le monde ?')) return;
     try {
       await api.chat.deleteMessage(m.id);
-      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+      loadMsgs();
       loadConvs();
     } catch (e) {
       alert(e.message);
@@ -574,7 +767,7 @@ export default function Chat() {
   const doPin = async (m) => {
     try {
       await api.chat.togglePin(m.id);
-      api.chat.messages(activeId).then((d) => { setActive(d); setMessages(d.messages); setPins(d.pins); }).catch(() => {});
+      loadMsgs();
     } catch (e) {
       alert(e.message);
     }
@@ -631,6 +824,8 @@ export default function Chat() {
           onPin={doPin}
           onEdit={doEdit}
           onDelete={doDelete}
+          onReact={doReact}
+          onZoom={(url, name) => setZoom({ url, name })}
         />
       </React.Fragment>
     );
@@ -696,15 +891,18 @@ export default function Chat() {
                     <Avatar src={c.avatar} name={c.name} group={c.type === 'group'} size="h-12 w-12" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-bold text-ink-900">{c.name}</span>
+                        <span className="truncate text-sm font-bold text-ink-900">
+                          {c.name}
+                          {c.muted && <span className="ml-1.5 text-xs opacity-70" title="Sourdine activée">🔕</span>}
+                        </span>
                         <span className="shrink-0 text-[10px] font-semibold text-ink-400">{fmtListTime(c.last_message_at)}</span>
                       </span>
                       <span className="mt-0.5 flex items-center justify-between gap-2">
-                        <span className="truncate text-xs text-ink-500">
+                        <span className={`truncate text-xs ${c.muted ? 'text-ink-300' : 'text-ink-500'}`}>
                           {c.type === 'group' && c.last_message_sender ? `${c.last_message_sender.split(' ')[0]} : ` : ''}
                           {c.last_message_body || (c.type === 'group' ? `${c.member_count} membre(s)` : 'Discussion privée')}
                         </span>
-                        {c.unread > 0 && (
+                        {c.unread > 0 && !c.muted && (
                           <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-brand-600 px-1.5 text-[10px] font-black text-white">
                             {c.unread > 99 ? '99+' : c.unread}
                           </span>
@@ -740,7 +938,7 @@ export default function Chat() {
         </div>
       </div>
 
-      <div className={`min-w-0 flex-1 flex-col ${activeId ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`relative min-w-0 flex-1 flex-col ${activeId ? 'flex' : 'hidden lg:flex'}`}>
         {!active ? (
           <div className="grid flex-1 place-items-center bg-cream/40 p-8 text-center">
             <div>
@@ -764,12 +962,23 @@ export default function Chat() {
                     <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">groupe ouvert</span>
                   )}
                 </p>
-                <p className="truncate text-xs text-ink-400">
-                  {active.conversation.type === 'group'
-                    ? `${active.conversation.member_count} membre(s) · ${activeRole === 'propietaire' ? 'vous êtes propriétaire' : activeRole === 'moderateur' ? 'modérateur' : 'discussion de groupe'}`
-                    : active.conversation.other?.position || 'Discussion privée'}
+                <p className={`truncate text-xs ${typingFresh ? 'font-semibold text-brand-600' : 'text-ink-400'}`}>
+                  {typingFresh
+                    ? (active.conversation.type === 'group'
+                        ? `${(typing.name || '').split(' ')[0]} est en train d'écrire…`
+                        : 'est en train d’écrire…')
+                    : (active.conversation.type === 'group'
+                      ? `${active.conversation.member_count} membre(s) · ${activeRole === 'propietaire' ? 'vous êtes propriétaire' : activeRole === 'moderateur' ? 'modérateur' : 'discussion de groupe'}`
+                      : active.conversation.other?.position || 'Discussion privée')}
                 </p>
               </div>
+              <button
+                className={`btn-ghost !px-3 !py-1.5 text-xs ${active.conversation.muted ? '!text-ink-400' : ''}`}
+                title={active.conversation.muted ? 'Réactiver les notifications' : 'Sourdine (masque les non-lus)'}
+                onClick={() => doMute(!active.conversation.muted)}
+              >
+                {active.conversation.muted ? '🔕' : '🔔'}
+              </button>
               <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Membres" onClick={() => setModal('members')}>👥</button>
               {active.conversation.type === 'group' && (
                 <button className="btn-ghost !px-3 !py-1.5 text-xs" title="Paramètres du groupe" onClick={() => setModal('settings')}>⚙</button>
@@ -786,10 +995,19 @@ export default function Chat() {
               </div>
             )}
 
-            <div className="flex-1 space-y-2 overflow-y-auto bg-[#eef3f0] px-4 py-4">
+            <div ref={scrollRef} onScroll={onScrollChat} className="flex-1 space-y-2 overflow-y-auto bg-[#eef3f0] px-4 py-4">
               {rendered}
               <div ref={endRef} />
             </div>
+            {!atBottom && (
+              <button
+                onClick={scrollBottom}
+                className="absolute right-5 z-10 rounded-full bg-brand-600 px-3.5 py-2 text-xs font-bold text-white shadow-lift transition-colors hover:bg-brand-700"
+                style={{ bottom: '7.5rem' }}
+              >
+                ↓ {newCount > 0 ? `${newCount} nouveau${newCount > 1 ? 'x' : ''}` : 'Bas de discussion'}
+              </button>
+            )}
 
             <div className="border-t border-ink-100 bg-white p-3">
               {reply && (
@@ -808,6 +1026,16 @@ export default function Chat() {
                   <button onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ''; }} className="text-ink-400 hover:text-ink-600">✕</button>
                 </div>
               )}
+              {recording ? (
+                <div className="flex items-center gap-3 rounded-xl bg-rose-50 px-4 py-2.5 ring-1 ring-rose-100">
+                  <span className="h-3 w-3 animate-pulse rounded-full bg-rose-500" />
+                  <span className="text-sm font-bold text-rose-700">Enregistrement… {recording.sec} s</span>
+                  <div className="ml-auto flex gap-2">
+                    <button className="btn-ghost !px-3 !py-1.5 text-sm" title="Annuler l'enregistrement" onClick={() => stopRec(false)}>✕</button>
+                    <button className="btn-primary !px-4 !py-1.5 text-sm" onClick={() => stopRec(true)}>Envoyer</button>
+                  </div>
+                </div>
+              ) : (
               <div className="flex items-end gap-2">
                 <div className="relative">
                   <button className="btn-ghost !px-3 !py-2.5" title="Émoticônes" onClick={() => setEmojiOpen((v) => !v)}>😊</button>
@@ -827,12 +1055,13 @@ export default function Chat() {
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                 />
                 <button className="btn-ghost !px-3 !py-2.5" title="Pièce jointe (image ou PDF)" onClick={() => fileRef.current?.click()}>📎</button>
+                <button className="btn-ghost !px-3 !py-2.5" title="Message vocal (micro)" onClick={startRec}>🎤</button>
                 <textarea
                   className="input max-h-32 flex-1 resize-none !py-3"
                   rows={1}
                   placeholder="Écrire un message…"
                   value={text}
-                  onChange={(e) => setText(e.target.value)}
+                  onChange={(e) => { setText(e.target.value); if (e.target.value.trim()) sendTyping(); }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -844,6 +1073,7 @@ export default function Chat() {
                   {busy ? '…' : 'Envoyer'}
                 </button>
               </div>
+              )}
             </div>
           </>
         )}
@@ -865,6 +1095,25 @@ export default function Chat() {
           <MembersModal conv={active.conversation} onClose={() => setModal(null)} onChanged={loadConvs} />
         )}
       </Modal>
+
+      {zoom && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/85 p-6" onClick={() => setZoom(null)}>
+          <div className="max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            <img src={zoom.url} alt={zoom.name || 'Image'} className="max-h-[82vh] w-auto rounded-xl shadow-lift" />
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="min-w-0 truncate text-sm font-semibold text-white">{zoom.name || 'Image'}</p>
+              <div className="flex shrink-0 gap-2">
+                <a href={zoom.url} download={zoom.name || 'image'} className="btn-ghost !bg-white/15 !px-4 !py-2 text-sm !text-white hover:!bg-white/25">
+                  ⬇ Télécharger
+                </a>
+                <button className="btn-ghost !bg-white/15 !px-4 !py-2 text-sm !text-white hover:!bg-white/25" onClick={() => setZoom(null)}>
+                  ✕ Fermer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

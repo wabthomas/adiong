@@ -169,17 +169,24 @@ personnel (`grh_employees`), pas l'ensemble des comptes.
   membres et des rôles), modérateurs (ajout/retrait de membres, épinglage, suppression de
   n'importe quel message), membres. Départ libre ; un groupe sans assez de membres est
   supprimé automatiquement.
-- **Messages** : texte, **pièce jointe** (image ou PDF, 10 Mo max, stockée dans
-  `uploads/chat`), **réponse** à un message, **édition** (signalée), **suppression** douce
-  (« Message supprimé », visible seulement par l'auteur ou un modérateur), **épinglage**
-  (bandeau des messages épinglés), séparateurs de jours, **reçus** ✓ (envoyé) / ✓✓ (lu),
-  **compteurs de non-lus** par conversation et badge global dans le menu.
+- **Messages** : texte, **pièce jointe** (image, PDF ou **message vocal** enregistré au
+  micro, 10 Mo max, stockée dans `uploads/chat`), **réaction** par emoji, **réponse** à un
+  message, **édition** (signalée), **suppression** douce (« Message supprimé », visible
+  seulement par l'auteur ou un modérateur), **épinglage** (bandeau des messages épinglés),
+  séparateurs de jours, **reçus** ✓ (envoyé) / ✓✓ (lu).
+- **Confort** : indicateur **« en train d'écrire… »**, bouton *Bas de discussion* quand des
+  messages arrivent pendant que l'on lit plus haut, **lightbox** image pleine taille avec
+  téléchargement, lecteur audio intégré, **sourdine** par conversation (masque les non-lus),
+  **notification navigateur + son** à l'arrivée d'un message (onglet en arrière-plan).
+- **Sécurité des fichiers** : les fichiers de chat ne sont **jamais publics** — la route
+  `/uploads/chat/*` exige un compte employé connecté **et** l'appartenance à la conversation
+  (avatars de groupe exceptés). Images redimensionnées à 1600 px max (jimp).
 - **Recherche** plein texte dans l'historique des conversations de l'employé (2 car. min).
 - Rafraîchissement par **polling** (messages 5 s, liste 15 s, badge menu 20 s) — sans
   WebSocket, comme le reste de l'application.
 
-Tables : `chat_conversations`, `chat_members`, `chat_messages`, `chat_pins`, `chat_reads`.
-Endpoints : `/api/chat/*`. Limité à 30 requêtes/min par employé.
+Tables : `chat_conversations`, `chat_members`, `chat_messages`, `chat_pins`, `chat_reads`,
+`chat_reactions`. Endpoints : `/api/chat/*`. Limité à 30 requêtes/min par employé.
 
 **Activation / désactivation** : réservée au **super administrateur** via
 *Admin → Paramètres → Modules (super admin)*. Le module est **actif par défaut**

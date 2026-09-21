@@ -371,7 +371,8 @@ const upload = multer({
     else cb(new Error('Format non supporté (jpg, png, webp, gif, svg)'));
   }
 });
-app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));
+// NB: le montage statique /uploads est fait plus bas, APRÈS la route protégée
+// /uploads/chat/:file (les fichiers de messagerie ne sont jamais publics).
 
 app.post('/api/auth/login', loginLimiter, (req, res) => {
   const { email, password } = req.body || {};
@@ -3240,6 +3241,12 @@ const CHAT = [authRequired, requireModule('grh_enabled', 'GRH'), requireModule('
 const chatLimiter = rateLimit({ windowMs: 60_000, max: 30, key: (req) => `chat:${req.employee?.id || req.ip}`, message: 'Vous envoyez les messages trop rapidement — patientez un instant.' });
 const chatDir = path.join(uploadDir, 'chat');
 if (!fs.existsSync(chatDir)) fs.mkdirSync(chatDir, { recursive: true });
+const isAllowedChatFile = (file) => {
+  if (isAllowedUpload(file)) return true;
+  const mime = String(file.mimetype || '').toLowerCase();
+  const name = String(file.originalname || '').toLowerCase();
+  return /^audio\/(webm|ogg|opus|mp4|m4a|x-m4a|mpeg)$/.test(mime) || /\.(webm|ogg|opus|m4a|mp4|mp3)$/.test(name);
+};
 const chatUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, chatDir),
@@ -3250,10 +3257,39 @@ const chatUpload = multer({
   }),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (isAllowedUpload(file)) cb(null, true);
-    else cb(new Error('Format non supporté (images JPG/PNG/WebP/GIF/SVG ou PDF)'));
+    if (isAllowedChatFile(file)) cb(null, true);
+    else cb(new Error('Format non supporté (image, PDF ou audio)'));
   }
 });
+const compressChatImage = (full) => {
+  try {
+    if (!/\.(jpe?g|png|webp)$/i.test(full)) return;
+    Jimp.read(full)
+      .then((img) => {
+        if (img.bitmap.width > 1600 || img.bitmap.height > 1600) img.contain(1600, 1600);
+        else return;
+        return img.write(full);
+      })
+      .catch(() => {});
+  } catch { /* image illisible : on garde l'originale */ }
+};
+
+// Fichiers de messagerie : jamais publics (employé connecté + membre de la conversation)
+app.get('/uploads/chat/:file', authRequired, requireModule('grh_enabled', 'GRH'), requireModule('chat_enabled', 'Messagerie d\'équipe'), selfEmployeeGuard, (req, res) => {
+  const file = path.basename(req.params.file);
+  const url = `/uploads/chat/${file}`;
+  const isAvatar = db.prepare('SELECT 1 FROM chat_conversations WHERE avatar = ?').get(url);
+  if (!isAvatar) {
+    const ok = db.prepare(`SELECT 1 FROM chat_messages m
+      WHERE m.attachment = ? AND m.deleted_at = ''
+      AND m.conversation_id IN (SELECT conversation_id FROM chat_members WHERE employee_id = ?)`).get(url, req.employee.id);
+    if (!ok) return res.status(404).json({ error: 'Fichier introuvable' });
+  }
+  const full = path.join(chatDir, file);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Fichier introuvable' });
+  res.sendFile(full);
+});
+app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));
 
 const CHAT_ROLE_LABELS = { proprietaire: 'Propriétaire', moderateur: 'Modérateur', membre: 'Membre' };
 const chatIsMod = (req) => req.chat && req.chat.conv.type === 'group' && ['propietaire', 'moderateur'].includes(req.chat.mem.role);
@@ -3286,6 +3322,7 @@ const chatConvView = (conv, emp) => {
     owner_id: conv.owner_id,
     my_role: mem?.role || (conv.type === 'group' && conv.owner_id === emp.id ? 'propietaire' : 'membre'),
     member_count: db.prepare('SELECT COUNT(*) n FROM chat_members WHERE conversation_id = ?').get(conv.id).n,
+    muted: mem?.muted === 1,
     unread: chatUnread(conv.id, emp.id),
     last_message_at: conv.last_message_at,
     last_message_body: conv.last_message_body,
@@ -3310,15 +3347,46 @@ app.post('/api/chat/upload', ...CHAT, (req, res) => {
   chatUpload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
+    compressChatImage(req.file.path);
     res.json({ url: `/uploads/chat/${req.file.filename}`, name: req.file.originalname, mime: req.file.mimetype });
   });
 });
 
 app.get('/api/chat/unread', ...CHAT, (req, res) => {
-  const rows = db.prepare('SELECT conversation_id FROM chat_members WHERE employee_id = ?').all(req.employee.id);
+  const rows = db.prepare('SELECT conversation_id FROM chat_members WHERE employee_id = ? AND muted = 0').all(req.employee.id);
   let count = 0;
   for (const r of rows) count += chatUnread(r.conversation_id, req.employee.id);
   res.json({ count });
+});
+
+app.put('/api/chat/conversations/:id/mute', ...CHAT, guardChatConv, (req, res) => {
+  const muted = req.body?.muted ? 1 : 0;
+  db.prepare('UPDATE chat_members SET muted = ? WHERE conversation_id = ? AND employee_id = ?').run(muted, req.chat.conv.id, req.employee.id);
+  res.json({ ok: true, muted: !!muted });
+});
+
+app.post('/api/chat/:id/typing', ...CHAT, guardChatConv, (req, res) => {
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  db.prepare('UPDATE chat_conversations SET last_typing_at = ?, last_typing_name = ?, last_typing_by = ? WHERE id = ?')
+    .run(now, req.employee.full_name, req.employee.id, req.chat.conv.id);
+  res.json({ ok: true });
+});
+
+const CHAT_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+app.put('/api/chat/messages/:id/react', ...CHAT, (req, res) => {
+  const m = db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(Number(req.params.id));
+  if (!m || m.deleted_at) return res.status(404).json({ error: 'Message introuvable' });
+  const mem = db.prepare('SELECT 1 FROM chat_members WHERE conversation_id = ? AND employee_id = ?').get(m.conversation_id, req.employee.id);
+  if (!mem) return res.status(403).json({ error: 'Conversation introuvable' });
+  const emoji = CHAT_EMOJIS.includes(req.body?.emoji) ? req.body.emoji : null;
+  const cur = db.prepare('SELECT emoji FROM chat_reactions WHERE message_id = ? AND employee_id = ?').get(m.id, req.employee.id);
+  if (!emoji || (cur && cur.emoji === emoji)) {
+    db.prepare('DELETE FROM chat_reactions WHERE message_id = ? AND employee_id = ?').run(m.id, req.employee.id);
+  } else {
+    db.prepare('INSERT INTO chat_reactions (message_id, employee_id, emoji) VALUES (?, ?, ?) ON CONFLICT(message_id, employee_id) DO UPDATE SET emoji = excluded.emoji')
+      .run(m.id, req.employee.id, emoji);
+  }
+  res.json({ ok: true });
 });
 
 app.get('/api/chat/staff', ...CHAT, (req, res) => {
@@ -3526,10 +3594,23 @@ app.get('/api/chat/:id', ...CHAT, guardChatConv, (req, res) => {
     WHERE m.conversation_id = ?
     ORDER BY m.id DESC LIMIT 200`).all(convId).reverse();
   const reads = db.prepare('SELECT employee_id, read_at FROM chat_reads WHERE conversation_id = ?').all(convId);
+  const ids = msgs.map((m) => m.id);
+  const reacRows = ids.length
+    ? db.prepare(`SELECT message_id, employee_id, emoji FROM chat_reactions
+        WHERE message_id IN (${ids.map(() => '?').join(',')})`).all(...ids)
+    : [];
+  const reacByMsg = {};
+  for (const r of reacRows) (reacByMsg[r.message_id] ||= []).push(r);
   msgs.forEach((m) => {
     m.read = 0;
     if (m.sender_id === req.employee.id)
       m.read = reads.some((r) => r.employee_id !== req.employee.id && r.read_at >= m.created_at) ? 1 : 0;
+    const byEmoji = {};
+    for (const r of reacByMsg[m.id] || []) {
+      (byEmoji[r.emoji] ||= { emoji: r.emoji, count: 0, mine: false }).count += 1;
+      if (r.employee_id === req.employee.id) byEmoji[r.emoji].mine = true;
+    }
+    m.reactions = Object.values(byEmoji);
   });
   db.prepare(`INSERT INTO chat_reads (conversation_id, employee_id, read_at) VALUES (?, ?, datetime('now'))
     ON CONFLICT(conversation_id, employee_id) DO UPDATE SET read_at = datetime('now')`).run(convId, req.employee.id);
@@ -3538,7 +3619,11 @@ app.get('/api/chat/:id', ...CHAT, guardChatConv, (req, res) => {
     LEFT JOIN grh_employees e ON e.id = m.sender_id
     WHERE p.conversation_id = ? AND m.deleted_at = ''
     ORDER BY p.pinned_at DESC LIMIT 10`).all(convId);
-  res.json({ conversation: chatConvView(req.chat.conv, req.employee), messages: msgs, pins, me: req.employee.id });
+  const convRow = req.chat.conv;
+  const typing = convRow.last_typing_by && convRow.last_typing_by !== req.employee.id
+    ? { name: convRow.last_typing_name || '', at: convRow.last_typing_at || '' }
+    : null;
+  res.json({ conversation: chatConvView(req.chat.conv, req.employee), messages: msgs, pins, me: req.employee.id, typing });
 });
 
 
@@ -3556,10 +3641,11 @@ app.post('/api/chat/:id/messages', ...CHAT, guardChatConv, chatLimiter, (req, re
       const rep = db.prepare('SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND deleted_at = \'\'').get(replyTo, conv.id);
       if (!rep) return res.status(400).json({ error: 'Impossible de répondre à ce message' });
     }
+    if (req.file) compressChatImage(req.file.path);
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const info = db.prepare(`INSERT INTO chat_messages (conversation_id, sender_id, body, attachment, attachment_name, attachment_mime, reply_to, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(conv.id, req.employee.id, body, attachment, attachmentName, attachmentMime, replyTo, now);
-    chatTouchLast(conv.id, { id: info.lastInsertRowid, sender_id: req.employee.id, body: body || (attachmentMime.startsWith('image/') ? '📷 Photo' : '📎 Fichier'), created_at: now });
+    chatTouchLast(conv.id, { id: info.lastInsertRowid, sender_id: req.employee.id, body: body || (attachmentMime.startsWith('image/') ? '📷 Photo' : attachmentMime.startsWith('audio/') ? '🎤 Message vocal' : '📎 Fichier'), created_at: now });
     res.json({ id: info.lastInsertRowid, created_at: now });
   });
 });
