@@ -570,7 +570,9 @@ export const api = {
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 4000);
       }
-    }
+    },
+    exercises: () => req('/api/admin/compta/exercises', { auth: true }),
+    closeExercise: (id) => req(`/api/admin/compta/exercises/${id}/close`, { method: 'POST', body: {}, auth: true })
   },
   chat: {
     upload: async (file) => {

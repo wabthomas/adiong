@@ -3887,14 +3887,19 @@ const POS_ADMIN = [
 const PAYMENT_METHODS = ['especes', 'mobile', 'carte', 'virement', 'autre'];
 const STOCK_MOVEMENT_TYPES = ['entree', 'sortie', 'ajustement'];
 const money2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+let txDepth = 0;
 const runTx = (fn) => {
-  db.exec('BEGIN');
+  const outer = txDepth === 0;
+  if (outer) db.exec('BEGIN');
+  txDepth++;
   try {
     const out = fn();
-    db.exec('COMMIT');
+    txDepth--;
+    if (outer) db.exec('COMMIT');
     return out;
   } catch (e) {
-    try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ }
+    txDepth--;
+    if (outer) { try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ } }
     throw e;
   }
 };
@@ -4577,6 +4582,46 @@ app.get('/api/admin/pos/sales/:id/invoice', ...POS, async (req, res) => {
 const COMPTA = [authRequired, requireRole('compta'), requireModule('compta_enabled', 'Comptabilité')];
 const COMPTA_START = '2026-01-01';
 const ACC_NATURES = ['asset', 'liability', 'equity', 'expense', 'income'];
+
+const comptaAddDays = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const comptaNextYearEnd = (startIso) => {
+  const d = new Date(startIso + 'T00:00:00Z');
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+const comptaExerciseInfo = () => {
+  let ex = db.prepare("SELECT * FROM acc_exercises WHERE status = 'ouvert' ORDER BY start_date DESC LIMIT 1").get();
+  if (!ex) {
+    const last = db.prepare('SELECT * FROM acc_exercises ORDER BY start_date DESC LIMIT 1').get();
+    if (last) {
+      const s = comptaAddDays(last.end_date, 1);
+      db.prepare('INSERT INTO acc_exercises (start_date, end_date) VALUES (?, ?)').run(s, comptaNextYearEnd(s));
+    } else {
+      db.prepare("INSERT OR IGNORE INTO acc_exercises (start_date, end_date) VALUES (?, ?)").run(COMPTA_START, comptaNextYearEnd(COMPTA_START));
+    }
+    ex = db.prepare("SELECT * FROM acc_exercises WHERE status = 'ouvert' ORDER BY start_date DESC LIMIT 1").get();
+  }
+  return ex;
+};
+const comptaExerciseBalances = (start, end) => {
+  const rows = db.prepare(`SELECT l.account_code AS code, a.class,
+      COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE e.date >= ? AND e.date <= ? AND a.class IN (6, 7)
+    GROUP BY l.account_code`).all(start, end);
+  const charges = rows.filter((r) => r.class === 6 && cmoney(r.d - r.c) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.d - r.c) }));
+  const resources = rows.filter((r) => r.class === 7 && cmoney(r.c - r.d) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.c - r.d) }));
+  const totalCharges = cmoney(charges.reduce((s, c) => s + c.amount, 0));
+  const totalResources = cmoney(resources.reduce((s, c) => s + c.amount, 0));
+  return { charges, resources, totalCharges, totalResources, result: cmoney(totalResources - totalCharges) };
+};
 const TREASURY_BY_METHOD = {
   airtel: '5161', mpesa: '5162', orange: '5163',
   mobile: '516', carte: '511', virement: '511',
@@ -4608,7 +4653,8 @@ const deleteComptaSource = (source, sourceId) => {
 const createComptaEntry = ({ date, journal, label, lines, source = 'manual', sourceId = 0, createdBy = 'system', reversalOf = 0 }) => {
   date = String(date || '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw Object.assign(new Error('Date invalide (format AAAA-MM-JJ)'), { status: 400 });
-  if (date < COMPTA_START) throw Object.assign(new Error(`L'exercice SYCEBNL d'ADI démarre le ${COMPTA_START} (aucune écriture antérieure)`), { status: 400 });
+  const ex = comptaExerciseInfo();
+  if (date < ex.start_date) throw Object.assign(new Error(`L'exercice ouvert démarre le ${ex.start_date} — les exercices clôturés sont verrouillés`), { status: 400 });
   const valid = (Array.isArray(lines) ? lines : [])
     .map((l) => ({
       account_code: String(l?.account_code || '').trim(),
@@ -4724,6 +4770,7 @@ app.get('/api/admin/compta/overview', ...COMPTA, (req, res) => {
     resources,
     charges,
     surplus: cmoney(resources - charges),
+    exercise: comptaExerciseInfo(),
     entries: db.prepare('SELECT COUNT(*) AS n FROM acc_entries').get().n,
     accounts: db.prepare('SELECT COUNT(*) AS n FROM acc_accounts WHERE active = 1').get().n
   });
@@ -4802,6 +4849,8 @@ app.post('/api/admin/compta/entries', ...COMPTA, (req, res) => {
 app.post('/api/admin/compta/entries/:id/reverse', ...COMPTA, (req, res) => {
   const e = entryDetail(req.params.id);
   if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
+  if (e.source === 'cloture' || e.source === 'cloture2')
+    return res.status(403).json({ error: 'Écriture de clôture : l\'exercice est verrouillé (aucun contre-sens)' });
   if (comptaSourceEntry('reverse', e.id)) return res.status(409).json({ error: 'Cette écriture est déjà annulée' });
   try {
     const id = createComptaEntry({
@@ -4824,8 +4873,12 @@ app.delete('/api/admin/compta/entries/:id', ...COMPTA, (req, res) => {
   if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
   if (e.source !== 'manual')
     return res.status(403).json({ error: 'Écriture automatique : correction uniquement par annulation (aucun effacement)' });
-  deleteComptaEntry(e.id);
-  res.json({ ok: true });
+  const rev = db.prepare("SELECT id FROM acc_entries WHERE source = 'reverse' AND is_reversal_of = ?").get(e.id);
+  runTx(() => {
+    if (rev) deleteComptaEntry(rev.id);
+    deleteComptaEntry(e.id);
+  });
+  res.json({ ok: true, with_reversal: !!rev });
 });
 
 app.get('/api/admin/compta/balance', ...COMPTA, (req, res) => {
@@ -5086,6 +5139,56 @@ app.get('/api/admin/compta/statements/result', ...COMPTA, async (req, res) => {
     if (!res.headersSent) res.status(500).json({ error: 'Impossible de générer l\'état' });
   }
   res.json(data);
+});
+
+// ---------- Exercices : clôture SYCEBNL (report du résultat, verrouillage) ----------
+app.get('/api/admin/compta/exercises', ...COMPTA, (req, res) => {
+  res.json(db.prepare('SELECT * FROM acc_exercises ORDER BY start_date').all().map((ex) => {
+    const b = comptaExerciseBalances(ex.start_date, ex.end_date);
+    return { ...ex, total_charges: b.totalCharges, total_ressources: b.totalResources, resultat_calcule: b.result };
+  }));
+});
+
+app.post('/api/admin/compta/exercises/:id/close', ...COMPTA, (req, res) => {
+  const ex = db.prepare('SELECT * FROM acc_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Exercice introuvable' });
+  if (ex.status !== 'ouvert') return res.status(409).json({ error: 'Cet exercice est déjà clôturé' });
+  const openCount = db.prepare("SELECT COUNT(*) n FROM acc_exercises WHERE status = 'ouvert'").get().n;
+  if (openCount > 1) return res.status(409).json({ error: 'Un seul exercice peut être ouvert à la fois' });
+  const b = comptaExerciseBalances(ex.start_date, ex.end_date);
+  if (!b.charges.length && !b.resources.length) return res.status(400).json({ error: 'Aucun mouvement sur cet exercice — rien à clôturer' });
+  const today = new Date().toISOString().slice(0, 10);
+  const date = today < ex.start_date ? ex.start_date : (today > ex.end_date ? ex.end_date : today);
+  const year = ex.start_date.slice(0, 4);
+  const linesA = [
+    ...b.charges.map((c) => ({ account_code: c.code, debit: 0, credit: c.amount, label: `Charges ${c.code} clôturées` })),
+    ...b.resources.map((r) => ({ account_code: r.code, debit: r.amount, credit: 0, label: `Ressources ${r.code} clôturées` }))
+  ];
+  if (b.result >= 0) linesA.push({ account_code: '178', debit: 0, credit: b.result, label: "Surplus de l'exercice (transit)" });
+  else linesA.push({ account_code: '168', debit: -b.result, credit: 0, label: "Déficit de l'exercice (transit)" });
+  const linesB = b.result >= 0
+    ? [
+      { account_code: '178', debit: b.result, credit: 0, label: "Report du surplus de l'exercice" },
+      { account_code: '171', debit: 0, credit: b.result, label: 'Surplus reporté' }
+    ]
+    : [
+      { account_code: '171', debit: -b.result, credit: 0, label: 'Imputation du déficit sur le surplus reporté' },
+      { account_code: '168', debit: 0, credit: -b.result, label: "Déficit de l'exercice (transit)" }
+    ];
+  try {
+    runTx(() => {
+      createComptaEntry({ date, journal: 'OD', label: `Clôture des charges et ressources — exercice ${year}`, lines: linesA, source: 'cloture', sourceId: ex.id, createdBy: req.user.email });
+      createComptaEntry({ date, journal: 'OD', label: b.result >= 0 ? `Report du résultat de l'exercice ${year} (surplus ${b.result.toFixed(2)} USD)` : `Report du résultat de l'exercice ${year} (déficit ${(-b.result).toFixed(2)} USD)`, lines: linesB, source: 'cloture2', sourceId: ex.id, createdBy: req.user.email });
+      db.prepare("UPDATE acc_exercises SET status = 'cloture', result = ?, closed_at = ?, closed_by = ? WHERE id = ?").run(b.result, new Date().toISOString(), req.user.email, ex.id);
+      const nextStart = comptaAddDays(ex.end_date, 1);
+      db.prepare('INSERT INTO acc_exercises (start_date, end_date) VALUES (?, ?)').run(nextStart, comptaNextYearEnd(nextStart));
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] cloture', err);
+    return res.status(500).json({ error: 'Clôture impossible — l\'exercice est inchangé' });
+  }
+  res.json(db.prepare('SELECT * FROM acc_exercises WHERE id = ?').get(ex.id));
 });
 
 

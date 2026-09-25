@@ -8,6 +8,7 @@ function Dialog({ title, onClose, wide, children }) {
 
 const TABS = [
   { id: 'dash', group: 'Pilotage', label: 'Tableau de bord', hint: 'Trésorerie et activité du mois' },
+  { id: 'exercises', group: 'Pilotage', label: 'Exercices', hint: 'Clôture SYCEBNL et report du résultat' },
   { id: 'journal', group: 'Saisie', label: 'Journal', hint: 'Écritures, annulations et recherche' },
   { id: 'plan', group: 'Saisie', label: 'Plan de comptes', hint: 'Comptes SYCEBNL (9 classes)' },
   { id: 'balance', group: 'Analyse', label: 'Balance', hint: 'Totaux débits / crédits par compte' },
@@ -22,7 +23,9 @@ const SOURCES = {
   donation: { label: 'Don', cls: 'bg-emerald-50 text-emerald-700' },
   pos_sale: { label: 'Vente POS', cls: 'bg-brand-50 text-brand-700' },
   payroll: { label: 'Paie', cls: 'bg-violet-50 text-violet-700' },
-  reverse: { label: 'Annulation', cls: 'bg-red-50 text-red-600' }
+  reverse: { label: 'Annulation', cls: 'bg-red-50 text-red-600' },
+  cloture: { label: 'Clôture', cls: 'bg-amber-50 text-amber-700' },
+  cloture2: { label: 'Report résultat', cls: 'bg-amber-50 text-amber-700' }
 };
 
 const fmt = (n) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0).replace(/[\u202f\u00a0\u2009]/g, ' ');
@@ -62,6 +65,7 @@ export default function ComptaAdmin() {
         ))}
       </div>
       {tab === 'dash' && <DashTab overview={overview} refresh={refresh} goTo={setTab} />}
+      {tab === 'exercises' && <ExercisesTab />}
       {tab === 'journal' && <JournalTab refresh={refresh} />}
       {tab === 'plan' && <PlanTab />}
       {tab === 'balance' && <BalanceTab />}
@@ -163,6 +167,80 @@ function DashTab({ overview, refresh, goTo }) {
           </div>
         </div>
       </Section>
+    </div>
+  );
+}
+
+// ---------- Exercices (clôture SYCEBNL) ----------
+function ExercisesTab() {
+  const [exs, setExs] = useState(null);
+  const [error, setError] = useState('');
+  const [confirm, setConfirm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.compta.exercises().then(setExs).catch((e) => setError(e.message || 'Erreur'));
+  useEffect(() => { load(); }, []);
+  const doClose = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.compta.closeExercise(confirm.id);
+      setConfirm(null);
+      load();
+    } catch (e) {
+      setError(e.message || 'Clôture impossible');
+      setConfirm(null);
+    }
+    setBusy(false);
+  };
+  if (!exs) return <p className="text-sm text-ink-400">Chargement…</p>;
+  return (
+    <div className="space-y-6">
+      {error && <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
+      <Section title="Clôture d'exercice" desc="Clôturer l'exercice : ① éteint les soldes des comptes de charges (6xx) et de ressources (7xx), ② reporte le résultat au surplus reporté (171) via les comptes de transit 178/168, ③ verrouille définitivement l'exercice (plus aucune écriture datée de la période) et ouvre l'exercice suivant.">
+        <div className="space-y-3">
+          {exs.map((ex) => (
+            <div key={ex.id} className={`flex flex-wrap items-center gap-4 rounded-xl border p-4 ${ex.status === 'ouvert' ? 'border-brand-200 bg-brand-50/40' : 'border-ink-100 bg-ink-50/50'}`}>
+              <div className="min-w-[11rem]">
+                <p className="text-sm font-bold text-ink-900">{ex.start_date} → {ex.end_date}</p>
+                <p className="text-xs text-ink-400">{ex.status === 'cloture' ? `Clôturé le ${String(ex.closed_at).slice(0, 10)} par ${ex.closed_by}` : 'Exercice ouvert en cours'}</p>
+              </div>
+              <div className="grid flex-1 grid-cols-3 gap-3 text-sm">
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-ink-400">Charges</p>
+                  <p className="font-semibold tabular-nums">{fmt(ex.total_charges)} $</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-ink-400">Ressources</p>
+                  <p className="font-semibold tabular-nums">{fmt(ex.total_ressources)} $</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-ink-400">Résultat</p>
+                  <p className={`font-bold tabular-nums ${ex.resultat_calcule >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                    {fmt(Math.abs(ex.status === 'cloture' ? ex.result : ex.resultat_calcule))} $ {ex.resultat_calcule >= 0 ? '(surplus)' : '(déficit)'}
+                  </p>
+                </div>
+              </div>
+              {ex.status === 'ouvert' ? (
+                <button onClick={() => setConfirm(ex)} className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700">Clôturer l'exercice</button>
+              ) : (
+                <span className="rounded-full bg-ink-100 px-3 py-1 text-xs font-bold text-ink-500">Verrouillé</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </Section>
+      {confirm && (
+        <Dialog title="Confirmer la clôture d'exercice" onClose={() => { if (!busy) setConfirm(null); }}>
+          <p className="text-sm leading-relaxed text-ink-600">
+            L'exercice <b>{confirm.start_date} → {confirm.end_date}</b> sera clôturé avec un <b>{confirm.resultat_calcule >= 0 ? 'surplus' : 'déficit'}</b> de <b>{fmt(Math.abs(confirm.resultat_calcule))} $</b>.
+            Les écritures de clôture sont générées automatiquement (report au surplus reporté, compte 171), puis l'exercice est <b>verrouillé</b> : plus aucune écriture ne pourra être datée de cette période.
+          </p>
+          <div className="mt-5 flex justify-end gap-3">
+            <button onClick={() => setConfirm(null)} disabled={busy} className="rounded-xl border border-ink-200 px-4 py-2 text-sm font-semibold text-ink-600 hover:bg-ink-50">Annuler</button>
+            <button onClick={doClose} disabled={busy} className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700">{busy ? "Clôture en cours…" : "Clôturer l'exercice"}</button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }

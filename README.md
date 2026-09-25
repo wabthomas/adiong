@@ -262,6 +262,11 @@ attribuable à d'autres rôles via la matrice des droits (zone « Comptabilité 
   surplus/déficit de l'exercice), exportables en **CSV** (BOM + `;`) et **PDF**.
 - **Exercice** : ouverture à zéro au **1ᵉʳ janvier 2026** — toute écriture antérieure est
   refusée (bilan d'ouverture à zéro choisi pour ADI).
+- **Clôture d'exercice** (onglet *Exercices*) : en fin d'année, un clic génère les écritures
+  de clôture SYCEBNL — extinction des soldes des comptes de charges (6xx) et de ressources
+  (7xx), report du **surplus/déficit** au surplus reporté (compte 171) via les comptes de
+  transit 178/168 — puis **verrouille définitivement** l'exercice (plus aucune écriture
+  datée de la période, annulations comprises) et ouvre automatiquement l'exercice suivant.
 
 **Intégrations automatiques** (écritures tracées par source, créées/détées à la vie des
 objets métier, aucune saisie manuelle nécessaire) :

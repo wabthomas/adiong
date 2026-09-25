@@ -747,6 +747,16 @@ migrate(`CREATE TABLE IF NOT EXISTS acc_entry_lines (
 )`);
 migrate('CREATE INDEX IF NOT EXISTS idx_acc_lines_entry ON acc_entry_lines(entry_id)');
 migrate('CREATE INDEX IF NOT EXISTS idx_acc_lines_account ON acc_entry_lines(account_code, entry_id)');
+migrate(`CREATE TABLE IF NOT EXISTS acc_exercises (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  start_date TEXT NOT NULL UNIQUE,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ouvert',
+  result REAL NOT NULL DEFAULT 0,
+  closed_at TEXT NOT NULL DEFAULT '',
+  closed_by TEXT NOT NULL DEFAULT ''
+)`);
+db.prepare("INSERT OR IGNORE INTO acc_exercises (start_date, end_date) VALUES ('2026-01-01', '2026-12-31')").run();
 
 function ensureComptaSeed() {
   const journals = [['O', 'Ouverture'], ['ACH', 'Achats'], ['VEN', 'Ventes & ressources'], ['CAI', 'Caisse'], ['BQ', 'Banque'], ['OD', 'Opérations diverses']];
