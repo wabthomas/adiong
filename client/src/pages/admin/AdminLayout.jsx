@@ -17,6 +17,7 @@ const ICONS = {
   inbox: 'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75',
   grh: 'M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z',
   pos: 'M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 0 0-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 0 0-16.536-1.84M7.5 14.25 5.106 5.272M6 20.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm12.75 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z',
+  compta: 'M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.151A60.075 60.075 0 0 1 18.75 19.5M6 3h12m-6 9h.008v.008H12V12Zm0 3h.008v.008H12V15Z',
   media: 'M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',
   leave: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5',
   profile: 'M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z',
@@ -91,6 +92,15 @@ const NAV_TREE = [
     icon: ICONS.pos
   },
   {
+    id: 'compta',
+    type: 'link',
+    to: '/admin/compta',
+    label: 'Comptabilité (SYCEBNL)',
+    roles: ['super_admin'],
+    compta: true,
+    icon: ICONS.compta
+  },
+  {
     id: 'admin',
     type: 'group',
     label: 'Administration',
@@ -120,6 +130,7 @@ const ITEM_AREAS = {
   '/admin/mon-espace': 'leave',
   '/admin/grh': 'grh',
   '/admin/pos': 'pos',
+  '/admin/compta': 'compta',
   '/admin/utilisateurs': 'users',
   '/admin/parametres': 'settings'
 };
@@ -134,11 +145,12 @@ function MiniIcon({ d, className = 'h-5 w-5' }) {
   );
 }
 
-function itemVisible(it, { role, grhEnabled, posEnabled, chatEnabled, permMap }) {
+function itemVisible(it, { role, grhEnabled, posEnabled, chatEnabled, comptaEnabled, permMap }) {
   if (!(it.roles || ALL_ROLES).includes(role)) return false;
   if (it.grh && !grhEnabled) return false;
   if (it.pos && !posEnabled) return false;
   if (it.chat && !chatEnabled) return false;
+  if (it.compta && !comptaEnabled) return false;
   const area = ITEM_AREAS[it.to];
   if (area && permMap !== null && permMap[area] === false) return false;
   return true;
@@ -177,6 +189,7 @@ export default function AdminLayout() {
   const [grhEnabled, setGrhEnabled] = useState(false);
   const [posEnabled, setPosEnabled] = useState(false);
   const [chatEnabled, setChatEnabled] = useState(true);
+  const [comptaEnabled, setComptaEnabled] = useState(true);
   const [permMap, setPermMap] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
   const [openGroups, setOpenGroups] = useState(loadOpenGroups);
@@ -186,8 +199,8 @@ export default function AdminLayout() {
   const initials = (savedUser?.full_name || savedUser?.email || 'A').slice(0, 2).toUpperCase();
 
   const ctx = useMemo(
-    () => ({ role, grhEnabled, posEnabled, chatEnabled, permMap }),
-    [role, grhEnabled, posEnabled, chatEnabled, permMap]
+    () => ({ role, grhEnabled, posEnabled, chatEnabled, comptaEnabled, permMap }),
+    [role, grhEnabled, posEnabled, chatEnabled, comptaEnabled, permMap]
   );
 
   const visibleTree = useMemo(() => {
@@ -239,6 +252,7 @@ export default function AdminLayout() {
         setGrhEnabled(!!m.grh_enabled);
         setPosEnabled(!!m.pos_enabled);
         setChatEnabled(m.chat_enabled !== false);
+        setComptaEnabled(!!m.compta_enabled);
       })
       .catch(() => {});
   }, [role]);

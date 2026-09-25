@@ -521,6 +521,57 @@ export const api = {
     },
     stats: () => req('/api/admin/pos/stats', { auth: true })
   },
+  compta: {
+    overview: () => req('/api/admin/compta/overview', { auth: true }),
+    accounts: {
+      list: (q = '') => req(`/api/admin/compta/accounts${q ? `?q=${encodeURIComponent(q)}` : ''}`, { auth: true }),
+      create: (b) => req('/api/admin/compta/accounts', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/compta/accounts/${id}`, { method: 'PUT', body: b, auth: true })
+    },
+    journals: () => req('/api/admin/compta/journals', { auth: true }),
+    entries: {
+      list: (params = {}) => {
+        const q = new URLSearchParams();
+        for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) q.set(k, v);
+        const s = q.toString();
+        return req(`/api/admin/compta/entries${s ? `?${s}` : ''}`, { auth: true });
+      },
+      get: (id) => req(`/api/admin/compta/entries/${id}`, { auth: true }),
+      create: (b) => req('/api/admin/compta/entries', { method: 'POST', body: b, auth: true }),
+      reverse: (id) => req(`/api/admin/compta/entries/${id}/reverse`, { method: 'POST', body: {}, auth: true }),
+      remove: (id) => req(`/api/admin/compta/entries/${id}`, { method: 'DELETE', auth: true })
+    },
+    balance: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) q.set(k, v);
+      const s = q.toString();
+      return req(`/api/admin/compta/balance${s ? `?${s}` : ''}`, { auth: true });
+    },
+    ledger: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) q.set(k, v);
+      const s = q.toString();
+      return req(`/api/admin/compta/ledger${s ? `?${s}` : ''}`, { auth: true });
+    },
+    statements: {
+      balanceSheet: (at) => req(`/api/admin/compta/statements/balance-sheet${at ? `?at=${encodeURIComponent(at)}` : ''}`, { auth: true }),
+      result: (from, to) => req(`/api/admin/compta/statements/result?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { auth: true }),
+      download: async (path, filename) => {
+        const t = getToken();
+        const res = await fetch(path, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+        if (!res.ok) throw new Error(`Export impossible (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      }
+    }
+  },
   chat: {
     upload: async (file) => {
       const fd = new FormData();

@@ -61,7 +61,7 @@ npm start       # Express sert l'API + le site (port 4000, PORT=... pour changer
     `editor` (articles, causes, campagnes, médiathèque), `viewer` (consultation).
     **Droits d'accès par rôle** : matrice configurable par le super admin (rôles × zones
     *Tableau de bord / Messages / Boîte contact / Dons / Contenu / Médiathèque / GRH /
-    Mon espace / Point de vente / Utilisateurs / Paramètres*) — elle peut retirer
+    Mon espace / Point de vente / Comptabilité (SYCEBNL) / Utilisateurs / Paramètres*) — elle peut retirer
     ou accorder finement l'accès à chaque zone (le menu et l'API s'adaptent ; le super admin conserve
     toujours tous les droits et seul lui peut modifier la matrice).
     Garde-fous : impossible de supprimer/rétrograder le dernier compte privilégié, ni de supprimer son
@@ -236,6 +236,53 @@ les statistiques (contrôlé côté serveur et masqué dans l'interface).
 **Activation / désactivation** : comme le module GRH, réservée au **super administrateur**
 (*Admin → Paramètres → Modules*). La désactivation masque le menu, ferme l'API POS **et la
 boutique publique** (les données sont conservées).
+
+## Comptabilité (SYCEBNL — OHADA)
+
+Module de comptabilité conforme au **Système Comptable des Entités à But Non Lucratif
+(SYCEBNL)**, 11ᵉ Acte uniforme OHADA, en vigueur depuis le **1ᵉʳ janvier 2024** pour les ONG,
+associations et fondations des 17 États membres. Accès : **super admin** par défaut,
+attribuable à d'autres rôles via la matrice des droits (zone « Comptabilité (SYCEBNL) »).
+*Admin → Comptabilité (SYCEBNL)*, 6 onglets.
+
+- **Tableau de bord** : trésorerie totale (classe 5), ressources et charges du mois,
+  résultat (surplus/déficit), dernières écritures.
+- **Journal** : écritures en **partie double** (débits = contrôlés contre les crédits à la
+  saisie), journaux Ouverture / Achats / Ventes / Caisse / Banque / Divers, références
+  `EC-AAAA-####`, filtres (période, journal, texte, compte), **annulation par contre-sens**
+  (l'origine est conservée) et suppression des saisies manuelles uniquement.
+- **Plan de comptes** : **74 comptes SYCEBNL pré-remplis** sur les **9 classes** du
+  référentiel (1 Ressources durables · 2 Actif immobilisé · 3 Stocks · 4 Tiers · 5
+  Trésorerie — dont Airtel / M-Pesa / Orange Money · 6 Charges · 7 Ressources — dont dons et
+  legs · 8 Hors activités ordinaires · 9 Contributions en nature), extensible et renomable.
+- **Balance** et **grand livre** : totaux débits/crédits et soldes courants par compte,
+  bornés par période.
+- **États financiers** : **bilan SYCEBNL** (actif/passif, avec surplus de l'exercice non
+  reporté au passif) et **compte de résultat** (charges par nature, ressources,
+  surplus/déficit de l'exercice), exportables en **CSV** (BOM + `;`) et **PDF**.
+- **Exercice** : ouverture à zéro au **1ᵉʳ janvier 2026** — toute écriture antérieure est
+  refusée (bilan d'ouverture à zéro choisi pour ADI).
+
+**Intégrations automatiques** (écritures tracées par source, créées/détées à la vie des
+objets métier, aucune saisie manuelle nécessaire) :
+
+| Objet métier | Déclencheur | Écriture automatique |
+| --- | --- | --- |
+| Don | statut → *Confirmée* (et inverse) | trésorerie selon le moyen (Airtel 5161, M-Pesa 5162, Orange 5163, banque 511, caisse 531) ·· 749/7491 Dons |
+| Vente POS | encaissement | trésorerie selon le moyen ·· 703 Ressources des activités |
+| Paie | bulletin → *envoyé* (et inverse) | 641 Salaires ·· 511 Banque (fin du mois du bulletin) |
+
+**Rôles** : réservé au **super administrateur** par défaut (les salaires et comptes
+d'exploitation sont confidentiels) — la matrice des droits peut l'attribuer au rôle
+*administrateur* si besoin.
+
+**Activation / désactivation** : réservée au **super administrateur**
+(*Admin → Paramètres → Modules*). La désactivation masque le menu, ferme l'API compta et
+**suspend la génération des écritures automatiques** (les données déjà saisies sont
+conservées ; réactiver ne recrée pas les écritures des événements passés).
+
+Tables : `acc_accounts`, `acc_journals`, `acc_entries`, `acc_entry_lines`.
+Endpoints : `/api/admin/compta/*`.
 
 ## Sécurité
 

@@ -570,7 +570,6 @@ migrate('CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages(conv
 migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_at TEXT NOT NULL DEFAULT \'\'');
 migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_name TEXT NOT NULL DEFAULT \'\'');
 migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_by INTEGER NOT NULL DEFAULT 0');
-migrate('ALTER TABLE chat_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0');
 migrate(`CREATE TABLE IF NOT EXISTS chat_reactions (
   message_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL,
@@ -649,6 +648,7 @@ migrate(`CREATE TABLE IF NOT EXISTS chat_reads (
     console.error('[chat migrate user_id]', e.message);
   }
 })();
+migrate('ALTER TABLE chat_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0');
 
 /** Réactions : employee_id → user_id */
 (() => {
@@ -708,6 +708,131 @@ function ensureArticleCategories() {
     ins.run(row.slug, name, extra);
   }
 }
-ensureArticleCategories();
+migrate(`CREATE TABLE IF NOT EXISTS acc_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  nature TEXT NOT NULL DEFAULT 'expense',
+  class INTEGER NOT NULL DEFAULT 0,
+  is_system INTEGER NOT NULL DEFAULT 1,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS acc_journals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS acc_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  journal_code TEXT NOT NULL,
+  ref TEXT UNIQUE NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'manual',
+  source_id INTEGER NOT NULL DEFAULT 0,
+  is_reversal_of INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate('CREATE INDEX IF NOT EXISTS idx_acc_entries_date ON acc_entries(date)');
+migrate('CREATE UNIQUE INDEX IF NOT EXISTS idx_acc_entries_source ON acc_entries(source, source_id) WHERE source != \'manual\'');
+migrate(`CREATE TABLE IF NOT EXISTS acc_entry_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entry_id INTEGER NOT NULL,
+  account_code TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  debit REAL NOT NULL DEFAULT 0,
+  credit REAL NOT NULL DEFAULT 0
+)`);
+migrate('CREATE INDEX IF NOT EXISTS idx_acc_lines_entry ON acc_entry_lines(entry_id)');
+migrate('CREATE INDEX IF NOT EXISTS idx_acc_lines_account ON acc_entry_lines(account_code, entry_id)');
+
+function ensureComptaSeed() {
+  const journals = [['O', 'Ouverture'], ['ACH', 'Achats'], ['VEN', 'Ventes & ressources'], ['CAI', 'Caisse'], ['BQ', 'Banque'], ['OD', 'Opérations diverses']];
+  const insJ = db.prepare('INSERT OR IGNORE INTO acc_journals (code, name) VALUES (?, ?)');
+  for (const [code, name] of journals) insJ.run(code, name);
+
+  if (db.prepare('SELECT COUNT(*) AS n FROM acc_accounts').get().n > 0) return;
+  const ACCOUNTS = [
+    ['101', 'Dotation fondatrice', 'equity', 1],
+    ['102', 'Autres versements des fondateurs', 'equity', 1],
+    ['151', 'Réserves statutaires', 'equity', 1],
+    ['152', 'Réserves libres', 'equity', 1],
+    ['165', 'Subventions d\'investissement perçues', 'equity', 1],
+    ['168', 'Déficit de l\'exercice (transit)', 'equity', 1],
+    ['171', 'Surplus reporté (exercice précédent)', 'equity', 1],
+    ['178', 'Surplus de l\'exercice (transit)', 'equity', 1],
+    ['211', 'Logiciels et brevets', 'asset', 2],
+    ['221', 'Terrains', 'asset', 2],
+    ['231', 'Bâtiments', 'asset', 2],
+    ['232', 'Travaux et agencements', 'asset', 2],
+    ['241', 'Matériel et mobilier de bureau', 'asset', 2],
+    ['243', 'Moyens de transport', 'asset', 2],
+    ['281', 'Amortissements — matériel', 'asset', 2],
+    ['283', 'Amortissements — transport', 'asset', 2],
+    ['291', 'Dépréciations — immobilisations', 'asset', 2],
+    ['311', 'Fournitures et consommables', 'asset', 3],
+    ['371', 'Produits destinés aux bénéficiaires', 'asset', 3],
+    ['391', 'Dépréciations — stocks', 'asset', 3],
+    ['411', 'Membres', 'liability', 4],
+    ['418', 'Divers créanciers / débiteurs', 'liability', 4],
+    ['419', 'Membres en attente (suspens)', 'liability', 4],
+    ['421', 'Personnel (à payer)', 'liability', 4],
+    ['441', 'État', 'liability', 4],
+    ['445', 'TVA déductible', 'liability', 4],
+    ['446', 'Autres impôts et taxes', 'liability', 4],
+    ['447', 'Sécurité sociale', 'liability', 4],
+    ['451', 'Fondateurs et contributeurs', 'liability', 4],
+    ['456', 'Comptes courants', 'liability', 4],
+    ['461', 'Donateurs (différés)', 'liability', 4],
+    ['465', 'Fonds affectés et fonds de gestion', 'liability', 4],
+    ['468', 'Divers débiteurs / créditeurs', 'liability', 4],
+    ['485', 'Charges sociales à payer', 'liability', 4],
+    ['488', 'Divers à payer', 'liability', 4],
+    ['511', 'Banque — compte principal', 'asset', 5],
+    ['512', 'Banque — comptes projets', 'asset', 5],
+    ['516', 'Mobile Money', 'asset', 5],
+    ['5161', 'Mobile Money — Airtel', 'asset', 5],
+    ['5162', 'Mobile Money — M-Pesa', 'asset', 5],
+    ['5163', 'Mobile Money — Orange', 'asset', 5],
+    ['531', 'Caisse', 'asset', 5],
+    ['581', 'Banque en attente (suspens)', 'asset', 5],
+    ['601', 'Achats de matières et fournitures', 'expense', 6],
+    ['611', 'Services extérieurs', 'expense', 6],
+    ['613', 'Locations', 'expense', 6],
+    ['615', 'Primes d\'assurance', 'expense', 6],
+    ['616', 'Honoraires, audits et expertises', 'expense', 6],
+    ['618', 'Autres services extérieurs', 'expense', 6],
+    ['621', 'Déplacements et représentation', 'expense', 6],
+    ['622', 'Transports', 'expense', 6],
+    ['623', 'Postes et télécommunications', 'expense', 6],
+    ['626', 'Publicité et communication', 'expense', 6],
+    ['631', 'Impôts et taxes', 'expense', 6],
+    ['641', 'Salaires et traitements', 'expense', 6],
+    ['642', 'Charges sociales sur salaires', 'expense', 6],
+    ['648', 'Autres charges de personnel', 'expense', 6],
+    ['651', 'Dotations aux amortissements', 'expense', 6],
+    ['653', 'Dotations aux provisions', 'expense', 6],
+    ['661', 'Charges financières', 'expense', 6],
+    ['665', 'Frais bancaires et de transaction', 'expense', 6],
+    ['701', 'Cotisations des membres', 'income', 7],
+    ['703', 'Ressources des activités et prestations', 'income', 7],
+    ['704', 'Ressources de formations et événements', 'income', 7],
+    ['741', 'Subventions d\'exploitation', 'income', 7],
+    ['749', 'Dons et legs — fonds général', 'income', 7],
+    ['7491', 'Dons affectés à un projet', 'income', 7],
+    ['761', 'Produits financiers', 'income', 7],
+    ['811', 'Charges exceptionnelles', 'expense', 8],
+    ['813', 'Insuffisances sur cessions', 'expense', 8],
+    ['821', 'Gains sur cessions d\'actifs', 'income', 8],
+    ['827', 'Produits exceptionnels', 'income', 8],
+    ['911', 'Contributions en nature — charges', 'expense', 9],
+    ['971', 'Contributions en nature — ressources', 'income', 9]
+  ];
+  const insA = db.prepare('INSERT OR IGNORE INTO acc_accounts (code, name, nature, class, is_system) VALUES (?, ?, ?, ?, 1)');
+  for (const [code, name, nature, cls] of ACCOUNTS) insA.run(code, name, nature, cls);
+}
+ensureComptaSeed();
 
 export default db;
