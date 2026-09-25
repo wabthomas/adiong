@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS = {
   grh_enabled: '0',
   pos_enabled: '0',
   chat_enabled: '1',
+  compta_enabled: '0',
   maintenance_enabled: '0',
   maintenance_message: 'Le site est temporairement en maintenance. Nous revenons très bientôt.',
   address: '38 Av. Baraka, Rue Dr. Maganga, Q. Himbi, Commune de Goma, Nord-Kivu, RDC',

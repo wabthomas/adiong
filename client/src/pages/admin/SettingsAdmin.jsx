@@ -318,6 +318,19 @@ export default function SettingsAdmin() {
     }
   };
 
+  const toggleCompta = async (value) => {
+    setModMsg('');
+    try {
+      const m = await api.modules.update({ compta_enabled: value });
+      setModules(m);
+      setModMsg(value
+        ? '✓ Comptabilité SYCEBNL activée — visible pour le super admin (et les rôles autorisés par la matrice).'
+        : '✓ Comptabilité désactivée — le menu est masqué, l’API fermée et plus aucune écriture automatique n’est créée.');
+    } catch (e) {
+      setModMsg(`✗ ${e.message}`);
+    }
+  };
+
   const toggleMaintenance = async (value) => {
     setModMsg('');
     try {
@@ -939,6 +952,41 @@ export default function SettingsAdmin() {
               <span
                 className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition-all ${
                   modules?.chat_enabled !== false ? 'left-8' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="card flex flex-wrap items-center justify-between gap-6 p-7">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="font-display text-lg font-bold text-ink-900">Comptabilité (SYCEBNL)</h3>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${modules?.compta_enabled ? 'bg-brand-100 text-brand-700' : 'bg-ink-100 text-ink-500'}`}>
+                  {modules?.compta_enabled ? 'Activé' : 'Désactivé'}
+                </span>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Comptabilité OHADA des entités à but non lucratif (SYCEBNL, en vigueur depuis le 1er janvier
+                2024) : écritures en partie double, plan de comptes à 9 classes, balance, grand livre, bilan et
+                compte de résultat (exports CSV/PDF). Les dons confirmés, les ventes POS et les paies envoyées
+                génèrent leurs écritures automatiquement. Accès : <strong>super admin</strong> par défaut —
+                attribuable à d'autres rôles via la matrice des droits. La désactivation masque le menu, ferme
+                l'API et suspend la génération d'écritures automatiques (les données restent conservées).
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!modules?.compta_enabled}
+              disabled={!modules}
+              onClick={() => toggleCompta(!modules?.compta_enabled)}
+              className={`relative h-9 w-16 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                modules?.compta_enabled ? 'bg-brand-600' : 'bg-ink-200'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition-all ${
+                  modules?.compta_enabled ? 'left-8' : 'left-1'
                 }`}
               />
             </button>

@@ -284,6 +284,7 @@ const ROLES = {
   content: ['super_admin', 'admin', 'editor'],
   hr: ['super_admin', 'admin'],
   pos: ['super_admin', 'admin', 'cashier'],
+  compta: ['super_admin'],
   any: ['super_admin', 'admin', 'editor', 'viewer', 'cashier']
 };
 // Droits fins par catégorie de fonction (comme Kivu Business Car). Le super admin conserve toujours tout.
@@ -297,6 +298,7 @@ const PERM_GROUPS = [
   { id: 'grh', label: 'GRH' },
   { id: 'leave', label: 'Mon espace' },
   { id: 'pos', label: 'Point de vente' },
+  { id: 'compta', label: 'Comptabilité' },
   { id: 'users', label: 'Utilisateurs' },
   { id: 'settings', label: 'Paramètres' }
 ];
@@ -328,6 +330,9 @@ const PERM_AREAS = [
   { id: 'pos.view', group: 'pos', label: 'Accéder au point de vente' },
   { id: 'pos.sell', group: 'pos', label: 'Encaisser une vente' },
   { id: 'pos.manage', group: 'pos', label: 'Catalogue, retours et rapports' },
+  { id: 'compta.view', group: 'compta', label: 'Consulter la comptabilité' },
+  { id: 'compta.manage', group: 'compta', label: 'Saisir et annuler des écritures' },
+  { id: 'compta.close', group: 'compta', label: 'Clôturer un exercice' },
   { id: 'users.view', group: 'users', label: 'Consulter les comptes' },
   { id: 'users.create', group: 'users', label: 'Créer des comptes' },
   { id: 'users.edit', group: 'users', label: 'Modifier des comptes' },
@@ -342,6 +347,7 @@ const permParent = (id) => {
   if (id === 'security.view' || id === 'roles.manage' || id.startsWith('users.')) return 'users';
   if (id === 'modules.manage' || id.startsWith('settings.')) return 'settings';
   if (id === 'dashboard.view') return 'dashboard';
+  if (id.startsWith('compta.')) return 'compta';
   const base = id.split('.')[0];
   return base === id ? null : base;
 };
@@ -351,7 +357,10 @@ const PERM_RESTRICT = {
   'roles.manage': ['super_admin'],
   'modules.manage': ['super_admin'],
   'chat.groups': ['super_admin', 'admin'],
-  'pos.manage': ['super_admin', 'admin']
+  'pos.manage': ['super_admin', 'admin'],
+  'compta.view': ['super_admin'],
+  'compta.manage': ['super_admin'],
+  'compta.close': ['super_admin']
 };
 const GROUP_AREA = {
   any: 'dashboard.view',
@@ -359,6 +368,7 @@ const GROUP_AREA = {
   admin: 'settings.view',
   hr: 'grh.view',
   pos: 'pos.view',
+  compta: 'compta.view',
   super: null
 };
 const ROLE_LIST = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
@@ -397,7 +407,8 @@ const seedFinePerms = () => {
   const exists = db.prepare('SELECT 1 AS n FROM role_permissions WHERE role = ? AND area = ?');
   const legacy = db.prepare('SELECT enabled FROM role_permissions WHERE role = ? AND area = ?');
   const ins = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
-  for (const role of ROLE_LIST) {
+  const roles = listAccessRoles().map((r) => r.key);
+  for (const role of roles) {
     for (const area of PERM_AREAS) {
       if (exists.get(role, area.id)) continue;
       const parent = permParent(area.id);
@@ -1139,7 +1150,9 @@ app.put('/api/admin/donations/:id', authRequired, requirePerm('donations.edit'),
   const status = DONATE_STATUSES.includes(req.body?.status) ? req.body.status : 'nouvelle';
   db.prepare('UPDATE donations SET status = ? WHERE id = ?').run(status, req.params.id);
   syncCampaignCollected(prev.campaign_id);
-  res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id));
+  const upd = db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id);
+  comptaOnDonationChange(prev.status, upd);
+  res.json(upd);
 });
 app.get('/api/admin/donations/:id/proof', authRequired, requirePerm('donations.view'), (req, res) => {
   const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
@@ -1152,6 +1165,7 @@ app.delete('/api/admin/donations/:id', authRequired, requirePerm('donations.dele
   if (d?.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
   db.prepare('DELETE FROM donations WHERE id = ?').run(req.params.id);
   syncCampaignCollected(d?.campaign_id);
+  if (d?.status === 'confirmee') deleteComptaSource('donation', d.id);
   res.json({ ok: true });
 });
 
@@ -1551,6 +1565,7 @@ app.get('/api/admin/modules', authRequired, (req, res) => {
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
     chat_enabled: getSetting('chat_enabled') !== '0',
+    compta_enabled: getSetting('compta_enabled') === '1',
     maintenance_enabled: getSetting('maintenance_enabled') === '1',
     maintenance_message: getSetting('maintenance_message') || '',
     is_super: req.user.role === 'super_admin'
@@ -1558,10 +1573,11 @@ app.get('/api/admin/modules', authRequired, (req, res) => {
 });
 
 app.put('/api/admin/modules', authRequired, requirePerm('modules.manage'), (req, res) => {
-  const { grh_enabled, pos_enabled, chat_enabled, maintenance_enabled, maintenance_message } = req.body || {};
+  const { grh_enabled, pos_enabled, chat_enabled, compta_enabled, maintenance_enabled, maintenance_message } = req.body || {};
   if (typeof grh_enabled === 'boolean') setSetting('grh_enabled', grh_enabled ? '1' : '0');
   if (typeof pos_enabled === 'boolean') setSetting('pos_enabled', pos_enabled ? '1' : '0');
   if (typeof chat_enabled === 'boolean') setSetting('chat_enabled', chat_enabled ? '1' : '0');
+  if (typeof compta_enabled === 'boolean') setSetting('compta_enabled', compta_enabled ? '1' : '0');
   if (typeof maintenance_enabled === 'boolean') setSetting('maintenance_enabled', maintenance_enabled ? '1' : '0');
   if (typeof maintenance_message === 'string') {
     setSetting('maintenance_message', maintenance_message.trim().slice(0, 500));
@@ -1570,6 +1586,7 @@ app.put('/api/admin/modules', authRequired, requirePerm('modules.manage'), (req,
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
     chat_enabled: getSetting('chat_enabled') !== '0',
+    compta_enabled: getSetting('compta_enabled') === '1',
     maintenance_enabled: getSetting('maintenance_enabled') === '1',
     maintenance_message: getSetting('maintenance_message') || '',
     is_super: true
@@ -2175,14 +2192,18 @@ app.put('/api/admin/grh/payroll/:id', ...PAY, (req, res) => {
       deductions, String(b.deductions_label || '').slice(0, 200), base + bonus - deductions,
       b.currency || ex.currency, status, ex.id
     );
-    res.json(db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(ex.id));
+    const upd = db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(ex.id);
+    comptaOnPayrollChange(ex.status, upd);
+    res.json(upd);
   } catch {
     res.status(409).json({ error: 'Un bulletin existe déjà pour cet employé ce mois-ci.' });
   }
 });
 
 app.delete('/api/admin/grh/payroll/:id', ...PAY, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(req.params.id);
   db.prepare('DELETE FROM grh_payroll WHERE id = ?').run(req.params.id);
+  if (ex?.status === 'envoye') deleteComptaSource('payroll', ex.id);
   res.json({ ok: true });
 });
 
@@ -4086,14 +4107,19 @@ const POS_ADMIN = [authRequired, requirePerm('pos.manage'), requireModule('pos_e
 const PAYMENT_METHODS = ['especes', 'mobile', 'carte', 'virement', 'autre'];
 const STOCK_MOVEMENT_TYPES = ['entree', 'sortie', 'ajustement'];
 const money2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+let txDepth = 0;
 const runTx = (fn) => {
-  db.exec('BEGIN');
+  const outer = txDepth === 0;
+  if (outer) db.exec('BEGIN');
+  txDepth++;
   try {
     const out = fn();
-    db.exec('COMMIT');
+    txDepth--;
+    if (outer) db.exec('COMMIT');
     return out;
   } catch (e) {
-    try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ }
+    txDepth--;
+    if (outer) { try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ } }
     throw e;
   }
 };
@@ -4391,7 +4417,9 @@ app.post('/api/admin/pos/sales', ...POS, requirePerm('pos.sell'), (req, res) => 
     db.prepare('UPDATE pos_sales SET number = ? WHERE id = ?').run(number, id);
     return id;
   });
-  res.json(fetchSale(sid));
+  const sale = fetchSale(sid);
+  comptaOnPosSale(sale);
+  res.json(sale);
 });
 
 app.get('/api/admin/pos/sales', ...POS, (req, res) => {
@@ -4768,6 +4796,623 @@ app.get('/api/admin/pos/sales/:id/invoice', ...POS, async (req, res) => {
     res.status(500).json({ error: 'Impossible de générer la facture' });
   }
 });
+
+// ---------- Comptabilité (SYCEBNL — OHADA, en vigueur depuis le 01/01/2024) ----------
+// Comptabilité d'engagement en partie double. Exercice d'ADI : ouverture à zéro au 01/01/2026.
+const COMPTA = [authRequired, requirePerm('compta.view'), requireModule('compta_enabled', 'Comptabilité')];
+const COMPTA_WRITE = [authRequired, requirePerm('compta.manage'), requireModule('compta_enabled', 'Comptabilité')];
+const COMPTA_CLOSE = [authRequired, requirePerm('compta.close'), requireModule('compta_enabled', 'Comptabilité')];
+const COMPTA_START = '2026-01-01';
+const ACC_NATURES = ['asset', 'liability', 'equity', 'expense', 'income'];
+
+const comptaAddDays = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const comptaNextYearEnd = (startIso) => {
+  const d = new Date(startIso + 'T00:00:00Z');
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+const comptaExerciseInfo = () => {
+  let ex = db.prepare("SELECT * FROM acc_exercises WHERE status = 'ouvert' ORDER BY start_date DESC LIMIT 1").get();
+  if (!ex) {
+    const last = db.prepare('SELECT * FROM acc_exercises ORDER BY start_date DESC LIMIT 1').get();
+    if (last) {
+      const s = comptaAddDays(last.end_date, 1);
+      db.prepare('INSERT INTO acc_exercises (start_date, end_date) VALUES (?, ?)').run(s, comptaNextYearEnd(s));
+    } else {
+      db.prepare("INSERT OR IGNORE INTO acc_exercises (start_date, end_date) VALUES (?, ?)").run(COMPTA_START, comptaNextYearEnd(COMPTA_START));
+    }
+    ex = db.prepare("SELECT * FROM acc_exercises WHERE status = 'ouvert' ORDER BY start_date DESC LIMIT 1").get();
+  }
+  return ex;
+};
+const comptaExerciseBalances = (start, end) => {
+  const rows = db.prepare(`SELECT l.account_code AS code, a.class,
+      COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE e.date >= ? AND e.date <= ? AND a.class IN (6, 7)
+    GROUP BY l.account_code`).all(start, end);
+  const charges = rows.filter((r) => r.class === 6 && cmoney(r.d - r.c) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.d - r.c) }));
+  const resources = rows.filter((r) => r.class === 7 && cmoney(r.c - r.d) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.c - r.d) }));
+  const totalCharges = cmoney(charges.reduce((s, c) => s + c.amount, 0));
+  const totalResources = cmoney(resources.reduce((s, c) => s + c.amount, 0));
+  return { charges, resources, totalCharges, totalResources, result: cmoney(totalResources - totalCharges) };
+};
+const TREASURY_BY_METHOD = {
+  airtel: '5161', mpesa: '5162', orange: '5163',
+  mobile: '516', carte: '511', virement: '511',
+  especes: '531', cash: '531', autre: '581'
+};
+const cmoney = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const nextComptaRef = (date) => {
+  const year = String(date).slice(0, 4);
+  const last = db.prepare('SELECT ref FROM acc_entries WHERE ref LIKE ? ORDER BY id DESC LIMIT 1').get(`EC-${year}-%`);
+  const n = last ? (parseInt(last.ref.split('-')[2], 10) + 1) : 1;
+  return `EC-${year}-${String(n).padStart(4, '0')}`;
+};
+
+const comptaSourceEntry = (source, sourceId) =>
+  source && source !== 'manual' ? db.prepare('SELECT * FROM acc_entries WHERE source = ? AND source_id = ?').get(source, sourceId) : null;
+
+const deleteComptaEntry = (id) =>
+  runTx(() => {
+    db.prepare('DELETE FROM acc_entry_lines WHERE entry_id = ?').run(id);
+    db.prepare('DELETE FROM acc_entries WHERE id = ?').run(id);
+  });
+
+const deleteComptaSource = (source, sourceId) => {
+  const e = comptaSourceEntry(source, sourceId);
+  if (e) deleteComptaEntry(e.id);
+};
+
+const createComptaEntry = ({ date, journal, label, lines, source = 'manual', sourceId = 0, createdBy = 'system', reversalOf = 0 }) => {
+  date = String(date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw Object.assign(new Error('Date invalide (format AAAA-MM-JJ)'), { status: 400 });
+  const ex = comptaExerciseInfo();
+  if (date < ex.start_date) throw Object.assign(new Error(`L'exercice ouvert démarre le ${ex.start_date} — les exercices clôturés sont verrouillés`), { status: 400 });
+  const valid = (Array.isArray(lines) ? lines : [])
+    .map((l) => ({
+      account_code: String(l?.account_code || '').trim(),
+      label: String(l?.label || '').trim().slice(0, 120),
+      debit: cmoney(l?.debit), credit: cmoney(l?.credit)
+    }))
+    .filter((l) => l.account_code && (l.debit > 0 || l.credit > 0));
+  if (valid.length < 2) throw Object.assign(new Error('Une écriture doit contenir au moins 2 lignes à montant non nul'), { status: 400 });
+  const totalDebit = cmoney(valid.reduce((s, l) => s + l.debit, 0));
+  const totalCredit = cmoney(valid.reduce((s, l) => s + l.credit, 0));
+  if (Math.abs(totalDebit - totalCredit) > 0.005)
+    throw Object.assign(new Error(`Écriture déséquilibrée : débits ${totalDebit.toFixed(2)} ≠ crédits ${totalCredit.toFixed(2)}`), { status: 400 });
+  for (const l of valid)
+    if (!db.prepare('SELECT id FROM acc_accounts WHERE code = ? AND active = 1').get(l.account_code))
+      throw Object.assign(new Error(`Compte inconnu ou inactif : ${l.account_code}`), { status: 404 });
+  if (!db.prepare('SELECT id FROM acc_journals WHERE code = ?').get(journal))
+    throw Object.assign(new Error(`Journal inconnu : ${journal}`), { status: 400 });
+  return runTx(() => {
+    const ref = nextComptaRef(date);
+    const e = db.prepare('INSERT INTO acc_entries (date, journal_code, ref, label, source, source_id, is_reversal_of, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(date, journal, ref, String(label || '').trim().slice(0, 200), source, sourceId || 0, reversalOf || 0, createdBy);
+    const insL = db.prepare('INSERT INTO acc_entry_lines (entry_id, account_code, label, debit, credit) VALUES (?, ?, ?, ?, ?)');
+    for (const l of valid) insL.run(e.lastInsertRowid, l.account_code, l.label, l.debit, l.credit);
+    return e.lastInsertRowid;
+  });
+};
+
+const entryDetail = (id) => {
+  const e = db.prepare('SELECT * FROM acc_entries WHERE id = ?').get(id);
+  if (!e) return null;
+  e.lines = db.prepare('SELECT * FROM acc_entry_lines WHERE entry_id = ? ORDER BY id').all(e.id);
+  return e;
+};
+
+const comptaOnDonationChange = (prevStatus, d) => {
+  if (getSetting('compta_enabled') !== '1' || !d) return;
+  if (prevStatus === 'confirmee' && d.status !== 'confirmee') return deleteComptaSource('donation', d.id);
+  if (d.status === 'confirmee' && prevStatus !== 'confirmee') {
+    if (comptaSourceEntry('donation', d.id)) return;
+    const treasury = TREASURY_BY_METHOD[d.method] || '581';
+    try {
+      createComptaEntry({
+        date: String(d.created_at || '').slice(0, 10),
+        journal: treasury === '531' ? 'CAI' : 'BQ',
+        label: `Don ${d.reference || ''} — ${d.donor_name || 'Anonyme'}`.trim(),
+        lines: [
+          { account_code: treasury, debit: d.amount, credit: 0, label: 'Encaissement du don' },
+          { account_code: d.campaign_id ? '7491' : '749', debit: 0, credit: d.amount, label: d.campaign_id ? 'Don affecté à un projet' : 'Don fonds général' }
+        ],
+        source: 'donation', sourceId: d.id
+      });
+    } catch (err) { console.error('[compta] don', err.message); }
+  }
+};
+
+const comptaOnPosSale = (s) => {
+  if (getSetting('compta_enabled') !== '1' || !s) return;
+  if (comptaSourceEntry('pos_sale', s.id)) return;
+  const treasury = TREASURY_BY_METHOD[s.payment_method] || '581';
+  try {
+    createComptaEntry({
+      date: String(s.created_at || '').slice(0, 10),
+      journal: treasury === '531' ? 'CAI' : 'BQ',
+      label: `Vente ${s.number || s.id}${s.customer_name ? ' — ' + s.customer_name : ''}`,
+      lines: [
+        { account_code: treasury, debit: s.total, credit: 0, label: 'Encaissement' },
+        { account_code: '703', debit: 0, credit: s.total, label: 'Ressources des activités' }
+      ],
+      source: 'pos_sale', sourceId: s.id
+    });
+  } catch (err) { console.error('[compta] pos', err.message); }
+};
+
+const comptaOnPayrollChange = (prevStatus, p) => {
+  if (getSetting('compta_enabled') !== '1' || !p) return;
+  if (prevStatus === 'envoye' && p.status !== 'envoye') return deleteComptaSource('payroll', p.id);
+  if (p.status === 'envoye' && prevStatus !== 'envoye') {
+    if (comptaSourceEntry('payroll', p.id)) return;
+    const emp = db.prepare('SELECT full_name FROM grh_employees WHERE id = ?').get(p.employee_id);
+    const dim = new Date(`${p.month}-01T00:00:00Z`);
+    dim.setUTCMonth(dim.getUTCMonth() + 1); dim.setUTCDate(0);
+    const date = `${p.month}-${String(dim.getUTCDate()).padStart(2, '0')}`;
+    try {
+      createComptaEntry({
+        date,
+        journal: 'BQ',
+        label: `Paie ${p.month} — ${emp?.full_name || `employé ${p.employee_id}`}`,
+        lines: [
+          { account_code: '641', debit: p.net, credit: 0, label: 'Salaire net payé' },
+          { account_code: '511', debit: 0, credit: p.net, label: 'Virement banque' }
+        ],
+        source: 'payroll', sourceId: p.id
+      });
+    } catch (err) { console.error('[compta] paie', err.message); }
+  }
+};
+
+app.get('/api/admin/compta/overview', ...COMPTA, (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month : new Date().toISOString().slice(0, 7);
+  const tr = db.prepare(`SELECT COALESCE(SUM(l.debit), 0) d, COALESCE(SUM(l.credit), 0) c
+    FROM acc_entry_lines l JOIN acc_accounts a ON a.code = l.account_code WHERE a.class = 5`).get();
+  const rm = db.prepare(`SELECT a.nature, COALESCE(SUM(l.debit), 0) d, COALESCE(SUM(l.credit), 0) c
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE e.date LIKE ? GROUP BY a.nature`).all(`${month}-%`);
+  const getN = (n) => rm.find((x) => x.nature === n);
+  const resources = getN('income') ? cmoney(getN('income').c - getN('income').d) : 0;
+  const charges = getN('expense') ? cmoney(getN('expense').d - getN('expense').c) : 0;
+  res.json({
+    month,
+    treasury: cmoney(tr.d - tr.c),
+    resources,
+    charges,
+    surplus: cmoney(resources - charges),
+    exercise: comptaExerciseInfo(),
+    entries: db.prepare('SELECT COUNT(*) AS n FROM acc_entries').get().n,
+    accounts: db.prepare('SELECT COUNT(*) AS n FROM acc_accounts WHERE active = 1').get().n
+  });
+});
+
+app.get('/api/admin/compta/accounts', ...COMPTA, (req, res) => {
+  let sql = 'SELECT * FROM acc_accounts';
+  const params = [];
+  if (req.query.q) { sql += ' WHERE code LIKE ? OR name LIKE ?'; params.push(`%${req.query.q}%`, `%${req.query.q}%`); }
+  sql += ' ORDER BY code';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/admin/compta/accounts', ...COMPTA_WRITE, (req, res) => {
+  const code = String(req.body.code || '').trim();
+  const name = String(req.body.name || '').trim();
+  if (!/^\d{2,5}$/.test(code)) return res.status(400).json({ error: 'Code de compte invalide (2 à 5 chiffres)' });
+  if (!name) return res.status(400).json({ error: 'Nom du compte requis' });
+  const nature = ACC_NATURES.includes(req.body.nature) ? req.body.nature : 'expense';
+  if (db.prepare('SELECT id FROM acc_accounts WHERE code = ?').get(code)) return res.status(409).json({ error: 'Ce code de compte existe déjà' });
+  const r = db.prepare('INSERT INTO acc_accounts (code, name, nature, class, is_system) VALUES (?, ?, ?, ?, 0)').run(code, name.slice(0, 80), nature, Number(code[0]));
+  res.json(db.prepare('SELECT * FROM acc_accounts WHERE id = ?').get(r.lastInsertRowid));
+});
+
+app.put('/api/admin/compta/accounts/:id', ...COMPTA_WRITE, (req, res) => {
+  const acc = db.prepare('SELECT * FROM acc_accounts WHERE id = ?').get(req.params.id);
+  if (!acc) return res.status(404).json({ error: 'Compte introuvable' });
+  const name = req.body.name != null ? String(req.body.name).trim() : acc.name;
+  if (!name) return res.status(400).json({ error: 'Nom du compte requis' });
+  const nature = ACC_NATURES.includes(req.body.nature) ? req.body.nature : acc.nature;
+  if (req.body.active === false && db.prepare('SELECT COUNT(*) AS n FROM acc_entry_lines WHERE account_code = ?').get(acc.code).n > 0)
+    return res.status(409).json({ error: 'Ce compte est utilisé par des écritures : désactivation impossible' });
+  const active = req.body.active === false ? 0 : 1;
+  db.prepare('UPDATE acc_accounts SET name = ?, nature = ?, active = ? WHERE id = ?').run(name.slice(0, 80), nature, active, acc.id);
+  res.json(db.prepare('SELECT * FROM acc_accounts WHERE id = ?').get(acc.id));
+});
+
+app.get('/api/admin/compta/journals', ...COMPTA, (req, res) => res.json(db.prepare('SELECT * FROM acc_journals ORDER BY code').all()));
+
+app.get('/api/admin/compta/entries', ...COMPTA, (req, res) => {
+  const params = [];
+  let sql = `SELECT e.*,
+    (SELECT COALESCE(SUM(l.debit), 0) FROM acc_entry_lines l WHERE l.entry_id = e.id) AS total,
+    (SELECT COUNT(*) FROM acc_entry_lines l WHERE l.entry_id = e.id) AS line_count
+    FROM acc_entries e WHERE 1 = 1`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  if (req.query.journal) { sql += ' AND e.journal_code = ?'; params.push(req.query.journal); }
+  if (req.query.q) { sql += ' AND (e.label LIKE ? OR e.ref LIKE ?)'; params.push(`%${req.query.q}%`, `%${req.query.q}%`); }
+  if (req.query.account) { sql += ' AND EXISTS (SELECT 1 FROM acc_entry_lines l2 WHERE l2.entry_id = e.id AND l2.account_code = ?)'; params.push(req.query.account); }
+  sql += ' ORDER BY e.id DESC LIMIT 200';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.get('/api/admin/compta/entries/:id', ...COMPTA, (req, res) => {
+  const e = entryDetail(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
+  res.json(e);
+});
+
+app.post('/api/admin/compta/entries', ...COMPTA_WRITE, (req, res) => {
+  try {
+    const id = createComptaEntry({
+      date: req.body.date,
+      journal: req.body.journal,
+      label: req.body.label,
+      lines: req.body.lines,
+      createdBy: req.user.email
+    });
+    res.json(entryDetail(id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/compta/entries/:id/reverse', ...COMPTA_WRITE, (req, res) => {
+  const e = entryDetail(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
+  if (e.source === 'cloture' || e.source === 'cloture2')
+    return res.status(403).json({ error: 'Écriture de clôture : l\'exercice est verrouillé (aucun contre-sens)' });
+  if (comptaSourceEntry('reverse', e.id)) return res.status(409).json({ error: 'Cette écriture est déjà annulée' });
+  try {
+    const id = createComptaEntry({
+      date: e.date,
+      journal: 'OD',
+      label: `Annulation de ${e.ref} : ${e.label}`.slice(0, 200),
+      lines: e.lines.map((l) => ({ account_code: l.account_code, debit: l.credit, credit: l.debit, label: l.label })),
+      source: 'reverse', sourceId: e.id,
+      createdBy: req.user.email,
+      reversalOf: e.id
+    });
+    res.json(entryDetail(id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/compta/entries/:id', ...COMPTA_WRITE, (req, res) => {
+  const e = db.prepare('SELECT * FROM acc_entries WHERE id = ?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
+  if (e.source !== 'manual')
+    return res.status(403).json({ error: 'Écriture automatique : correction uniquement par annulation (aucun effacement)' });
+  const rev = db.prepare("SELECT id FROM acc_entries WHERE source = 'reverse' AND is_reversal_of = ?").get(e.id);
+  runTx(() => {
+    if (rev) deleteComptaEntry(rev.id);
+    deleteComptaEntry(e.id);
+  });
+  res.json({ ok: true, with_reversal: !!rev });
+});
+
+app.get('/api/admin/compta/balance', ...COMPTA, (req, res) => {
+  const params = [];
+  let sql = `SELECT l.account_code AS code, a.name, a.nature,
+      COALESCE(SUM(l.debit), 0) AS debit, COALESCE(SUM(l.credit), 0) AS credit
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE 1 = 1`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  sql += ' GROUP BY l.account_code ORDER BY l.account_code';
+  res.json(db.prepare(sql).all(...params).map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) })));
+});
+
+app.get('/api/admin/compta/ledger', ...COMPTA, (req, res) => {
+  const account = String(req.query.account || '');
+  if (!account) return res.status(400).json({ error: 'Compte requis (paramètre account)' });
+  if (!db.prepare('SELECT id FROM acc_accounts WHERE code = ?').get(account))
+    return res.status(404).json({ error: 'Compte inconnu' });
+  const params = [account];
+  let sql = `SELECT e.id AS entry_id, e.ref, e.date, e.journal_code, e.label, l.label AS line_label, l.debit, l.credit
+    FROM acc_entry_lines l JOIN acc_entries e ON e.id = l.entry_id
+    WHERE l.account_code = ?`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  sql += ' ORDER BY e.date, e.id, l.id';
+  let cum = 0;
+  res.json(db.prepare(sql).all(...params).map((r) => {
+    cum = cmoney(cum + r.debit - r.credit);
+    return { ...r, cum };
+  }));
+});
+
+// ---------- États financiers SYCEBNL ----------
+const comptaBalances = (from, to) => {
+  const params = [];
+  let sql = `SELECT l.account_code AS code, a.name, a.nature, a.class,
+      COALESCE(SUM(l.debit), 0) AS debit, COALESCE(SUM(l.credit), 0) AS credit
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE 1 = 1`;
+  if (from) { sql += ' AND e.date >= ?'; params.push(from); }
+  if (to) { sql += ' AND e.date <= ?'; params.push(to); }
+  sql += ' GROUP BY l.account_code ORDER BY l.account_code';
+  return db.prepare(sql).all(...params);
+};
+
+const buildBalanceSheet = (at) => {
+  // Les comptes de constatation (charges 6xx/8xx, produits 7xx/8xx) ne figurent pas en
+  // libellés : ils sont regroupés en « surplus / déficit de l'exercice » au passif.
+  const rows = comptaBalances(COMPTA_START, at)
+    .map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) }))
+    .filter((r) => Math.abs(r.balance) >= 0.005 && r.nature !== 'expense' && r.nature !== 'income');
+  const actif = {
+    immobilisations: [], stocks: [], tresorerie: [], autres: []
+  };
+  const passif = { ressources: [], dettes: [] };
+  for (const r of rows) {
+    const b = r.balance;
+    if (r.class === 4) {
+      (b > 0 ? actif.autres : passif.dettes).push({ ...r, amount: cmoney(b > 0 ? b : -b) });
+    } else if (r.nature === 'asset') {
+      if (r.class === 2) actif.immobilisations.push({ ...r, amount: cmoney(b) });
+      else if (r.class === 3) actif.stocks.push({ ...r, amount: cmoney(b) });
+      else if (r.class === 5) actif.tresorerie.push({ ...r, amount: cmoney(b) });
+      else actif.autres.push({ ...r, amount: cmoney(b) });
+    } else if (r.nature === 'equity') {
+      passif.ressources.push({ ...r, amount: cmoney(-b) });
+    } else if (r.nature === 'liability') {
+      passif.dettes.push({ ...r, amount: cmoney(-b) });
+    }
+  }
+  // Surplus / déficit de l'exercice (non encore reporté en 171)
+  const res = buildResult(COMPTA_START, at);
+  if (res.resultat > 0.005) passif.ressources.push({ code: '178', name: "Surplus de l'exercice (non reporté)", amount: res.resultat });
+  else if (res.resultat < -0.005) passif.dettes.push({ code: '168', name: "Déficit de l'exercice (non reporté)", amount: -res.resultat });
+  const sum = (list) => cmoney(list.reduce((s, r) => s + r.amount, 0));
+  const totalActif = cmoney(sum(actif.immobilisations) + sum(actif.stocks) + sum(actif.tresorerie) + sum(actif.autres));
+  const totalPassif = cmoney(sum(passif.ressources) + sum(passif.dettes));
+  return {
+    at,
+    actif: { ...actif, total: totalActif },
+    passif: { ...passif, total: totalPassif },
+    equilibre: Math.abs(totalActif - totalPassif) < 0.005
+  };
+};
+
+const buildResult = (from, to) => {
+  const rows = comptaBalances(from, to)
+    .map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) }))
+    .filter((r) => (r.nature === 'expense' && r.balance > 0) || (r.nature === 'income' && r.balance < 0));
+  const charges = rows.filter((r) => r.nature === 'expense').map((r) => ({ code: r.code, name: r.name, amount: cmoney(r.balance) }));
+  const ressources = rows.filter((r) => r.nature === 'income').map((r) => ({ code: r.code, name: r.name, amount: cmoney(-r.balance) }));
+  const totalCharges = cmoney(charges.reduce((s, r) => s + r.amount, 0));
+  const totalRessources = cmoney(ressources.reduce((s, r) => s + r.amount, 0));
+  return {
+    from: from || null, to: to || null,
+    charges, ressources,
+    total_charges: totalCharges,
+    total_ressources: totalRessources,
+    resultat: cmoney(totalRessources - totalCharges)
+  };
+};
+
+const sendComptaStatementCsv = (res, filename, headers, rows) => {
+  const esc = (v) => {
+    const s = String(v ?? '');
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = '\uFEFF' + [headers, ...rows].map((r) => r.map(esc).join(';')).join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+};
+
+const comptaStatementPdf = async (res, { title, subtitle, sections }) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const W = 595.28;
+  let page = doc.addPage([W, 841.89]);
+  const [font, fontBold] = await Promise.all([
+    doc.embedFont(StandardFonts.Helvetica),
+    doc.embedFont(StandardFonts.HelveticaBold)
+  ]);
+  const brand = rgb(0.059, 0.227, 0.533);
+  const ink = rgb(0.1, 0.12, 0.18);
+  const gray = rgb(0.45, 0.5, 0.58);
+  const siteName = getSetting('site_name') || 'ADI ONG';
+  const tagline = getSetting('site_tagline') || '';
+
+  page.drawRectangle({ x: 0, y: 841.89 - 88, width: W, height: 88, color: brand });
+  page.drawText(siteName.toUpperCase(), { x: 40, y: 782, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+  if (tagline) page.drawText(tagline, { x: 40, y: 764, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+  page.drawText(title, { x: 40, y: 724, size: 20, font: fontBold, color: ink });
+  page.drawText(subtitle, { x: 40, y: 706, size: 10, font, color: gray });
+
+  let y = 678;
+  const newPage = () => {
+    page = doc.addPage([W, 841.89]);
+    page.drawText(`${siteName} — ${title} (suite)`, { x: 40, y: 790, size: 10, font: fontBold, color: gray });
+    y = 764;
+  };
+  const fmt = (n) => fmtMoney(n);
+  const drawBlock = (label, items, total, opts = {}) => {
+    if (y < 90) newPage();
+    const half = (W - 80) / 2;
+    const xLabel = 46;
+    const xAmt = opts.twoCol ? 40 + half - 8 : W - 48;
+    page.drawRectangle({ x: 40, y: y - 16, width: opts.twoCol ? half : W - 80, height: 18, color: rgb(0.93, 0.95, 0.98) });
+    page.drawText(label.toUpperCase(), { x: xLabel, y: y - 10, size: 9.5, font: fontBold, color: brand });
+    y -= 30;
+    for (const it of items) {
+      if (y < 50) newPage();
+      page.drawText(it.code, { x: xLabel, y, size: 8.5, font, color: gray });
+      page.drawText(it.name.slice(0, opts.twoCol ? 34 : 52), { x: xLabel + 32, y, size: 8.5, font, color: ink });
+      page.drawText(fmt(it.amount), { x: xAmt, y, size: 8.5, font, color: ink, align: 'right' });
+      y -= 13;
+    }
+    page.drawRectangle({ x: 40, y: y - 4, width: opts.twoCol ? half : W - 80, height: 1.2, color: gray });
+    page.drawText('Total ' + label, { x: xLabel, y: y - 12, size: 9.5, font: fontBold, color: ink });
+    page.drawText(fmt(total), { x: xAmt, y: y - 12, size: 9.5, font: fontBold, color: ink, align: 'right' });
+    y -= 30;
+  };
+  for (const s of sections) drawBlock(s.label, s.items, s.total, s);
+  const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  ·  ');
+  if (footer) page.drawText(footer.slice(0, 100), { x: 40, y: 30, size: 7.5, font, color: gray });
+  page.drawText('Etabli le ' + new Date().toISOString().slice(0, 10) + ' — SYCEBNL (OHADA)', { x: W - 48, y: 30, size: 7.5, font, color: gray, align: 'right' });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${sections.pdfName || 'etat'}.pdf"`);
+  res.send(Buffer.from(await doc.save()));
+};
+
+app.get('/api/admin/compta/statements/balance-sheet', ...COMPTA, async (req, res) => {
+  const at = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.at || '')) ? req.query.at : (new Date().toISOString().slice(0, 10));
+  const data = buildBalanceSheet(at);
+  const format = String(req.query.format || '');
+  try {
+    if (format === 'csv') {
+      const rows = [];
+      const sec = (label, list, total) => {
+        rows.push([label, '', '']);
+        for (const it of list) rows.push([`${it.code}  ${it.name}`, '', fmtMoney(it.amount)]);
+        rows.push([`Total ${label}`, '', fmtMoney(total)]);
+      };
+      sec('ACTIF — Immobilisations', data.actif.immobilisations, cmoney(data.actif.immobilisations.reduce((s, r) => s + r.amount, 0)));
+      sec('ACTIF — Stocks', data.actif.stocks, cmoney(data.actif.stocks.reduce((s, r) => s + r.amount, 0)));
+      sec('ACTIF — Trésorerie', data.actif.tresorerie, cmoney(data.actif.tresorerie.reduce((s, r) => s + r.amount, 0)));
+      sec('ACTIF — Autres actifs', data.actif.autres, cmoney(data.actif.autres.reduce((s, r) => s + r.amount, 0)));
+      rows.push(['TOTAL ACTIF', '', fmtMoney(data.actif.total)]);
+      sec('PASSIF — Ressources durables', data.passif.ressources, cmoney(data.passif.ressources.reduce((s, r) => s + r.amount, 0)));
+      sec('PASSIF — Dettes et passifs', data.passif.dettes, cmoney(data.passif.dettes.reduce((s, r) => s + r.amount, 0)));
+      rows.push(['TOTAL PASSIF', '', fmtMoney(data.passif.total)]);
+      return sendComptaStatementCsv(res, `bilan-${at}.csv`, ['Compte', 'Libellé', 'Montant'], rows);
+    }
+    if (format === 'pdf') {
+      const flat = (list) => list.map((r) => ({ code: r.code, name: r.name, amount: r.amount }));
+      return comptaStatementPdf(res, {
+        title: 'Bilan (SYCEBNL)',
+        subtitle: `Au ${at} — USD`,
+        pdfName: `bilan-${at}`,
+        sections: [
+          { label: 'Actif — Immobilisations', items: flat(data.actif.immobilisations), total: cmoney(data.actif.immobilisations.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Actif — Stocks', items: flat(data.actif.stocks), total: cmoney(data.actif.stocks.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Actif — Trésorerie', items: flat(data.actif.tresorerie), total: cmoney(data.actif.tresorerie.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Actif — Autres actifs', items: flat(data.actif.autres), total: cmoney(data.actif.autres.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Passif — Ressources durables', items: flat(data.passif.ressources), total: cmoney(data.passif.ressources.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Passif — Dettes et passifs', items: flat(data.passif.dettes), total: cmoney(data.passif.dettes.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Totaux', items: [
+            { code: '', name: 'Total ACTIF', amount: data.actif.total },
+            { code: '', name: 'Total PASSIF', amount: data.passif.total },
+            { code: '', name: data.equilibre ? 'Bilan équilibré' : 'ATTENTION : bilan déséquilibré', amount: cmoney(data.actif.total - data.passif.total) }
+          ], total: 0 }
+        ]
+      });
+    }
+  } catch (err) {
+    console.error('[compta] etat', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Impossible de générer l\'état' });
+  }
+  res.json(data);
+});
+
+app.get('/api/admin/compta/statements/result', ...COMPTA, async (req, res) => {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || '')) ? req.query.from : (new Date().toISOString().slice(0, 7) + '-01');
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')) ? req.query.to : (new Date().toISOString().slice(0, 10));
+  const data = buildResult(from, to);
+  const format = String(req.query.format || '');
+  try {
+    if (format === 'csv') {
+      const rows = [];
+      rows.push(['CHARGES', '', '']);
+      for (const c of data.charges) rows.push([`${c.code}  ${c.name}`, '', fmtMoney(c.amount)]);
+      rows.push(['Total charges', '', fmtMoney(data.total_charges)]);
+      rows.push(['RESSOURCES', '', '']);
+      for (const r2 of data.ressources) rows.push([`${r2.code}  ${r2.name}`, '', fmtMoney(r2.amount)]);
+      rows.push(['Total ressources', '', fmtMoney(data.total_ressources)]);
+      rows.push([data.resultat >= 0 ? 'SURPLUS DE L\'EXERCICE' : 'DEFICIT DE L\'EXERCICE', '', fmtMoney(Math.abs(data.resultat))]);
+      return sendComptaStatementCsv(res, `compte-de-resultat-${from}_${to}.csv`, ['Compte', 'Libellé', 'Montant'], rows);
+    }
+    if (format === 'pdf') {
+      return comptaStatementPdf(res, {
+        title: 'Compte de résultat (SYCEBNL)',
+        subtitle: `Du ${from} au ${to} — USD`,
+        pdfName: `compte-de-resultat-${from}_${to}`,
+        sections: [
+          { label: 'Charges', items: data.charges, total: data.total_charges },
+          { label: 'Ressources', items: data.ressources, total: data.total_ressources },
+          { label: 'Résultat', items: [{ code: '', name: data.resultat >= 0 ? 'SURPLUS DE L\'EXERCICE' : 'DEFICIT DE L\'EXERCICE', amount: Math.abs(data.resultat) }], total: Math.abs(data.resultat) }
+        ]
+      });
+    }
+  } catch (err) {
+    console.error('[compta] etat', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Impossible de générer l\'état' });
+  }
+  res.json(data);
+});
+
+// ---------- Exercices : clôture SYCEBNL (report du résultat, verrouillage) ----------
+app.get('/api/admin/compta/exercises', ...COMPTA, (req, res) => {
+  res.json(db.prepare('SELECT * FROM acc_exercises ORDER BY start_date').all().map((ex) => {
+    const b = comptaExerciseBalances(ex.start_date, ex.end_date);
+    return { ...ex, total_charges: b.totalCharges, total_ressources: b.totalResources, resultat_calcule: b.result };
+  }));
+});
+
+app.post('/api/admin/compta/exercises/:id/close', ...COMPTA_CLOSE, (req, res) => {
+  const ex = db.prepare('SELECT * FROM acc_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Exercice introuvable' });
+  if (ex.status !== 'ouvert') return res.status(409).json({ error: 'Cet exercice est déjà clôturé' });
+  const openCount = db.prepare("SELECT COUNT(*) n FROM acc_exercises WHERE status = 'ouvert'").get().n;
+  if (openCount > 1) return res.status(409).json({ error: 'Un seul exercice peut être ouvert à la fois' });
+  const b = comptaExerciseBalances(ex.start_date, ex.end_date);
+  if (!b.charges.length && !b.resources.length) return res.status(400).json({ error: 'Aucun mouvement sur cet exercice — rien à clôturer' });
+  const today = new Date().toISOString().slice(0, 10);
+  const date = today < ex.start_date ? ex.start_date : (today > ex.end_date ? ex.end_date : today);
+  const year = ex.start_date.slice(0, 4);
+  const linesA = [
+    ...b.charges.map((c) => ({ account_code: c.code, debit: 0, credit: c.amount, label: `Charges ${c.code} clôturées` })),
+    ...b.resources.map((r) => ({ account_code: r.code, debit: r.amount, credit: 0, label: `Ressources ${r.code} clôturées` }))
+  ];
+  if (b.result >= 0) linesA.push({ account_code: '178', debit: 0, credit: b.result, label: "Surplus de l'exercice (transit)" });
+  else linesA.push({ account_code: '168', debit: -b.result, credit: 0, label: "Déficit de l'exercice (transit)" });
+  const linesB = b.result >= 0
+    ? [
+      { account_code: '178', debit: b.result, credit: 0, label: "Report du surplus de l'exercice" },
+      { account_code: '171', debit: 0, credit: b.result, label: 'Surplus reporté' }
+    ]
+    : [
+      { account_code: '171', debit: -b.result, credit: 0, label: 'Imputation du déficit sur le surplus reporté' },
+      { account_code: '168', debit: 0, credit: -b.result, label: "Déficit de l'exercice (transit)" }
+    ];
+  try {
+    runTx(() => {
+      createComptaEntry({ date, journal: 'OD', label: `Clôture des charges et ressources — exercice ${year}`, lines: linesA, source: 'cloture', sourceId: ex.id, createdBy: req.user.email });
+      createComptaEntry({ date, journal: 'OD', label: b.result >= 0 ? `Report du résultat de l'exercice ${year} (surplus ${b.result.toFixed(2)} USD)` : `Report du résultat de l'exercice ${year} (déficit ${(-b.result).toFixed(2)} USD)`, lines: linesB, source: 'cloture2', sourceId: ex.id, createdBy: req.user.email });
+      db.prepare("UPDATE acc_exercises SET status = 'cloture', result = ?, closed_at = ?, closed_by = ? WHERE id = ?").run(b.result, new Date().toISOString(), req.user.email, ex.id);
+      const nextStart = comptaAddDays(ex.end_date, 1);
+      db.prepare('INSERT INTO acc_exercises (start_date, end_date) VALUES (?, ?)').run(nextStart, comptaNextYearEnd(nextStart));
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] cloture', err);
+    return res.status(500).json({ error: 'Clôture impossible — l\'exercice est inchangé' });
+  }
+  res.json(db.prepare('SELECT * FROM acc_exercises WHERE id = ?').get(ex.id));
+});
+
 
 // ---------- Boutique en ligne (commandes publiques) + suivi admin ----------
 const SHOP_METHODS = ['mobile', 'especes'];
