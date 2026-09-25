@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, getSavedUser, getToken } from '../../api.js';
+import { api, getToken } from '../../api.js';
+import { usePerm } from '../../usePerm.js';
 import { Modal, Field } from './AdminUI.jsx';
 
 
@@ -490,7 +491,7 @@ function MembersModal({ conv, onClose, onChanged }) {
 }
 
 export default function Chat() {
-  const canCreateGroup = ['super_admin', 'admin'].includes(getSavedUser()?.role || '');
+  const canCreateGroup = usePerm('chat.groups', ['super_admin', 'admin']);
   const [convs, setConvs] = useState([]);
   const [openGroups, setOpenGroups] = useState([]);
   const [activeId, setActiveId] = useState(null);

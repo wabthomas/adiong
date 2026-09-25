@@ -108,20 +108,20 @@ const FLAT_ITEMS = NAV_TREE.flatMap((n) => (n.type === 'group' ? n.children : [n
 const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation', cashier: 'Caissier' };
 
 const ITEM_AREAS = {
-  '/admin': 'dashboard',
-  '/admin/articles': 'content',
-  '/admin/causes': 'content',
-  '/admin/campagnes': 'content',
-  '/admin/partenaires': 'content',
-  '/admin/medias': 'media',
-  '/admin/dons': 'donations',
-  '/admin/messages': 'inbox',
-  '/admin/messagerie': 'chat',
-  '/admin/mon-espace': 'leave',
-  '/admin/grh': 'grh',
-  '/admin/pos': 'pos',
-  '/admin/utilisateurs': 'users',
-  '/admin/parametres': 'settings'
+  '/admin': 'dashboard.view',
+  '/admin/articles': 'content.view',
+  '/admin/causes': 'content.view',
+  '/admin/campagnes': 'content.view',
+  '/admin/partenaires': 'content.view',
+  '/admin/medias': 'media.view',
+  '/admin/dons': 'donations.view',
+  '/admin/messages': 'inbox.view',
+  '/admin/messagerie': 'chat.view',
+  '/admin/mon-espace': 'leave.view',
+  '/admin/grh': 'grh.view',
+  '/admin/pos': 'pos.view',
+  '/admin/utilisateurs': 'users.view',
+  '/admin/parametres': 'settings.view'
 };
 
 const COLLAPSE_KEY = 'adiong_admin_nav_open';
@@ -135,13 +135,16 @@ function MiniIcon({ d, className = 'h-5 w-5' }) {
 }
 
 function itemVisible(it, { role, grhEnabled, posEnabled, chatEnabled, permMap }) {
-  if (!(it.roles || ALL_ROLES).includes(role)) return false;
   if (it.grh && !grhEnabled) return false;
   if (it.pos && !posEnabled) return false;
   if (it.chat && !chatEnabled) return false;
   const area = ITEM_AREAS[it.to];
-  if (area && permMap !== null && permMap[area] === false) return false;
-  return true;
+  const inRole = (it.roles || ALL_ROLES).includes(role);
+  if (permMap && area) {
+    if (permMap[area] === false) return false;
+    if (permMap[area] === true) return true;
+  }
+  return inRole;
 }
 
 function pathActive(pathname, to, end) {
@@ -438,7 +441,7 @@ export default function AdminLayout() {
                     <span className="block max-w-[140px] truncate text-sm font-bold leading-tight text-ink-900">
                       {savedUser?.full_name || savedUser?.email || 'Admin'}
                     </span>
-                    <span className="block text-[11px] font-semibold text-brand-600">{ROLE_LABELS[role] || role}</span>
+                    <span className="block text-[11px] font-semibold text-brand-600">{savedUser?.role_label || ROLE_LABELS[role] || role}</span>
                   </span>
                   <MiniIcon d={ICONS.chevron} className="hidden h-4 w-4 text-ink-400 sm:block" />
                 </button>
@@ -500,7 +503,21 @@ export default function AdminLayout() {
                 </div>
               }
             >
-              <Outlet />
+              {(() => {
+                const item = currentPage(pathname);
+                const area = item?.to ? ITEM_AREAS[item.to] : null;
+                if (area && permMap && permMap[area] === false) {
+                  return (
+                    <div className="grid min-h-[40vh] place-items-center px-6 text-center">
+                      <div>
+                        <p className="font-display text-lg font-bold text-ink-800">Accès refusé</p>
+                        <p className="mt-1 text-sm text-ink-400">Votre rôle n’a pas le droit d’ouvrir cette page.</p>
+                      </div>
+                    </div>
+                  );
+                }
+                return <Outlet />;
+              })()}
             </Suspense>
           </main>
         </div>

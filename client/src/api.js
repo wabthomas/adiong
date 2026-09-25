@@ -160,7 +160,9 @@ export const api = {
   },
   permissions: {
     get: () => req('/api/admin/permissions', { auth: true }),
-    save: (matrix) => req('/api/admin/permissions', { method: 'PUT', body: { matrix }, auth: true })
+    save: (matrix) => req('/api/admin/permissions', { method: 'PUT', body: { matrix }, auth: true }),
+    createRole: (b) => req('/api/admin/roles', { method: 'POST', body: b, auth: true }),
+    removeRole: (key) => req(`/api/admin/roles/${encodeURIComponent(key)}`, { method: 'DELETE', auth: true })
   },
   adminSecurity: {
     events: () => req('/api/admin/security', { auth: true })

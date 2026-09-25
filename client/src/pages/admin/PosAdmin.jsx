@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, getSavedUser } from '../../api.js';
+import { api } from '../../api.js';
 import { useSite } from '../../hooks/useSite.jsx';
+import { usePerm } from '../../usePerm.js';
 import { Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
@@ -1695,7 +1696,7 @@ function StatsTab() {
 export default function PosAdmin() {
   const [tab, setTab] = useState('caisse');
   const [moduleError, setModuleError] = useState('');
-  const canManage = ['super_admin', 'admin'].includes(getSavedUser()?.role);
+  const canManage = usePerm('pos.manage', ['super_admin', 'admin']);
   const visibleTabs = TABS.filter((t) => !t.manage || canManage);
   const activeId = visibleTabs.some((t) => t.id === tab) ? tab : 'caisse';
   const activeTab = visibleTabs.find((t) => t.id === activeId) || visibleTabs[0];

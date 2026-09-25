@@ -30,7 +30,7 @@ export function memberPublicUrl(code) {
   return `${window.location.origin}/membre/${encodeURIComponent(code)}`;
 }
 
-export function UserProfileFields({ value, onChange, showRole = false, passwordRequired = false }) {
+export function UserProfileFields({ value, onChange, showRole = false, passwordRequired = false, actorIsSuper = false, roles = null }) {
   const set = (k) => (e) => onChange({ ...value, [k]: e.target.value });
   return (
     <div className="space-y-5">
@@ -76,8 +76,8 @@ export function UserProfileFields({ value, onChange, showRole = false, passwordR
       {showRole && (
         <Field label="Rôle">
           <select className="input" value={value.role || 'editor'} onChange={set('role')}>
-            {Object.entries(ROLE_LABELS).map(([role, label]) => (
-              <option key={role} value={role}>{label}</option>
+            {(roles || Object.entries(ROLE_LABELS).filter(([role]) => actorIsSuper || role !== 'super_admin').map(([key, label]) => ({ key, label }))).map((r) => (
+              <option key={r.key} value={r.key}>{r.label}</option>
             ))}
           </select>
         </Field>

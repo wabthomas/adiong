@@ -6,7 +6,7 @@ import { emptyUser, ROLE_STYLES, ROLE_LABELS, UserProfileFields, MemberQrCard } 
 const TABS = [
   { id: 'users', label: 'Comptes' },
   { id: 'invites', label: 'Invitations' },
-  { id: 'perms', label: 'Permissions' },
+  { id: 'perms', label: 'Rôles & droits' },
   { id: 'security', label: 'Sécurité' }
 ];
 
@@ -23,6 +23,13 @@ const INVITE_STATE = {
 const emptyInvite = { email: '', role: 'editor', label: '', days: 7 };
 
 const ROLE_ORDER = ['super_admin', 'admin', 'editor', 'cashier', 'viewer'];
+const ROLE_BLURB = {
+  super_admin: 'Accès total',
+  admin: 'Site, GRH et caisse',
+  editor: 'Contenu et médiathèque',
+  cashier: 'Encaissement et stock',
+  viewer: 'Lecture seule'
+};
 
 function fmtDate(v) {
   if (!v) return '—';
@@ -36,31 +43,91 @@ function fmtDateTime(v) {
   });
 }
 
-function PermissionsPanel() {
-  const me = getSavedUser();
-  const isSuper = me?.role === 'super_admin';
+function CheckBox({ on, partial }) {
+  return (
+    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? 'border-brand-600 bg-brand-600 text-white' : partial ? 'border-brand-400 bg-brand-100' : 'border-ink-300 bg-white'}`}>
+      {on && (
+        <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="3">
+          <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+function PermissionsPanel({ users, onRolesChange }) {
+  const [groups, setGroups] = useState([]);
   const [areas, setAreas] = useState([]);
   const [rows, setRows] = useState([]);
   const [draft, setDraft] = useState(null);
+  const [role, setRole] = useState('admin');
+  const [canEdit, setCanEdit] = useState(false);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [newRole, setNewRole] = useState({ label: '', key: '', description: '' });
 
   const load = useCallback(() => {
     api.permissions.get().then((d) => {
-      setAreas(d.areas);
+      setGroups(d.groups || []);
+      setAreas(d.areas || []);
       setRows(d.matrix);
       setDraft(d.matrix.map((r) => ({ ...r, permissions: r.permissions.map((p) => ({ ...p })) })));
+      setCanEdit(!!d.is_super);
+      setRole((cur) => (d.matrix.some((r) => r.role === cur) ? cur : (d.matrix.find((r) => r.role !== 'super_admin')?.role || d.matrix[0]?.role)));
     }).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const toggle = (role, area) =>
-    setDraft((cur) => cur.map((r) =>
+  const ordered = useMemo(() => {
+    if (!draft) return [];
+    const rank = (key) => {
+      const i = ROLE_ORDER.indexOf(key);
+      return i === -1 ? ROLE_ORDER.length : i;
+    };
+    return [...draft].sort((a, b) => rank(a.role) - rank(b.role) || String(a.label || a.role).localeCompare(String(b.label || b.role), 'fr'));
+  }, [draft]);
+  const counts = useMemo(() => {
+    const map = {};
+    for (const u of users || []) map[u.role] = (map[u.role] || 0) + 1;
+    return map;
+  }, [users]);
+
+  const current = draft?.find((r) => r.role === role);
+  const saved = rows.find((r) => r.role === role);
+  const locked = !current || current.locked || !canEdit;
+  const dirty = !!(saved && current && JSON.stringify(saved.permissions) !== JSON.stringify(current.permissions));
+  const onCount = current?.permissions.filter((p) => p.enabled).length || 0;
+
+  const isOn = (id) => !!current?.permissions.find((p) => p.area === id)?.enabled;
+
+  const setEnabled = (ids, enabled) => {
+    const set = new Set(ids);
+    setDraft((cur) => cur.map((r) => (
       r.role !== role || r.locked
         ? r
-        : { ...r, permissions: r.permissions.map((p) => (p.area === area ? { ...p, enabled: !p.enabled } : p)) }
-    ));
+        : { ...r, permissions: r.permissions.map((p) => (set.has(p.area) ? { ...p, enabled } : p)) }
+    )));
+    setMsg('');
+  };
+
+  const toggle = (area) => setEnabled([area], !isOn(area));
+
+  const toggleGroup = (ids) => {
+    const allOn = ids.every((id) => isOn(id));
+    setEnabled(ids, !allOn);
+  };
+
+  const resetRole = () => {
+    if (!saved) return;
+    setDraft((cur) => cur.map((r) => (
+      r.role !== role ? r : { ...saved, permissions: saved.permissions.map((p) => ({ ...p })) }
+    )));
+    setMsg('');
+    setError('');
+  };
 
   const save = async () => {
     setSaving(true);
@@ -72,8 +139,9 @@ function PermissionsPanel() {
         matrix[r.role] = Object.fromEntries(r.permissions.map((p) => [p.area, p.enabled]));
       });
       await api.permissions.save(matrix);
-      setMsg('Enregistré');
+      setMsg(`Droits de « ${current?.label || ROLE_LABELS[role] || role} » enregistrés.`);
       load();
+      onRolesChange?.();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -81,77 +149,222 @@ function PermissionsPanel() {
     }
   };
 
-  if (!draft) {
-    return <p className="py-10 text-center text-sm text-ink-400">Chargement…</p>;
+  const q = query.trim().toLowerCase();
+  const visibleGroups = groups.map((g) => ({
+    ...g,
+    items: areas.filter((a) => a.group === g.id && (
+      !q || a.label.toLowerCase().includes(q) || a.id.toLowerCase().includes(q) || g.label.toLowerCase().includes(q)
+    ))
+  })).filter((g) => g.items.length);
+
+  const slugPreview = (value) => String(value || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+
+  const createRole = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const created = await api.permissions.createRole({
+        label: newRole.label,
+        key: newRole.key || slugPreview(newRole.label),
+        description: newRole.description
+      });
+      setShowCreate(false);
+      setNewRole({ label: '', key: '', description: '' });
+      setRole(created.role.key);
+      setMsg(`Rôle « ${created.role.label} » créé.`);
+      load();
+      onRolesChange?.();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeRole = async () => {
+    if (!current || current.is_system) return;
+    if (!confirm(`Supprimer le rôle « ${current.label || current.role} » ?`)) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.permissions.removeRole(current.role);
+      setRole('admin');
+      setMsg('Rôle supprimé.');
+      load();
+      onRolesChange?.();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!draft || !current) {
+    return <p className="py-10 text-center text-sm text-ink-400">Chargement des rôles…</p>;
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 px-4 py-3">
-        <p className="text-sm font-bold text-ink-800">
-          Zones par rôle
-          {!isSuper && <span className="ml-2 text-xs font-semibold text-ink-400">lecture seule</span>}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-ink-400">
+          Choisissez un rôle, puis cochez ce qu’il peut voir et modifier dans chaque fonction.
         </p>
-        {isSuper && (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="btn-ghost !px-3 !py-1.5 text-xs"
-              onClick={() => {
-                setDraft(rows.map((r) => ({ ...r, permissions: r.permissions.map((p) => ({ ...p })) })));
-                setMsg('');
-                setError('');
-              }}
-            >
-              Annuler
-            </button>
-            <button type="button" className="btn-primary !px-4 !py-1.5 text-xs" onClick={save} disabled={saving}>
-              {saving ? '…' : 'Enregistrer'}
-            </button>
-          </div>
+        {canEdit && (
+          <button type="button" className="btn-primary !rounded-xl !px-3 !py-2 text-xs" onClick={() => { setError(''); setShowCreate(true); }}>
+            + Nouveau rôle
+          </button>
         )}
       </div>
-      {msg && <p className="border-b border-ink-100 bg-brand-50 px-4 py-2 text-xs font-semibold text-brand-700">{msg}</p>}
-      {error && <p className="border-b border-ink-100 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700">{error}</p>}
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[920px] text-left text-sm">
-          <thead className="border-b border-ink-100 bg-cream/50 text-[10px] font-bold uppercase tracking-wide text-ink-400">
-            <tr>
-              <th className="sticky left-0 z-10 bg-cream/95 px-4 py-2.5">Rôle</th>
-              {areas.map((a) => (
-                <th key={a.id} className="max-w-[5.5rem] px-2 py-2.5 text-center leading-tight" title={a.desc}>
-                  {a.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {draft.map((r) => (
-              <tr key={r.role} className="border-b border-ink-50 last:border-0">
-                <td className="sticky left-0 z-10 bg-white px-4 py-2.5">
-                  <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${ROLE_STYLES[r.role] || 'bg-ink-100 text-ink-600'}`}>
-                    {ROLE_LABELS[r.role] || r.role}
+      <div className="grid min-h-[28rem] gap-3 lg:grid-cols-[240px_1fr]">
+        <aside className="flex flex-col overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
+          <div className="border-b border-ink-100 px-3 py-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-400">Rôles ({ordered.length})</span>
+          </div>
+          <div className="space-y-0.5 overflow-y-auto p-1.5">
+            {ordered.map((r) => {
+              const active = role === r.role;
+              const n = r.locked ? areas.length : r.permissions.filter((p) => p.enabled).length;
+              return (
+                <button
+                  key={r.role}
+                  type="button"
+                  onClick={() => { setRole(r.role); setQuery(''); setMsg(''); setError(''); }}
+                  className={`w-full rounded-xl px-3 py-2.5 text-left transition ${active ? 'bg-brand-600 text-white' : 'text-ink-700 hover:bg-cream'}`}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-bold">{r.label || ROLE_LABELS[r.role] || r.role}</span>
+                    <span className={`text-[10px] font-bold tabular-nums ${active ? 'text-white/80' : 'text-ink-400'}`}>{counts[r.role] || 0}</span>
                   </span>
-                </td>
-                {areas.map((a) => {
-                  const p = r.permissions.find((x) => x.area === a.id);
-                  return (
-                    <td key={a.id} className="px-2 py-2.5 text-center" title={a.desc}>
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-[#0f3a88]"
-                        checked={!!p?.enabled}
-                        disabled={r.locked || !isSuper}
-                        onChange={() => toggle(r.role, a.id)}
-                      />
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  <span className={`mt-0.5 block truncate text-[10px] ${active ? 'text-white/75' : 'text-ink-400'}`}>
+                    {r.locked ? 'Accès total' : `${n} droit${n > 1 ? 's' : ''} · ${r.description || ROLE_BLURB[r.role] || ''}`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
+          <div className="flex flex-col justify-between gap-3 border-b border-ink-100 px-4 py-3 sm:flex-row sm:items-center">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-black text-ink-900">{current.label || ROLE_LABELS[role] || role}</h3>
+              <p className="mt-0.5 truncate text-[11px] text-ink-400">
+                {locked
+                  ? 'Toutes les permissions — non modifiable'
+                  : `${onCount} permission${onCount > 1 ? 's' : ''} active${onCount > 1 ? 's' : ''}${dirty ? ' · modifications non enregistrées' : ''}`}
+              </p>
+            </div>
+            {canEdit && !current.locked && (
+              <div className="flex shrink-0 gap-2">
+                <button type="button" className="rounded-xl px-3 py-2 text-xs font-bold text-ink-500 hover:bg-cream disabled:opacity-40" disabled={!dirty || saving} onClick={resetRole}>
+                  Annuler
+                </button>
+                <button type="button" className="btn-primary !rounded-xl !px-3.5 !py-2 text-xs" disabled={!dirty || saving} onClick={save}>
+                  {saving ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+                {!current.is_system && !(current.user_count || counts[role]) && (
+                  <button type="button" className="rounded-xl px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50" disabled={saving} onClick={removeRole}>
+                    Supprimer
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          {msg && <p className="border-b border-ink-100 bg-brand-50 px-4 py-2 text-xs font-semibold text-brand-700">{msg}</p>}
+          {error && <p className="border-b border-ink-100 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700">{error}</p>}
+          <div className="border-b border-ink-100 px-4 py-2">
+            <input
+              className="input !py-2 text-xs"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filtrer les permissions…"
+            />
+          </div>
+          <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            {visibleGroups.length === 0 && (
+              <p className="py-8 text-center text-sm text-ink-400">Aucun résultat pour « {query} ».</p>
+            )}
+            {visibleGroups.map((g) => {
+              const ids = g.items.map((a) => a.id);
+              const groupOn = ids.filter((id) => isOn(id)).length;
+              const allOn = groupOn === ids.length;
+              return (
+                <div key={g.id} className="space-y-2">
+                  <button
+                    type="button"
+                    disabled={locked}
+                    onClick={() => toggleGroup(ids)}
+                    className="flex items-center gap-2 disabled:cursor-default"
+                  >
+                    <CheckBox on={allOn} partial={!allOn && groupOn > 0} />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-ink-500">{g.label}</span>
+                    <span className="text-[10px] font-semibold tabular-nums text-ink-400">{groupOn}/{ids.length}</span>
+                  </button>
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    {g.items.map((a) => {
+                      const on = isOn(a.id);
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          disabled={locked}
+                          onClick={() => toggle(a.id)}
+                          className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-left ${locked ? 'cursor-not-allowed opacity-75' : ''} ${on ? 'border border-brand-200 bg-brand-50' : 'border border-transparent hover:bg-cream'}`}
+                        >
+                          <CheckBox on={on} />
+                          <span className="min-w-0">
+                            <span className="block truncate text-xs font-semibold text-ink-800">{a.label}</span>
+                            <span className="block truncate font-mono text-[10px] text-ink-400">{a.id}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       </div>
+
+      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Nouveau rôle">
+        <div className="space-y-4">
+          <Field label="Libellé">
+            <input
+              className="input"
+              value={newRole.label}
+              onChange={(e) => setNewRole({ ...newRole, label: e.target.value, key: newRole.key && newRole.key !== slugPreview(newRole.label) ? newRole.key : slugPreview(e.target.value) })}
+              placeholder="Ex. Responsable RH"
+            />
+          </Field>
+          <Field label="Clé" hint="Identifiant technique, non modifiable ensuite">
+            <input
+              className="input font-mono"
+              value={newRole.key}
+              onChange={(e) => setNewRole({ ...newRole, key: slugPreview(e.target.value) })}
+              placeholder="responsable_rh"
+            />
+          </Field>
+          <Field label="Description">
+            <input
+              className="input"
+              value={newRole.description}
+              onChange={(e) => setNewRole({ ...newRole, description: e.target.value })}
+              placeholder="Ex. Dossiers employés et congés"
+            />
+          </Field>
+          <p className="text-[11px] text-ink-400">Créé avec le tableau de bord et la messagerie. Les autres droits se règlent ensuite.</p>
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
+          <div className="flex justify-end gap-2 border-t border-ink-100 pt-4">
+            <button type="button" className="rounded-xl px-3 py-2 text-xs font-bold text-ink-500 hover:bg-cream" onClick={() => setShowCreate(false)}>Annuler</button>
+            <button type="button" className="btn-primary !rounded-xl !px-4 !py-2 text-xs" disabled={saving || !newRole.label.trim()} onClick={createRole}>
+              {saving ? 'Création…' : 'Créer'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -171,10 +384,12 @@ export default function UsersAdmin() {
   const [copied, setCopied] = useState('');
   const [securityEvents, setSecurityEvents] = useState([]);
 
+  const [roleCatalog, setRoleCatalog] = useState([]);
   const load = useCallback(() => api.adminUsers.list().then(setUsers).catch(() => {}), []);
+  const loadRoles = useCallback(() => api.permissions.get().then((d) => setRoleCatalog(d.roles || [])).catch(() => {}), []);
   const loadInvites = useCallback(() => api.invites.list().then(setInvites).catch(() => {}), []);
   const loadSecurity = useCallback(() => api.adminSecurity.events().then(setSecurityEvents).catch(() => {}), []);
-  useEffect(() => { load(); loadInvites(); loadSecurity(); }, [load, loadInvites, loadSecurity]);
+  useEffect(() => { load(); loadInvites(); loadSecurity(); loadRoles(); }, [load, loadInvites, loadSecurity, loadRoles]);
 
   const inviteUrl = (inv) => `${window.location.origin}/inscription?token=${inv.token}`;
 
@@ -211,18 +426,22 @@ export default function UsersAdmin() {
   };
 
   const meUser = useMemo(() => getSavedUser(), [users]);
+  const actorIsSuper = meUser?.role === 'super_admin';
+  const roleChoices = (roleCatalog.length ? roleCatalog.map((r) => r.key) : ROLE_ORDER)
+    .filter((r) => actorIsSuper || r !== 'super_admin');
+  const roleLabel = (key) => roleCatalog.find((r) => r.key === key)?.label || ROLE_LABELS[key] || key;
 
   const roleCounts = useMemo(() => {
-    const map = Object.fromEntries(ROLE_ORDER.map((r) => [r, 0]));
+    const map = Object.fromEntries(roleChoices.map((r) => [r, 0]));
     for (const u of users) if (map[u.role] != null) map[u.role] += 1;
     return map;
-  }, [users]);
+  }, [users, roleChoices]);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return users;
     return users.filter((u) =>
-      [u.full_name, u.email, u.job_title, u.unique_code, ROLE_LABELS[u.role]]
+      [u.full_name, u.email, u.job_title, u.unique_code, roleLabel(u.role)]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
@@ -291,9 +510,13 @@ export default function UsersAdmin() {
   return (
     <div className="mx-auto max-w-7xl space-y-4">
       <PageTitle
-        title="Utilisateurs"
-        subtitle={`${users.length} compte${users.length > 1 ? 's' : ''}${openInvites ? ` · ${openInvites} invitation${openInvites > 1 ? 's' : ''}` : ''}`}
-        action={
+        title={tab === 'perms' ? 'Rôles et droits' : tab === 'security' ? 'Sécurité' : 'Utilisateurs'}
+        subtitle={tab === 'perms'
+          ? 'Définissez qui peut voir et modifier chaque fonction.'
+          : tab === 'security'
+            ? 'Connexions, échecs et déconnexions.'
+            : `${users.length} compte${users.length > 1 ? 's' : ''}${openInvites ? ` · ${openInvites} invitation${openInvites > 1 ? 's' : ''}` : ''}`}
+        action={tab === 'users' || tab === 'invites' ? (
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -306,20 +529,22 @@ export default function UsersAdmin() {
               + Compte
             </button>
           </div>
-        }
+        ) : null}
       />
 
-      <div className="flex flex-wrap gap-2">
-        {ROLE_ORDER.map((role) => (
-          <span
-            key={role}
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${ROLE_STYLES[role]}`}
-          >
-            {ROLE_LABELS[role]}
-            <span className="opacity-80">{roleCounts[role] || 0}</span>
-          </span>
-        ))}
-      </div>
+      {tab === 'users' && (
+        <div className="flex flex-wrap gap-2">
+          {roleChoices.map((role) => (
+            <span
+              key={role}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${ROLE_STYLES[role]}`}
+            >
+              {roleLabel(role)}
+              <span className="opacity-80">{roleCounts[role] || 0}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="flex gap-1 overflow-x-auto rounded-xl bg-white p-1 ring-1 ring-ink-100">
         {TABS.map((t) => (
@@ -400,8 +625,8 @@ export default function UsersAdmin() {
                         }}
                         className={`rounded-full px-2.5 py-1 text-[11px] font-bold outline-none disabled:opacity-60 ${ROLE_STYLES[u.role]}`}
                       >
-                        {ROLE_ORDER.map((r) => (
-                          <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                        {roleChoices.map((r) => (
+                          <option key={r} value={r}>{roleLabel(r)}</option>
                         ))}
                       </select>
                     </td>
@@ -463,7 +688,7 @@ export default function UsersAdmin() {
                       </td>
                       <td className="px-4 py-2.5">
                         <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${ROLE_STYLES[inv.role] || 'bg-ink-100 text-ink-600'}`}>
-                          {ROLE_LABELS[inv.role] || inv.role}
+                          {roleLabel(inv.role)}
                         </span>
                       </td>
                       <td className="px-4 py-2.5">
@@ -496,7 +721,7 @@ export default function UsersAdmin() {
         </div>
       )}
 
-      {tab === 'perms' && <PermissionsPanel />}
+      {tab === 'perms' && <PermissionsPanel users={users} onRolesChange={loadRoles} />}
 
       {tab === 'security' && (
         <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-100">
@@ -545,8 +770,8 @@ export default function UsersAdmin() {
               </Field>
               <Field label="Rôle">
                 <select className="input" value={inviteModal.role} onChange={(e) => setInviteModal({ ...inviteModal, role: e.target.value })}>
-                  {INVITE_ROLES.map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
+                  {roleChoices.filter((r) => r !== 'super_admin').map((value) => (
+                    <option key={value} value={value}>{roleLabel(value)}</option>
                   ))}
                 </select>
               </Field>
@@ -578,6 +803,8 @@ export default function UsersAdmin() {
                 value={editing}
                 onChange={setEditing}
                 showRole
+                actorIsSuper={actorIsSuper}
+                roles={roleChoices.map((key) => ({ key, label: roleLabel(key) }))}
                 passwordRequired={!editing.id}
               />
               {error && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}

@@ -505,6 +505,22 @@ migrate(`CREATE TABLE IF NOT EXISTS role_permissions (
   enabled INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (role, area)
 )`);
+migrate(`CREATE TABLE IF NOT EXISTS access_roles (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  is_system INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 100,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+const roleSeed = db.prepare('INSERT OR IGNORE INTO access_roles (key, label, description, is_system, sort_order) VALUES (?, ?, ?, 1, ?)');
+for (const row of [
+  ['super_admin', 'Super admin', 'Accès total', 0],
+  ['admin', 'Administrateur', 'Site, GRH et caisse', 1],
+  ['editor', 'Éditeur', 'Contenu et médiathèque', 2],
+  ['cashier', 'Caissier', 'Encaissement et stock', 3],
+  ['viewer', 'Consultation', 'Lecture seule', 4]
+]) roleSeed.run(...row);
 // Droits par défaut : seed une seule fois (INSERT OR IGNORE) — nouvelles zones ajoutées sans écraser les réglages existants
 const permSeed = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
 for (const [role, area, on] of [

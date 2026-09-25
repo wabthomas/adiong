@@ -286,49 +286,130 @@ const ROLES = {
   pos: ['super_admin', 'admin', 'cashier'],
   any: ['super_admin', 'admin', 'editor', 'viewer', 'cashier']
 };
-// Droits configurables par rôle (matrice super admin) — le super admin conserve toujours tout
-const PERM_AREAS = [
-  { id: 'dashboard', label: 'Tableau de bord', desc: 'Vue d’ensemble et indicateurs' },
-  { id: 'chat', label: 'Messages équipe', desc: 'Messagerie interne (discussions et groupes)' },
-  { id: 'inbox', label: 'Boîte contact', desc: 'Messages reçus depuis le site public' },
-  { id: 'donations', label: 'Dons', desc: 'Consultation et traitement des dons' },
-  { id: 'content', label: 'Contenu', desc: 'Articles, causes, campagnes, partenaires' },
-  { id: 'media', label: 'Médiathèque', desc: 'Bibliothèque de médias et uploads' },
-  { id: 'grh', label: 'GRH', desc: 'Équipe, congés, présences, projets, tâches, paie' },
-  { id: 'leave', label: 'Mon espace', desc: 'Demandes de congés personnelles' },
-  { id: 'pos', label: 'Point de vente', desc: 'Produits, ventes, stock et boutique' },
-  { id: 'users', label: 'Utilisateurs', desc: 'Comptes, invitations et journal de sécurité' },
-  { id: 'settings', label: 'Paramètres', desc: 'Paramètres du site et modules' }
+// Droits fins par catégorie de fonction (comme Kivu Business Car). Le super admin conserve toujours tout.
+const PERM_GROUPS = [
+  { id: 'platform', label: 'Plateforme' },
+  { id: 'content', label: 'Contenu' },
+  { id: 'media', label: 'Médiathèque' },
+  { id: 'donations', label: 'Dons' },
+  { id: 'inbox', label: 'Contact' },
+  { id: 'chat', label: 'Messagerie' },
+  { id: 'grh', label: 'GRH' },
+  { id: 'leave', label: 'Mon espace' },
+  { id: 'pos', label: 'Point de vente' },
+  { id: 'users', label: 'Utilisateurs' },
+  { id: 'settings', label: 'Paramètres' }
 ];
-/** Groupe de rôle → zone de permission (compat. requireRole) */
-const AREA_GROUP = {
-  dashboard: 'any',
-  content: 'content',
-  media: 'content',
-  settings: 'admin',
-  users: 'admin',
-  grh: 'hr',
-  leave: 'any',
-  pos: 'pos',
-  donations: 'any',
-  inbox: 'any',
-  chat: 'any'
+const PERM_AREAS = [
+  { id: 'dashboard.view', group: 'platform', label: 'Voir le tableau de bord' },
+  { id: 'security.view', group: 'platform', label: 'Consulter le journal de sécurité' },
+  { id: 'content.view', group: 'content', label: 'Consulter le contenu' },
+  { id: 'content.create', group: 'content', label: 'Créer du contenu' },
+  { id: 'content.edit', group: 'content', label: 'Modifier le contenu' },
+  { id: 'content.delete', group: 'content', label: 'Supprimer le contenu' },
+  { id: 'media.view', group: 'media', label: 'Consulter la médiathèque' },
+  { id: 'media.upload', group: 'media', label: 'Ajouter des médias' },
+  { id: 'media.delete', group: 'media', label: 'Supprimer des médias' },
+  { id: 'donations.view', group: 'donations', label: 'Consulter les dons' },
+  { id: 'donations.edit', group: 'donations', label: 'Traiter les dons' },
+  { id: 'donations.delete', group: 'donations', label: 'Supprimer des dons' },
+  { id: 'inbox.view', group: 'inbox', label: 'Lire les messages' },
+  { id: 'inbox.edit', group: 'inbox', label: 'Répondre aux messages' },
+  { id: 'inbox.delete', group: 'inbox', label: 'Supprimer des messages' },
+  { id: 'chat.view', group: 'chat', label: 'Accéder à la messagerie' },
+  { id: 'chat.send', group: 'chat', label: 'Envoyer des messages' },
+  { id: 'chat.groups', group: 'chat', label: 'Créer et administrer les groupes' },
+  { id: 'grh.view', group: 'grh', label: 'Consulter les dossiers' },
+  { id: 'grh.manage', group: 'grh', label: 'Gérer l’équipe' },
+  { id: 'grh.attendance', group: 'grh', label: 'Gérer les présences' },
+  { id: 'grh.payroll', group: 'grh', label: 'Gérer la paie' },
+  { id: 'leave.view', group: 'leave', label: 'Accéder à Mon espace' },
+  { id: 'leave.request', group: 'leave', label: 'Demander un congé' },
+  { id: 'pos.view', group: 'pos', label: 'Accéder au point de vente' },
+  { id: 'pos.sell', group: 'pos', label: 'Encaisser une vente' },
+  { id: 'pos.manage', group: 'pos', label: 'Catalogue, retours et rapports' },
+  { id: 'users.view', group: 'users', label: 'Consulter les comptes' },
+  { id: 'users.create', group: 'users', label: 'Créer des comptes' },
+  { id: 'users.edit', group: 'users', label: 'Modifier des comptes' },
+  { id: 'users.delete', group: 'users', label: 'Supprimer des comptes' },
+  { id: 'roles.manage', group: 'users', label: 'Gérer les rôles et droits' },
+  { id: 'settings.view', group: 'settings', label: 'Consulter les paramètres' },
+  { id: 'settings.write', group: 'settings', label: 'Modifier les paramètres' },
+  { id: 'modules.manage', group: 'settings', label: 'Activer les modules' }
+];
+/** Clé fine → ancienne zone, pour hériter d'un réglage déjà enregistré. */
+const permParent = (id) => {
+  if (id === 'security.view' || id === 'roles.manage' || id.startsWith('users.')) return 'users';
+  if (id === 'modules.manage' || id.startsWith('settings.')) return 'settings';
+  if (id === 'dashboard.view') return 'dashboard';
+  const base = id.split('.')[0];
+  return base === id ? null : base;
+};
+/** Ces droits ne suivent pas la zone parente : réservés par défaut. */
+const PERM_RESTRICT = {
+  'grh.payroll': ['super_admin'],
+  'roles.manage': ['super_admin'],
+  'modules.manage': ['super_admin'],
+  'chat.groups': ['super_admin', 'admin'],
+  'pos.manage': ['super_admin', 'admin']
 };
 const GROUP_AREA = {
-  any: 'dashboard',
-  content: 'content',
-  admin: 'settings',
-  hr: 'grh',
-  pos: 'pos',
+  any: 'dashboard.view',
+  content: 'content.view',
+  admin: 'settings.view',
+  hr: 'grh.view',
+  pos: 'pos.view',
   super: null
 };
 const ROLE_LIST = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
+function listAccessRoles() {
+  return db.prepare('SELECT key, label, description, is_system, sort_order FROM access_roles ORDER BY sort_order, label').all();
+}
+function knownRole(key) {
+  return !!db.prepare('SELECT key FROM access_roles WHERE key = ?').get(key);
+}
+function roleLabelOf(key) {
+  return db.prepare('SELECT label FROM access_roles WHERE key = ?').get(key)?.label || ROLE_LABELS[key] || key;
+}
+function slugRole(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+}
 const permEnabled = (role, area) => {
   if (role === 'super_admin') return true;
   if (!area) return true;
   const row = db.prepare('SELECT enabled FROM role_permissions WHERE role = ? AND area = ?').get(role, area);
-  return row ? row.enabled === 1 : false;
+  if (row) return row.enabled === 1;
+  const parent = permParent(area);
+  if (!parent) return false;
+  const legacy = db.prepare('SELECT enabled FROM role_permissions WHERE role = ? AND area = ?').get(role, parent);
+  if (!legacy) return false;
+  const allow = PERM_RESTRICT[area];
+  if (allow && !allow.includes(role)) return false;
+  return legacy.enabled === 1;
 };
+const seedFinePerms = () => {
+  const exists = db.prepare('SELECT 1 AS n FROM role_permissions WHERE role = ? AND area = ?');
+  const legacy = db.prepare('SELECT enabled FROM role_permissions WHERE role = ? AND area = ?');
+  const ins = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
+  for (const role of ROLE_LIST) {
+    for (const area of PERM_AREAS) {
+      if (exists.get(role, area.id)) continue;
+      const parent = permParent(area.id);
+      const prev = parent ? legacy.get(role, parent) : null;
+      let on = prev ? prev.enabled : 0;
+      const allow = PERM_RESTRICT[area.id];
+      if (allow && !allow.includes(role)) on = 0;
+      ins.run(role, area.id, on);
+    }
+  }
+};
+seedFinePerms();
 const requirePerm = (area) => (req, res, next) => {
   if (!permEnabled(req.user?.role, area))
     return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle' });
@@ -470,7 +551,7 @@ app.get('/api/public/member/:code', (req, res) => {
     job_title: u.job_title,
     unique_code: u.unique_code,
     bio: u.bio,
-    role_label: u.role_label,
+    role_label: user.role === 'super_admin' ? '' : u.role_label,
     email: u.email
   });
 });
@@ -806,7 +887,7 @@ app.post('/api/donations/proof', proofLimiter, proofUpload.single('file'), (req,
   res.json({ ok: true, status: 'preuve', reference: d.reference });
 });
 
-app.get('/api/admin/dashboard', authRequired, requirePerm('dashboard'), (req, res) => {
+app.get('/api/admin/dashboard', authRequired, requirePerm('dashboard.view'), (req, res) => {
   const q = (s) => db.prepare(s).get();
   const confirmed = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status = 'confirmee'`);
   const pending = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status IN ('nouvelle', 'preuve')`);
@@ -904,7 +985,7 @@ app.get('/api/admin/dashboard', authRequired, requirePerm('dashboard'), (req, re
   });
 });
 
-app.get('/api/admin/article-categories', authRequired, requirePerm('content'), (req, res) => {
+app.get('/api/admin/article-categories', authRequired, requirePerm('content.view'), (req, res) => {
   res.json(db.prepare(`
     SELECT c.*,
       (SELECT COUNT(*) FROM articles a WHERE a.category = c.slug) AS articles
@@ -913,7 +994,7 @@ app.get('/api/admin/article-categories', authRequired, requirePerm('content'), (
   `).all());
 });
 
-app.post('/api/admin/article-categories', authRequired, requirePerm('content'), (req, res) => {
+app.post('/api/admin/article-categories', authRequired, requirePerm('content.create'), (req, res) => {
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nom de la catégorie requis' });
   const slug = uniqueSlug('article_categories', req.body?.slug || name);
@@ -924,7 +1005,7 @@ app.post('/api/admin/article-categories', authRequired, requirePerm('content'), 
   res.json(db.prepare('SELECT * FROM article_categories WHERE id = ?').get(info.lastInsertRowid));
 });
 
-app.put('/api/admin/article-categories/:id', authRequired, requirePerm('content'), (req, res) => {
+app.put('/api/admin/article-categories/:id', authRequired, requirePerm('content.edit'), (req, res) => {
   const ex = db.prepare('SELECT * FROM article_categories WHERE id = ?').get(req.params.id);
   if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
   const name = String(req.body?.name || '').trim();
@@ -938,7 +1019,7 @@ app.put('/api/admin/article-categories/:id', authRequired, requirePerm('content'
   res.json(db.prepare('SELECT * FROM article_categories WHERE id = ?').get(ex.id));
 });
 
-app.delete('/api/admin/article-categories/:id', authRequired, requirePerm('content'), (req, res) => {
+app.delete('/api/admin/article-categories/:id', authRequired, requirePerm('content.delete'), (req, res) => {
   const ex = db.prepare('SELECT * FROM article_categories WHERE id = ?').get(req.params.id);
   if (!ex) return res.status(404).json({ error: 'Catégorie introuvable' });
   const used = db.prepare('SELECT COUNT(*) n FROM articles WHERE category = ?').get(ex.slug).n;
@@ -947,8 +1028,8 @@ app.delete('/api/admin/article-categories/:id', authRequired, requirePerm('conte
   res.json({ ok: true });
 });
 
-app.get('/api/admin/articles', authRequired, requirePerm('content'), (req, res) => res.json(db.prepare('SELECT * FROM articles ORDER BY date DESC').all()));
-app.post('/api/admin/articles', authRequired, requirePerm('content'), (req, res) => {
+app.get('/api/admin/articles', authRequired, requirePerm('content.view'), (req, res) => res.json(db.prepare('SELECT * FROM articles ORDER BY date DESC').all()));
+app.post('/api/admin/articles', authRequired, requirePerm('content.create'), (req, res) => {
   const { title, slug, excerpt, content, category, image, author, date, published,
     seo_title, seo_description, seo_image, seo_noindex } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
@@ -960,7 +1041,7 @@ app.post('/api/admin/articles', authRequired, requirePerm('content'), (req, res)
       seo_title || '', seo_description || '', seo_image || '', seo_noindex ? 1 : 0);
   res.json(db.prepare('SELECT * FROM articles WHERE id = ?').get(info.lastInsertRowid));
 });
-app.put('/api/admin/articles/:id', authRequired, requirePerm('content'), (req, res) => {
+app.put('/api/admin/articles/:id', authRequired, requirePerm('content.edit'), (req, res) => {
   const { title, slug, excerpt, content, category, image, author, date, published,
     seo_title, seo_description, seo_image, seo_noindex } = req.body || {};
   db.prepare(`UPDATE articles SET title=?, slug=?, excerpt=?, content=?, category=?, image=?, author=?, date=?, published=?, seo_title=?, seo_description=?, seo_image=?, seo_noindex=? WHERE id=?`)
@@ -969,13 +1050,13 @@ app.put('/api/admin/articles/:id', authRequired, requirePerm('content'), (req, r
       seo_title || '', seo_description || '', seo_image || '', seo_noindex ? 1 : 0, req.params.id);
   res.json(db.prepare('SELECT * FROM articles WHERE id = ?').get(req.params.id));
 });
-app.delete('/api/admin/articles/:id', authRequired, requirePerm('content'), (req, res) => {
+app.delete('/api/admin/articles/:id', authRequired, requirePerm('content.delete'), (req, res) => {
   db.prepare('DELETE FROM articles WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/admin/causes', authRequired, requirePerm('content'), (req, res) => res.json(db.prepare('SELECT * FROM causes ORDER BY sort_order').all()));
-app.post('/api/admin/causes', authRequired, requirePerm('content'), (req, res) => {
+app.get('/api/admin/causes', authRequired, requirePerm('content.view'), (req, res) => res.json(db.prepare('SELECT * FROM causes ORDER BY sort_order').all()));
+app.post('/api/admin/causes', authRequired, requirePerm('content.create'), (req, res) => {
   const { title, slug, tagline, description, long_content, icon, image, link, sort_order } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
   const s = uniqueSlug('causes', slug || title);
@@ -984,19 +1065,19 @@ app.post('/api/admin/causes', authRequired, requirePerm('content'), (req, res) =
     .run(s, title, tagline || '', description || '', long_content || '', icon || 'megaphone', image || '', link || '', sort_order || 99);
   res.json(db.prepare('SELECT * FROM causes WHERE id = ?').get(info.lastInsertRowid));
 });
-app.put('/api/admin/causes/:id', authRequired, requirePerm('content'), (req, res) => {
+app.put('/api/admin/causes/:id', authRequired, requirePerm('content.edit'), (req, res) => {
   const { title, slug, tagline, description, long_content, icon, image, link, sort_order, published } = req.body || {};
   db.prepare(`UPDATE causes SET title=?, slug=?, tagline=?, description=?, long_content=?, icon=?, image=?, link=?, sort_order=?, published=? WHERE id=?`)
     .run(title, uniqueSlug('causes', slug || 'cause', Number(req.params.id)), tagline || '', description || '', long_content || '', icon || 'megaphone', image || '', link || '', Number(sort_order || 99), published ? 1 : 0, req.params.id);
   res.json(db.prepare('SELECT * FROM causes WHERE id = ?').get(req.params.id));
 });
-app.delete('/api/admin/causes/:id', authRequired, requirePerm('content'), (req, res) => {
+app.delete('/api/admin/causes/:id', authRequired, requirePerm('content.delete'), (req, res) => {
   db.prepare('DELETE FROM causes WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/admin/campaigns', authRequired, requirePerm('content'), (req, res) => res.json(db.prepare('SELECT * FROM campaigns ORDER BY deadline').all()));
-app.post('/api/admin/campaigns', authRequired, requirePerm('content'), (req, res) => {
+app.get('/api/admin/campaigns', authRequired, requirePerm('content.view'), (req, res) => res.json(db.prepare('SELECT * FROM campaigns ORDER BY deadline').all()));
+app.post('/api/admin/campaigns', authRequired, requirePerm('content.create'), (req, res) => {
   const { title, slug, description, image, goal_amount, deadline, cause_slug } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Titre requis' });
   const s = uniqueSlug('campaigns', slug || title);
@@ -1005,7 +1086,7 @@ app.post('/api/admin/campaigns', authRequired, requirePerm('content'), (req, res
     .run(s, title, description || '', image || '', Number(goal_amount) || 0, deadline || '', cause_slug || '');
   res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(info.lastInsertRowid));
 });
-app.put('/api/admin/campaigns/:id', authRequired, requirePerm('content'), (req, res) => {
+app.put('/api/admin/campaigns/:id', authRequired, requirePerm('content.edit'), (req, res) => {
   const { title, slug, description, image, goal_amount, deadline, cause_slug, published } = req.body || {};
   const id = Number(req.params.id);
   db.prepare(`UPDATE campaigns SET title=?, slug=?, description=?, image=?, goal_amount=?, deadline=?, cause_slug=?, published=? WHERE id=?`)
@@ -1013,16 +1094,16 @@ app.put('/api/admin/campaigns/:id', authRequired, requirePerm('content'), (req, 
   syncCampaignCollected(id);
   res.json(db.prepare('SELECT * FROM campaigns WHERE id = ?').get(id));
 });
-app.delete('/api/admin/campaigns/:id', authRequired, requirePerm('content'), (req, res) => {
+app.delete('/api/admin/campaigns/:id', authRequired, requirePerm('content.delete'), (req, res) => {
   db.prepare('DELETE FROM campaigns WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // Partenaires (bandeau de logos au-dessus du footer)
-app.get('/api/admin/partners', authRequired, requirePerm('content'), (req, res) =>
+app.get('/api/admin/partners', authRequired, requirePerm('content.view'), (req, res) =>
   res.json(db.prepare('SELECT * FROM partners ORDER BY sort_order, id').all()));
 
-app.post('/api/admin/partners', authRequired, requirePerm('content'), (req, res) => {
+app.post('/api/admin/partners', authRequired, requirePerm('content.create'), (req, res) => {
   const b = req.body || {};
   if (!String(b.name || '').trim() || !String(b.logo || '').trim())
     return res.status(400).json({ error: 'Nom et logo du partenaire sont requis' });
@@ -1036,7 +1117,7 @@ app.post('/api/admin/partners', authRequired, requirePerm('content'), (req, res)
   }
 });
 
-app.put('/api/admin/partners/:id', authRequired, requirePerm('content'), (req, res) => {
+app.put('/api/admin/partners/:id', authRequired, requirePerm('content.edit'), (req, res) => {
   const ex = db.prepare('SELECT * FROM partners WHERE id = ?').get(req.params.id);
   if (!ex) return res.status(404).json({ error: 'Partenaire introuvable' });
   const b = { ...ex, ...req.body };
@@ -1045,14 +1126,14 @@ app.put('/api/admin/partners/:id', authRequired, requirePerm('content'), (req, r
   res.json(db.prepare('SELECT * FROM partners WHERE id = ?').get(ex.id));
 });
 
-app.delete('/api/admin/partners/:id', authRequired, requirePerm('content'), (req, res) => {
+app.delete('/api/admin/partners/:id', authRequired, requirePerm('content.delete'), (req, res) => {
   db.prepare('DELETE FROM partners WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/admin/donations', authRequired, requirePerm('donations'), (req, res) =>
+app.get('/api/admin/donations', authRequired, requirePerm('donations.view'), (req, res) =>
   res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC').all()));
-app.put('/api/admin/donations/:id', authRequired, requirePerm('donations'), (req, res) => {
+app.put('/api/admin/donations/:id', authRequired, requirePerm('donations.edit'), (req, res) => {
   const prev = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
   if (!prev) return res.status(404).json({ error: 'Don introuvable' });
   const status = DONATE_STATUSES.includes(req.body?.status) ? req.body.status : 'nouvelle';
@@ -1060,13 +1141,13 @@ app.put('/api/admin/donations/:id', authRequired, requirePerm('donations'), (req
   syncCampaignCollected(prev.campaign_id);
   res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id));
 });
-app.get('/api/admin/donations/:id/proof', authRequired, requirePerm('donations'), (req, res) => {
+app.get('/api/admin/donations/:id/proof', authRequired, requirePerm('donations.view'), (req, res) => {
   const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
   if (!d || !d.proof || !fs.existsSync(d.proof)) return res.status(404).json({ error: 'Preuve introuvable' });
   res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(d.proof_name || 'preuve')}"`);
   res.sendFile(d.proof);
 });
-app.delete('/api/admin/donations/:id', authRequired, requirePerm('donations'), (req, res) => {
+app.delete('/api/admin/donations/:id', authRequired, requirePerm('donations.delete'), (req, res) => {
   const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
   if (d?.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
   db.prepare('DELETE FROM donations WHERE id = ?').run(req.params.id);
@@ -1074,17 +1155,17 @@ app.delete('/api/admin/donations/:id', authRequired, requirePerm('donations'), (
   res.json({ ok: true });
 });
 
-app.get('/api/admin/messages', authRequired, requirePerm('inbox'), (req, res) => res.json(db.prepare('SELECT * FROM messages ORDER BY created_at DESC').all()));
-app.put('/api/admin/messages/:id', authRequired, requirePerm('inbox'), (req, res) => {
+app.get('/api/admin/messages', authRequired, requirePerm('inbox.view'), (req, res) => res.json(db.prepare('SELECT * FROM messages ORDER BY created_at DESC').all()));
+app.put('/api/admin/messages/:id', authRequired, requirePerm('inbox.edit'), (req, res) => {
   db.prepare('UPDATE messages SET read = 1 WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
-app.delete('/api/admin/messages/:id', authRequired, requirePerm('inbox'), (req, res) => {
+app.delete('/api/admin/messages/:id', authRequired, requirePerm('inbox.delete'), (req, res) => {
   db.prepare('DELETE FROM messages WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/admin/settings', authRequired, requirePerm('settings'), (req, res) => {
+app.get('/api/admin/settings', authRequired, requirePerm('settings.view'), (req, res) => {
   const s = publicSite();
   s.stats = JSON.parse(JSON.stringify(s.stats));
   s.values = JSON.parse(JSON.stringify(s.values));
@@ -1092,7 +1173,7 @@ app.get('/api/admin/settings', authRequired, requirePerm('settings'), (req, res)
   res.json(s);
 });
 const SETTING_KEYS = new Set([...STRING_SETTINGS, ...Object.keys(JSON_SETTINGS)]);
-app.put('/api/admin/settings', authRequired, requirePerm('settings'), (req, res) => {
+app.put('/api/admin/settings', authRequired, requirePerm('settings.write'), (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!SETTING_KEYS.has(k)) continue;
     const value = typeof v === 'string' ? v : JSON.stringify(v);
@@ -1101,7 +1182,7 @@ app.put('/api/admin/settings', authRequired, requirePerm('settings'), (req, res)
   res.json(publicSite());
 });
 
-app.post('/api/admin/upload', authRequired, requirePerm('media'), (req, res) => {
+app.post('/api/admin/upload', authRequired, requirePerm('media.upload'), (req, res) => {
   upload.single('image')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Aucune image fournie' });
@@ -1255,7 +1336,7 @@ async function optimizeBuffer(buffer, originalName = 'image.jpg') {
   }
 }
 
-app.post('/api/admin/media', authRequired, requirePerm('media'), (req, res) => {
+app.post('/api/admin/media', authRequired, requirePerm('media.upload'), (req, res) => {
   memoryUpload.single('image')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
     try {
@@ -1278,7 +1359,7 @@ app.post('/api/admin/media', authRequired, requirePerm('media'), (req, res) => {
   });
 });
 
-app.get('/api/admin/media', authRequired, requirePerm('media'), (req, res) => {
+app.get('/api/admin/media', authRequired, requirePerm('media.view'), (req, res) => {
   const q = String(req.query.q || '').toLowerCase();
   const type = String(req.query.type || '').toLowerCase();
   let rows = db.prepare('SELECT * FROM media ORDER BY created_at DESC').all();
@@ -1292,7 +1373,7 @@ app.get('/api/admin/media', authRequired, requirePerm('media'), (req, res) => {
   res.json(rows);
 });
 
-app.patch('/api/admin/media/:id', authRequired, requirePerm('media'), (req, res) => {
+app.patch('/api/admin/media/:id', authRequired, requirePerm('media.upload'), (req, res) => {
   const m = db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Image introuvable' });
   const alt = String(req.body?.alt ?? (m.alt || '')).slice(0, 300);
@@ -1300,7 +1381,7 @@ app.patch('/api/admin/media/:id', authRequired, requirePerm('media'), (req, res)
   res.json(db.prepare('SELECT * FROM media WHERE id = ?').get(m.id));
 });
 
-app.delete('/api/admin/media/:id', authRequired, requirePerm('media'), (req, res) => {
+app.delete('/api/admin/media/:id', authRequired, requirePerm('media.delete'), (req, res) => {
   const m = db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Fichier introuvable' });
   const used =
@@ -1326,6 +1407,15 @@ app.delete('/api/admin/media/:id', authRequired, requirePerm('media'), (req, res
 const ROLE_LABELS = { super_admin: 'Super administrateur', admin: 'Administrateur', editor: 'Éditeur', viewer: 'Consultation' };
 const PRIVILEGED = ['super_admin', 'admin'];
 
+function actorIsSuper(req) {
+  return req.user?.role === 'super_admin';
+}
+
+/** Un subalterne ne voit ni ne gère les comptes Super admin. */
+function hiddenSuper(targetRole, actorRole) {
+  return targetRole === 'super_admin' && actorRole !== 'super_admin';
+}
+
 function publicUser(u) {
   if (!u) return null;
   return {
@@ -1333,7 +1423,7 @@ function publicUser(u) {
     email: u.email,
     full_name: u.full_name,
     role: u.role,
-    role_label: ROLE_LABELS[u.role] || u.role,
+    role_label: roleLabelOf(u.role),
     photo: u.photo || '',
     phone: u.phone || '',
     job_title: u.job_title || '',
@@ -1363,7 +1453,7 @@ function applyUserFields(user, body, { allowRole = false, actorRole } = {}) {
   if (typeof job_title === 'string') db.prepare('UPDATE users SET job_title = ? WHERE id = ?').run(job_title.trim(), user.id);
   if (typeof bio === 'string') db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio.trim(), user.id);
   if (allowRole && role) {
-    if (!['super_admin', 'admin', 'editor', 'viewer', 'cashier'].includes(role)) throw Object.assign(new Error('Rôle invalide'), { status: 400 });
+    if (!knownRole(role)) throw Object.assign(new Error('Rôle invalide'), { status: 400 });
     if (role === 'super_admin' && actorRole !== 'super_admin')
       throw Object.assign(new Error('Seul un super administrateur peut accorder ce rôle'), { status: 403 });
     const err = guardLastAdmin(user.id, role);
@@ -1384,20 +1474,29 @@ function guardLastAdmin(id, role) {
   return null;
 }
 
-app.get('/api/admin/security', authRequired, requirePerm('users'), (req, res) => {
-  res.json(db.prepare('SELECT * FROM security_events ORDER BY id DESC LIMIT 100').all());
+app.get('/api/admin/security', authRequired, requirePerm('security.view'), (req, res) => {
+  let rows = db.prepare('SELECT * FROM security_events ORDER BY id DESC LIMIT 100').all();
+  if (!actorIsSuper(req)) {
+    const hidden = new Set(
+      db.prepare("SELECT email FROM users WHERE role = 'super_admin'").all()
+        .map((r) => String(r.email || '').toLowerCase())
+    );
+    rows = rows.filter((e) => !hidden.has(String(e.email || '').toLowerCase()));
+  }
+  res.json(rows);
 });
 
-app.get('/api/admin/users', authRequired, requirePerm('users'), (req, res) => {
-  const users = db.prepare('SELECT * FROM users ORDER BY created_at').all();
+app.get('/api/admin/users', authRequired, requirePerm('users.view'), (req, res) => {
+  const users = db.prepare('SELECT * FROM users ORDER BY created_at').all()
+    .filter((u) => !hiddenSuper(u.role, req.user.role));
   res.json(users.map(publicUser));
 });
 
-app.post('/api/admin/users', authRequired, requirePerm('users'), (req, res) => {
+app.post('/api/admin/users', authRequired, requirePerm('users.create'), (req, res) => {
   const { email, password, full_name, role, photo, phone, job_title, bio } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
   if (password.length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum' });
-  if (!['super_admin', 'admin', 'editor', 'viewer', 'cashier'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+  if (!knownRole(role)) return res.status(400).json({ error: 'Rôle invalide' });
   if (role === 'super_admin' && req.user.role !== 'super_admin')
     return res.status(403).json({ error: 'Seul un super administrateur peut créer un super administrateur' });
   const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
@@ -1418,9 +1517,9 @@ app.post('/api/admin/users', authRequired, requirePerm('users'), (req, res) => {
   res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid)));
 });
 
-app.put('/api/admin/users/:id', authRequired, requirePerm('users'), (req, res) => {
+app.put('/api/admin/users/:id', authRequired, requirePerm('users.edit'), (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  if (!user || hiddenSuper(user.role, req.user.role)) return res.status(404).json({ error: 'Utilisateur introuvable' });
   try {
     applyUserFields(user, req.body, { allowRole: true, actorRole: req.user.role });
   } catch (e) {
@@ -1429,16 +1528,16 @@ app.put('/api/admin/users/:id', authRequired, requirePerm('users'), (req, res) =
   res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)));
 });
 
-app.post('/api/admin/users/:id/code', authRequired, requirePerm('users'), (req, res) => {
+app.post('/api/admin/users/:id/code', authRequired, requirePerm('users.edit'), (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  if (!user || hiddenSuper(user.role, req.user.role)) return res.status(404).json({ error: 'Utilisateur introuvable' });
   db.prepare('UPDATE users SET unique_code = ? WHERE id = ?').run(newUniqueCode(), user.id);
   res.json(publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)));
 });
 
-app.delete('/api/admin/users/:id', authRequired, requirePerm('users'), (req, res) => {
+app.delete('/api/admin/users/:id', authRequired, requirePerm('users.delete'), (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  if (!user || hiddenSuper(user.role, req.user.role)) return res.status(404).json({ error: 'Utilisateur introuvable' });
   if (Number(req.params.id) === req.user.id) return res.status(409).json({ error: 'Vous ne pouvez pas supprimer votre propre compte' });
   const err = guardLastAdmin(user.id, 'viewer');
   if (err) return res.status(409).json({ error: err });
@@ -1458,7 +1557,7 @@ app.get('/api/admin/modules', authRequired, (req, res) => {
   });
 });
 
-app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => {
+app.put('/api/admin/modules', authRequired, requirePerm('modules.manage'), (req, res) => {
   const { grh_enabled, pos_enabled, chat_enabled, maintenance_enabled, maintenance_message } = req.body || {};
   if (typeof grh_enabled === 'boolean') setSetting('grh_enabled', grh_enabled ? '1' : '0');
   if (typeof pos_enabled === 'boolean') setSetting('pos_enabled', pos_enabled ? '1' : '0');
@@ -1479,25 +1578,42 @@ app.put('/api/admin/modules', authRequired, requireRole('super'), (req, res) => 
 
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 app.get('/api/admin/permissions', authRequired, (req, res) => {
+  const canManage = req.user.role === 'super_admin' || permEnabled(req.user.role, 'roles.manage');
+  const counts = Object.fromEntries(db.prepare('SELECT role, COUNT(*) n FROM users GROUP BY role').all().map((r) => [r.role, r.n]));
+  const roles = listAccessRoles()
+    .filter((r) => canManage || r.key === req.user.role)
+    .filter((r) => r.key !== 'super_admin' || actorIsSuper(req));
   res.json({
+    groups: PERM_GROUPS,
     areas: PERM_AREAS,
-    matrix: ROLE_LIST.map((role) => ({
-      role,
-      locked: role === 'super_admin',
-      permissions: PERM_AREAS.map((a) => ({ area: a.id, enabled: permEnabled(role, a.id) }))
+    roles: roles.map((r) => ({
+      key: r.key,
+      label: r.label,
+      description: r.description || '',
+      is_system: r.is_system === 1,
+      user_count: counts[r.key] || 0
     })),
-    is_super: req.user.role === 'super_admin'
+    matrix: roles.map((r) => ({
+      role: r.key,
+      label: r.label,
+      description: r.description || '',
+      is_system: r.is_system === 1,
+      user_count: counts[r.key] || 0,
+      locked: r.key === 'super_admin',
+      permissions: PERM_AREAS.map((a) => ({ area: a.id, enabled: permEnabled(r.key, a.id) }))
+    })),
+    is_super: canManage
   });
 });
 
-app.put('/api/admin/permissions', authRequired, requireRole('super'), (req, res) => {
+app.put('/api/admin/permissions', authRequired, requirePerm('roles.manage'), (req, res) => {
   const m = req.body?.matrix;
   if (!m || typeof m !== 'object') return res.status(400).json({ error: 'Permission(s) invalide(s)' });
   const stmt = db.prepare('INSERT INTO role_permissions (role, area, enabled) VALUES (?, ?, ?) ON CONFLICT(role, area) DO UPDATE SET enabled = excluded.enabled');
   let changed = 0;
   for (const [role, areas] of Object.entries(m)) {
     if (role === 'super_admin') return res.status(400).json({ error: 'Le super administrateur conserve toujours tous les droits' });
-    if (!ROLES.any.includes(role)) return res.status(400).json({ error: `Rôle inconnu : ${role}` });
+    if (!knownRole(role)) return res.status(400).json({ error: `Rôle inconnu : ${role}` });
     if (!areas || typeof areas !== 'object') continue;
     for (const [area, on] of Object.entries(areas)) {
       if (!PERM_AREAS.some((a) => a.id === area)) return res.status(400).json({ error: `Zone inconnue : ${area}` });
@@ -1508,8 +1624,43 @@ app.put('/api/admin/permissions', authRequired, requireRole('super'), (req, res)
   res.json({ ok: true, changed });
 });
 
+app.post('/api/admin/roles', authRequired, requirePerm('roles.manage'), (req, res) => {
+  const label = String(req.body?.label || '').trim().slice(0, 80);
+  const key = slugRole(req.body?.key || label);
+  const description = String(req.body?.description || '').trim().slice(0, 240);
+  if (!label) return res.status(400).json({ error: 'Libellé requis' });
+  if (!key) return res.status(400).json({ error: 'Clé de rôle invalide' });
+  if (key === 'super_admin') return res.status(403).json({ error: 'Impossible de créer un Super admin' });
+  if (knownRole(key)) return res.status(409).json({ error: 'Ce rôle existe déjà' });
+  const sort = (db.prepare('SELECT COALESCE(MAX(sort_order), 4) n FROM access_roles').get().n || 4) + 1;
+  db.prepare('INSERT INTO access_roles (key, label, description, is_system, sort_order) VALUES (?, ?, ?, 0, ?)').run(key, label, description, sort);
+  const ins = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
+  for (const area of PERM_AREAS) {
+    const on = area.id === 'dashboard.view' || area.id === 'chat.view' ? 1 : 0;
+    ins.run(key, area.id, on);
+  }
+  res.status(201).json({ role: { key, label, description, is_system: false } });
+});
+
+app.delete('/api/admin/roles/:key', authRequired, requirePerm('roles.manage'), (req, res) => {
+  const key = String(req.params.key || '');
+  const role = db.prepare('SELECT * FROM access_roles WHERE key = ?').get(key);
+  if (!role || hiddenSuper(role.key, req.user.role)) return res.status(404).json({ error: 'Rôle introuvable' });
+  if (role.is_system === 1) return res.status(403).json({ error: 'Ce rôle du système ne peut pas être supprimé' });
+  const used = db.prepare('SELECT COUNT(*) n FROM users WHERE role = ?').get(key).n;
+  if (used > 0) return res.status(409).json({ error: `Impossible : ${used} compte${used > 1 ? 's' : ''} utilise${used > 1 ? 'nt' : ''} encore ce rôle` });
+  db.prepare('DELETE FROM role_permissions WHERE role = ?').run(key);
+  db.prepare('DELETE FROM access_roles WHERE key = ?').run(key);
+  res.json({ ok: true });
+});
+
 // ---------- GRH (rôles admin+super, module activable) ----------
-const GRH = [authRequired, requireRole('hr'), requireModule('grh_enabled', 'GRH')];
+const grhAction = (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') return next();
+  if (String(req.path).includes('/attendance')) return requirePerm('grh.attendance')(req, res, next);
+  return requirePerm('grh.manage')(req, res, next);
+};
+const GRH = [authRequired, requirePerm('grh.view'), requireModule('grh_enabled', 'GRH'), grhAction];
 
 // Comptage des jours ouvrés (lun–ven, bornes incluses)
 const businessDays = (startISO, endISO) => {
@@ -1905,7 +2056,7 @@ app.get('/api/admin/grh/attendance', ...GRH, (req, res) => {
   const where = [];
   const params = [];
   if (month && /^\d{4}-\d{2}$/.test(month)) { where.push('a.date >= ? AND a.date < ?'); params.push(`${month}-01`, `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)) , 1)).toISOString().slice(0, 7)}`); }
-  else { const today = new Date().toISOString().slice(0, 10); where.push('a.date >= ?'); params.push(today.slice(0, 8) + '01'); }
+  else { const today = orgParts().date; where.push('a.date >= ?'); params.push(today.slice(0, 8) + '01'); }
   if (employee_id) { where.push('a.employee_id = ?'); params.push(employee_id); }
   if (q) { where.push('e.full_name LIKE ?'); params.push(`%${q}%`); }
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
@@ -1928,8 +2079,8 @@ app.put('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
     const outT = b.clock_out === '' || b.clock_out == null ? null : parseHm(b.clock_out);
     if (!inT) return res.status(400).json({ error: 'Heure de début invalide (format HH:MM)' });
     if (outT && outT <= inT) return res.status(400).json({ error: 'L’heure de fin doit être postérieure à l’heure de début' });
-    clockIn = `${date} ${inT}:00`;
-    clockOut = outT ? `${date} ${outT}:00` : (a.clock_out || `${date} ${inT}:00`);
+    clockIn = wallHmToUtc(date, inT);
+    clockOut = outT ? wallHmToUtc(date, outT) : (a.clock_out || wallHmToUtc(date, inT));
     corrected = 1;
   }
   const dup = db.prepare('SELECT id FROM grh_attendance WHERE employee_id = ? AND date = ? AND id != ?').get(a.employee_id, date, a.id);
@@ -1945,10 +2096,9 @@ app.delete('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
 });
 
 app.get('/api/admin/grh/attendance/export', ...GRH, (req, res) => {
-  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : new Date().toISOString().slice(0, 7);
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : orgParts().date.slice(0, 7);
   const end = `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 7)}`;
   const rows = db.prepare(`${ATTENDANCE_SQL} WHERE a.date >= ? AND a.date < ? ORDER BY a.date, e.full_name`).all(`${month}-01`, end);
-  const hm = (v) => String(v || '').slice(11, 16);
   const dur = (a) => {
     const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
     const e = new Date(String(a.clock_out || a.last_seen).replace(' ', 'T') + 'Z').getTime();
@@ -1957,14 +2107,14 @@ app.get('/api/admin/grh/attendance/export', ...GRH, (req, res) => {
   };
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = ['Date;Employé;Fonction;Début;Fin;Durée;Corrigé'];
-  rows.forEach((r) => lines.push([r.date, r.employee_name, r.employee_position || '', hm(r.clock_in), hm(r.clock_out || r.last_seen), dur(r), r.corrected ? 'Oui' : 'Non'].map(esc).join(';')));
+  rows.forEach((r) => lines.push([r.date, r.employee_name, r.employee_position || '', utcStampToHm(r.clock_in), utcStampToHm(r.clock_out || r.last_seen), dur(r), r.corrected ? 'Oui' : 'Non'].map(esc).join(';')));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="presences-${month}.csv"`);
   res.send('\uFEFF' + lines.join('\n'));
 });
 
 // ---------- Paie (super admin uniquement : les salaires sont confidentiels) ----------
-const PAY = [authRequired, requireRole('super'), requireModule('grh_enabled', 'GRH')];
+const PAY = [authRequired, requirePerm('grh.payroll'), requireModule('grh_enabled', 'GRH')];
 const validMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
 const monthLabelFr = (m) => {
   const [y, mo] = String(m).split('-');
@@ -3139,38 +3289,66 @@ const selfEmployeeGuard = (req, res, next) => {
   next();
 };
 
-// Pointage automatique : 1ʳᵉ activité de la journée = début, dernière activité = fin (heure locale serveur, UTC)
+// Goma : UTC+2 fixe (Africa/Lubumbashi). Les instants sont stockés en UTC ; la date du jour est locale.
+const ORG_TZ = 'Africa/Lubumbashi';
+const orgParts = (date = new Date()) => {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ORG_TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23'
+  });
+  const p = Object.fromEntries(fmt.formatToParts(date).map((x) => [x.type, x.value]));
+  const hour = p.hour === '24' ? '00' : p.hour;
+  return { date: `${p.year}-${p.month}-${p.day}`, hm: `${hour}:${p.minute}` };
+};
+const utcStamp = (date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
+/** HH:MM saisi à l'heure de Goma → horodatage UTC. */
+const wallHmToUtc = (dateStr, hm) => {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const [h, mi] = hm.split(':').map(Number);
+  return new Date(Date.UTC(y, mo - 1, d, h - 2, mi, 0)).toISOString().slice(0, 19).replace('T', ' ');
+};
+const utcStampToHm = (v) => {
+  if (!v) return '';
+  const d = new Date(String(v).replace(' ', 'T') + 'Z');
+  if (Number.isNaN(d.getTime())) return String(v).slice(11, 16);
+  return orgParts(d).hm;
+};
+
+// Pointage automatique : 1ʳᵉ activité de la journée = début, dernière activité = fin
 const recordPresence = (emp) => {
   try {
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const now = new Date();
+    const utc = utcStamp(now);
     db.prepare(`INSERT INTO grh_attendance (employee_id, date, clock_in, last_seen)
-      VALUES (?, date('now'), ?, ?)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT(employee_id, date) DO UPDATE SET last_seen = excluded.last_seen`)
-      .run(emp.id, now, now);
+      .run(emp.id, orgParts(now).date, utc, utc);
   } catch { /* non bloquant */ }
 };
-app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.get('/api/me/employee', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   const emp = req.employee;
   const dept = emp.department_id ? db.prepare('SELECT name FROM grh_departments WHERE id = ?').get(emp.department_id)?.name : '';
   res.json({ ...emp, salary: null, salary_currency: null, department: dept, balance: leaveBalance(emp.id) });
 });
-app.get('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.get('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   res.json(db.prepare('SELECT * FROM grh_leaves WHERE employee_id = ? ORDER BY start_date DESC').all(req.employee.id));
 });
-app.get('/api/me/employee/attendance', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.get('/api/me/employee/attendance', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   res.json(db.prepare(`SELECT * FROM grh_attendance
     WHERE employee_id = ? AND date >= date('now', '-60 days')
     ORDER BY date DESC`).all(req.employee.id));
 });
 
 // Battement de « Mon espace » : renouvelle l'heure de fin tant que l'employé est dans son espace de travail
-app.post('/api/me/attendance/ping', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.post('/api/me/attendance/ping', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   recordPresence(req.employee);
-  const row = db.prepare('SELECT * FROM grh_attendance WHERE employee_id = ? AND date = date(\'now\')').get(req.employee.id);
+  const row = db.prepare('SELECT * FROM grh_attendance WHERE employee_id = ? AND date = ?').get(req.employee.id, orgParts().date);
   res.json({ ok: true, ...row });
 });
 
-app.get('/api/me/employee/announcements', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.get('/api/me/employee/announcements', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   res.json(db.prepare(`
     SELECT id, title, content, pinned, expires_at, created_at
@@ -3180,7 +3358,7 @@ app.get('/api/me/employee/announcements', authRequired, requireModule('grh_enabl
   `).all(today));
 });
 const myLeaveLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, key: (req) => `myleave:${req.user?.id || req.ip}`, message: 'Trop de demandes de congé. Réessayez plus tard.' });
-app.post('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, myLeaveLimiter, (req, res) => {
+app.post('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.request'), selfEmployeeGuard, myLeaveLimiter, (req, res) => {
   const b = req.body || {};
   if (!b.start_date) return res.status(400).json({ error: 'Date de début requise' });
   const type = LEAVE_TYPES_OK.includes(b.type) ? b.type : 'conge';
@@ -3196,7 +3374,7 @@ app.post('/api/me/employee/leaves', authRequired, requireModule('grh_enabled', '
   ).run(req.employee.id, type, b.start_date, b.end_date || '', String(b.reason || '').slice(0, 500), 'en_attente', days);
   res.json(db.prepare('SELECT * FROM grh_leaves WHERE id = ?').get(info.lastInsertRowid));
 });
-app.delete('/api/me/employee/leaves/:id', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.delete('/api/me/employee/leaves/:id', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   const leave = db.prepare('SELECT * FROM grh_leaves WHERE id = ? AND employee_id = ?').get(req.params.id, req.employee.id);
   if (!leave) return res.status(404).json({ error: 'Demande introuvable' });
   if (leave.status !== 'en_attente') return res.status(409).json({ error: 'Seule une demande en attente peut être retirée.' });
@@ -3204,7 +3382,7 @@ app.delete('/api/me/employee/leaves/:id', authRequired, requireModule('grh_enabl
   res.json({ ok: true });
 });
 
-app.get('/api/me/grh/tasks', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.get('/api/me/grh/tasks', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   res.json(db.prepare(`
     SELECT t.*, p.name AS project_name
     FROM grh_tasks t LEFT JOIN grh_projects p ON p.id = t.project_id
@@ -3213,13 +3391,13 @@ app.get('/api/me/grh/tasks', authRequired, requireModule('grh_enabled', 'GRH'), 
   `).all(req.employee.id));
 });
 
-app.get('/api/me/grh/tasks/:id', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.get('/api/me/grh/tasks/:id', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   const t = fetchTask(req.params.id);
   if (!t || t.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
   res.json(t);
 });
 
-app.patch('/api/me/grh/tasks/:id/status', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.patch('/api/me/grh/tasks/:id/status', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   const ex = fetchTask(req.params.id);
   if (!ex || ex.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
   const r = applyTaskStatus(ex.id, (req.body || {}).status, {
@@ -3231,7 +3409,7 @@ app.patch('/api/me/grh/tasks/:id/status', authRequired, requireModule('grh_enabl
   res.json(r.ok);
 });
 
-app.post('/api/me/grh/tasks/:id/notes', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.post('/api/me/grh/tasks/:id/notes', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   const ex = fetchTask(req.params.id);
   if (!ex || ex.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
   const body = String((req.body || {}).body || '').trim().slice(0, 1000);
@@ -3241,7 +3419,7 @@ app.post('/api/me/grh/tasks/:id/notes', authRequired, requireModule('grh_enabled
   res.json(db.prepare('SELECT * FROM grh_task_notes WHERE id = ?').get(info.lastInsertRowid));
 });
 
-app.get('/api/me/grh/tasks/:id/pdf', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, async (req, res) => {
+app.get('/api/me/grh/tasks/:id/pdf', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, async (req, res) => {
   const t = fetchTask(req.params.id);
   if (!t || t.assignee_id !== req.employee.id) return res.status(404).json({ error: 'Tâche introuvable' });
   try {
@@ -3254,13 +3432,13 @@ app.get('/api/me/grh/tasks/:id/pdf', authRequired, requireModule('grh_enabled', 
   }
 });
 
-app.get('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.get('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   db.prepare(`UPDATE grh_chat SET read_at = datetime('now')
     WHERE employee_id = ? AND sender = 'admin' AND read_at IS NULL`).run(req.employee.id);
   res.json(chatFor(req.employee.id));
 });
 
-app.post('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave'), selfEmployeeGuard, (req, res) => {
+app.post('/api/me/chat', authRequired, requireModule('grh_enabled', 'GRH'), requirePerm('leave.view'), selfEmployeeGuard, (req, res) => {
   const body = String((req.body || {}).body || '').trim().slice(0, 2000);
   if (!body) return res.status(400).json({ error: 'Message requis' });
   const info = db.prepare(`INSERT INTO grh_chat (employee_id, sender, user_id, body) VALUES (?, 'employee', ?, ?)`)
@@ -3274,7 +3452,7 @@ const requireChat = (req, res, next) => {
     return res.status(403).json({ error: 'Module Messagerie désactivé par le super administrateur.' });
   next();
 };
-const CHAT = [authRequired, requireChat, requirePerm('chat')];
+const CHAT = [authRequired, requireChat, requirePerm('chat.view')];
 const chatLimiter = rateLimit({ windowMs: 60_000, max: 40, key: (req) => `chat:${req.user?.id || req.ip}`, message: 'Vous envoyez les messages trop rapidement — patientez un instant.' });
 const chatDir = path.join(uploadDir, 'chat');
 if (!fs.existsSync(chatDir)) fs.mkdirSync(chatDir, { recursive: true });
@@ -3351,6 +3529,11 @@ const guardChatConv = (req, res, next) => {
   if (!conv) return res.status(404).json({ error: 'Conversation introuvable' });
   const mem = db.prepare('SELECT * FROM chat_members WHERE conversation_id = ? AND user_id = ?').get(conv.id, req.user.id);
   if (!mem) return res.status(403).json({ error: 'Vous ne faites pas partie de cette conversation' });
+  if (conv.type === 'dm' && req.user.role !== 'super_admin') {
+    const other = db.prepare(`SELECT u.role FROM chat_members m JOIN users u ON u.id = m.user_id
+      WHERE m.conversation_id = ? AND m.user_id != ?`).get(conv.id, req.user.id);
+    if (hiddenSuper(other?.role, req.user.role)) return res.status(404).json({ error: 'Conversation introuvable' });
+  }
   req.chat = { conv, mem };
   next();
 };
@@ -3364,8 +3547,9 @@ const chatPublicUser = (u) => u && ({
   job_title: u.job_title || '',
   position: u.job_title || ROLE_LABEL_CHAT[u.role] || u.role || ''
 });
-const chatStaffList = () =>
+const chatStaffList = (actorRole) =>
   db.prepare(`SELECT id, full_name, email, role, photo, job_title FROM users ORDER BY full_name`).all()
+    .filter((u) => !hiddenSuper(u.role, actorRole))
     .map((u) => ({ ...chatPublicUser(u), department_name: ROLE_LABEL_CHAT[u.role] || u.role }));
 const chatUnread = (convId, userId) =>
   db.prepare(`SELECT COUNT(*) n FROM chat_messages
@@ -3384,7 +3568,13 @@ const chatConvView = (conv, user) => {
     join_policy: conv.join_policy,
     owner_id: conv.owner_id,
     my_role: mem?.role || (conv.type === 'group' && conv.owner_id === uid ? 'proprietaire' : 'membre'),
-    member_count: db.prepare('SELECT COUNT(*) n FROM chat_members WHERE conversation_id = ?').get(conv.id).n,
+    member_count: (() => {
+      const total = db.prepare('SELECT COUNT(*) n FROM chat_members WHERE conversation_id = ?').get(conv.id).n;
+      if (user.role === 'super_admin') return total;
+      const hidden = db.prepare(`SELECT COUNT(*) n FROM chat_members m JOIN users u ON u.id = m.user_id
+        WHERE m.conversation_id = ? AND u.role = 'super_admin'`).get(conv.id).n;
+      return Math.max(0, total - hidden);
+    })(),
     muted: mem?.muted === 1,
     unread: chatUnread(conv.id, uid),
     last_message_at: conv.last_message_at,
@@ -3399,6 +3589,14 @@ const chatConvView = (conv, user) => {
     row.name = o?.full_name || 'Discussion';
     row.avatar = o?.photo || '';
     row.other = chatPublicUser(o);
+    if (hiddenSuper(o?.role, user.role)) return null;
+  }
+  if (user.role !== 'super_admin' && row.last_message_sender) {
+    const fromSuper = db.prepare("SELECT 1 AS n FROM users WHERE role = 'super_admin' AND full_name = ?").get(row.last_message_sender);
+    if (fromSuper) {
+      row.last_message_sender = '';
+      row.last_message_body = '';
+    }
   }
   return row;
 };
@@ -3408,7 +3606,7 @@ const chatTouchLast = (convId, msg) => {
     .run(msg.created_at, (msg.body || '').slice(0, 140), sender?.full_name || '', convId);
 };
 
-app.post('/api/chat/upload', ...CHAT, (req, res) => {
+app.post('/api/chat/upload', ...CHAT, requirePerm('chat.send'), (req, res) => {
   chatUpload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier fourni' });
@@ -3420,7 +3618,17 @@ app.post('/api/chat/upload', ...CHAT, (req, res) => {
 app.get('/api/chat/unread', ...CHAT, (req, res) => {
   const rows = db.prepare('SELECT conversation_id FROM chat_members WHERE user_id = ? AND muted = 0').all(req.user.id);
   let count = 0;
-  for (const r of rows) count += chatUnread(r.conversation_id, req.user.id);
+  for (const r of rows) {
+    if (req.user.role !== 'super_admin') {
+      const conv = db.prepare('SELECT type FROM chat_conversations WHERE id = ?').get(r.conversation_id);
+      if (conv?.type === 'dm') {
+        const other = db.prepare(`SELECT u.role FROM chat_members m JOIN users u ON u.id = m.user_id
+          WHERE m.conversation_id = ? AND m.user_id != ?`).get(r.conversation_id, req.user.id);
+        if (hiddenSuper(other?.role, req.user.role)) continue;
+      }
+    }
+    count += chatUnread(r.conversation_id, req.user.id);
+  }
   res.json({ count });
 });
 
@@ -3456,19 +3664,19 @@ app.put('/api/chat/messages/:id/react', ...CHAT, (req, res) => {
 });
 
 app.get('/api/chat/staff', ...CHAT, (req, res) => {
-  res.json(chatStaffList().map((e) => ({ ...e, is_me: e.id === req.user.id })));
+  res.json(chatStaffList(req.user.role).map((e) => ({ ...e, is_me: e.id === req.user.id })));
 });
 
 app.get('/api/chat/conversations', ...CHAT, (req, res) => {
   const rows = db.prepare(`SELECT c.* FROM chat_conversations c
     JOIN chat_members m ON m.conversation_id = c.id AND m.user_id = ?
     ORDER BY (c.last_message_at = '') DESC, c.last_message_at DESC, c.id DESC`).all(req.user.id);
-  res.json(rows.map((c) => chatConvView(c, req.user)));
+  res.json(rows.map((c) => chatConvView(c, req.user)).filter(Boolean));
 });
 
 app.post('/api/chat/dm', ...CHAT, (req, res) => {
   const target = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(req.body?.user_id));
-  if (!target) return res.status(404).json({ error: 'Compte introuvable' });
+  if (!target || hiddenSuper(target.role, req.user.role)) return res.status(404).json({ error: 'Compte introuvable' });
   if (target.id === req.user.id) return res.status(400).json({ error: 'Impossible de discuter avec soi-même' });
   const [a, b] = [req.user.id, target.id].sort((x, y) => x - y);
   let conv = db.prepare(`SELECT c.* FROM chat_conversations c
@@ -3486,18 +3694,14 @@ app.post('/api/chat/dm', ...CHAT, (req, res) => {
   res.json(chatConvView(conv, req.user));
 });
 
-app.post('/api/chat/groups', ...CHAT, (req, res, next) => {
-  if (!['super_admin', 'admin'].includes(req.user?.role))
-    return res.status(403).json({ error: 'Seuls les administrateurs peuvent créer un groupe' });
-  next();
-}, (req, res) => {
+app.post('/api/chat/groups', ...CHAT, requirePerm('chat.groups'), (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim().slice(0, 80);
   if (!name) return res.status(400).json({ error: 'Nom du groupe requis' });
   const ids = new Set([req.user.id]);
   for (const x of Array.isArray(b.member_ids) ? b.member_ids : []) {
-    const emp = db.prepare('SELECT id FROM users WHERE id = ?').get(Number(x));
-    if (emp) ids.add(emp.id);
+    const emp = db.prepare('SELECT id, role FROM users WHERE id = ?').get(Number(x));
+    if (emp && !hiddenSuper(emp.role, req.user.role)) ids.add(emp.id);
   }
   if (ids.size < 2) return res.status(400).json({ error: 'Un groupe doit compter au moins 2 membres' });
   const info = db.prepare(`INSERT INTO chat_conversations (type, name, description, avatar, join_policy, owner_id, created_by)
@@ -3550,7 +3754,7 @@ app.get('/api/chat/conversations/:id/members', ...CHAT, guardChatConv, (req, res
     FROM chat_members m JOIN users e ON e.id = m.user_id
     WHERE m.conversation_id = ? ORDER BY
       CASE m.role WHEN 'proprietaire' THEN 0 WHEN 'moderateur' THEN 1 ELSE 2 END, e.full_name`).all(req.chat.conv.id);
-  res.json(rows.map((r) => ({
+  res.json(rows.filter((r) => !hiddenSuper(r.emp_status, req.user.role)).map((r) => ({
     id: r.user_id,
     full_name: r.full_name, position: r.position || ROLE_LABEL_CHAT[r.emp_status] || r.emp_status, photo: r.photo,
     is_active: true,
@@ -3568,6 +3772,7 @@ app.post('/api/chat/conversations/:id/members', ...CHAT, guardChatConv, (req, re
   if (!isSelf && !chatIsMod(req)) return res.status(403).json({ error: 'Réservé au propriétaire et aux modérateurs' });
   if (isSelf && conv.join_policy !== 'ouvert') return res.status(403).json({ error: 'Ce groupe est fermé — demandez à un modérateur de vous y ajouter' });
   const emp = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+  if (emp && hiddenSuper(emp.role, req.user.role)) return res.status(404).json({ error: 'Compte introuvable' });
   if (!emp) return res.status(404).json({ error: 'Compte introuvable' });
   if (db.prepare('SELECT 1 FROM chat_members WHERE conversation_id = ? AND user_id = ?').get(conv.id, targetId))
     return res.status(409).json({ error: 'Cette personne est déjà membre du groupe' });
@@ -3626,15 +3831,16 @@ app.get('/api/chat/search', ...CHAT, (req, res) => {
   if (q.length < 2) return res.json([]);
   const like = `%${q.replace(/[%_]/g, '')}%`;
   const rows = db.prepare(`SELECT m.id, m.conversation_id, m.body, m.created_at, m.deleted_at,
-      e.full_name AS sender_name, c.type, c.name,
-      (SELECT full_name FROM users oe WHERE oe.id = (SELECT user_id FROM chat_members cm2 WHERE cm2.conversation_id = c.id AND cm2.user_id != ?) LIMIT 1) AS other_name
+      e.full_name AS sender_name, e.role AS sender_role, c.type, c.name,
+      (SELECT full_name FROM users oe WHERE oe.id = (SELECT user_id FROM chat_members cm2 WHERE cm2.conversation_id = c.id AND cm2.user_id != ?) LIMIT 1) AS other_name,
+      (SELECT role FROM users oe WHERE oe.id = (SELECT user_id FROM chat_members cm2 WHERE cm2.conversation_id = c.id AND cm2.user_id != ?) LIMIT 1) AS other_role
     FROM chat_messages m
     JOIN chat_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
     JOIN chat_conversations c ON c.id = m.conversation_id
     LEFT JOIN users e ON e.id = m.sender_id
     WHERE m.body LIKE ? AND m.deleted_at = ''
-    ORDER BY m.id DESC LIMIT 50`).all(req.user.id, req.user.id, like);
-  res.json(rows.map((r) => ({
+    ORDER BY m.id DESC LIMIT 50`).all(req.user.id, req.user.id, req.user.id, like);
+  res.json(rows.filter((r) => actorIsSuper(req) || (!hiddenSuper(r.sender_role, req.user.role) && !(r.type === 'dm' && hiddenSuper(r.other_role, req.user.role)))).map((r) => ({
     ...r,
     conversation_name: r.type === 'group' ? r.name : (r.other_name || 'Discussion')
   })));
@@ -3660,8 +3866,8 @@ app.post('/api/chat/groups/:id/join', ...CHAT, (req, res) => {
 
 app.get('/api/chat/:id', ...CHAT, guardChatConv, (req, res) => {
   const convId = req.chat.conv.id;
-  const msgs = db.prepare(`SELECT m.*, e.full_name AS sender_name, e.job_title AS sender_position, e.photo AS sender_photo,
-      r.body AS reply_body, re.full_name AS reply_sender_name,
+  let msgs = db.prepare(`SELECT m.*, e.full_name AS sender_name, e.role AS sender_role, e.job_title AS sender_position, e.photo AS sender_photo,
+      r.body AS reply_body, re.full_name AS reply_sender_name, re.role AS reply_sender_role,
       CASE WHEN p.message_id IS NOT NULL THEN 1 ELSE 0 END AS pinned
     FROM chat_messages m
     LEFT JOIN users e ON e.id = m.sender_id
@@ -3670,6 +3876,12 @@ app.get('/api/chat/:id', ...CHAT, guardChatConv, (req, res) => {
     LEFT JOIN chat_pins p ON p.message_id = m.id AND p.conversation_id = m.conversation_id
     WHERE m.conversation_id = ?
     ORDER BY m.id DESC LIMIT 200`).all(convId).reverse();
+  if (!actorIsSuper(req)) {
+    msgs = msgs.filter((m) => !hiddenSuper(m.sender_role, req.user.role));
+    for (const m of msgs) {
+      if (hiddenSuper(m.reply_sender_role, req.user.role)) m.reply_sender_name = '';
+    }
+  }
   const reads = db.prepare('SELECT user_id, read_at FROM chat_reads WHERE conversation_id = ?').all(convId);
   const ids = msgs.map((m) => m.id);
   const reacRows = ids.length
@@ -3691,20 +3903,25 @@ app.get('/api/chat/:id', ...CHAT, guardChatConv, (req, res) => {
   });
   db.prepare(`INSERT INTO chat_reads (conversation_id, user_id, read_at) VALUES (?, ?, datetime('now'))
     ON CONFLICT(conversation_id, user_id) DO UPDATE SET read_at = datetime('now')`).run(convId, req.user.id);
-  const pins = db.prepare(`SELECT m.*, e.full_name AS sender_name, p.pinned_at
+  let pins = db.prepare(`SELECT m.*, e.full_name AS sender_name, e.role AS sender_role, p.pinned_at
     FROM chat_pins p JOIN chat_messages m ON m.id = p.message_id
     LEFT JOIN users e ON e.id = m.sender_id
     WHERE p.conversation_id = ? AND m.deleted_at = ''
     ORDER BY p.pinned_at DESC LIMIT 10`).all(convId);
+  if (!actorIsSuper(req)) pins = pins.filter((p) => !hiddenSuper(p.sender_role, req.user.role));
   const convRow = req.chat.conv;
-  const typing = convRow.last_typing_by && convRow.last_typing_by !== req.user.id
+  let typing = convRow.last_typing_by && convRow.last_typing_by !== req.user.id
     ? { name: convRow.last_typing_name || '', at: convRow.last_typing_at || '' }
     : null;
+  if (typing && !actorIsSuper(req) && hiddenSuper(
+    db.prepare('SELECT role FROM users WHERE id = ?').get(convRow.last_typing_by)?.role,
+    req.user.role
+  )) typing = null;
   res.json({ conversation: chatConvView(req.chat.conv, req.user), messages: msgs, pins, me: req.user.id, typing });
 });
 
 
-app.post('/api/chat/:id/messages', ...CHAT, guardChatConv, chatLimiter, (req, res) => {
+app.post('/api/chat/:id/messages', ...CHAT, requirePerm('chat.send'), guardChatConv, chatLimiter, (req, res) => {
   const finish = (err) => {
     if (err) return res.status(400).json({ error: err.message });
     const { conv } = req.chat;
@@ -3828,19 +4045,24 @@ app.post('/api/register', registerLimiter, (req, res) => {
 });
 
 // Gestion des invitations (admin + super admin)
-app.get('/api/admin/invites', authRequired, requirePerm('users'), (req, res) => {
+app.get('/api/admin/invites', authRequired, requirePerm('users.view'), (req, res) => {
   const rows = db.prepare(`
-    SELECT i.*, u.full_name AS created_by_name
+    SELECT i.*, u.full_name AS created_by_name, u.role AS created_by_role
     FROM invites i LEFT JOIN users u ON u.id = i.created_by
     ORDER BY i.created_at DESC
   `).all();
-  res.json(rows.map((r) => ({ ...r, state: inviteState(r) })));
+  res.json(rows.map((r) => {
+    const row = { ...r, state: inviteState(r) };
+    if (hiddenSuper(r.created_by_role, req.user.role)) row.created_by_name = '';
+    delete row.created_by_role;
+    return row;
+  }));
 });
 
-app.post('/api/admin/invites', authRequired, requirePerm('users'), (req, res) => {
+app.post('/api/admin/invites', authRequired, requirePerm('users.create'), (req, res) => {
   const { email, role, label, days } = req.body || {};
-  if (!INVITE_ROLES.includes(role))
-    return res.status(400).json({ error: 'Rôle invalide pour une invitation (éditeur, consultation ou administrateur)' });
+  if (!knownRole(role) || role === 'super_admin')
+    return res.status(400).json({ error: 'Rôle invalide pour une invitation' });
   const em = email ? String(email).toLowerCase().trim() : null;
   if (em && db.prepare('SELECT id FROM users WHERE email = ?').get(em))
     return res.status(409).json({ error: 'Un compte existe déjà avec cet email — modifiez-le depuis Utilisateurs' });
@@ -3853,23 +4075,14 @@ app.post('/api/admin/invites', authRequired, requirePerm('users'), (req, res) =>
   res.json({ ...db.prepare('SELECT * FROM invites WHERE id = ?').get(info.lastInsertRowid), state: 'available' });
 });
 
-app.delete('/api/admin/invites/:id', authRequired, requirePerm('users'), (req, res) => {
+app.delete('/api/admin/invites/:id', authRequired, requirePerm('users.delete'), (req, res) => {
   db.prepare('DELETE FROM invites WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // ---------- Point de vente + stock (caissier pour la caisse, admin+ pour la gestion) ----------
-const POS = [authRequired, requireRole('pos'), requireModule('pos_enabled', 'Point de vente')];
-const POS_ADMIN = [
-  authRequired,
-  requirePerm('pos'),
-  requireModule('pos_enabled', 'Point de vente'),
-  (req, res, next) => {
-    if (!['super_admin', 'admin'].includes(req.user?.role))
-      return res.status(403).json({ error: 'Accès refusé : rôle insuffisant' });
-    next();
-  }
-];
+const POS = [authRequired, requirePerm('pos.view'), requireModule('pos_enabled', 'Point de vente')];
+const POS_ADMIN = [authRequired, requirePerm('pos.manage'), requireModule('pos_enabled', 'Point de vente')];
 const PAYMENT_METHODS = ['especes', 'mobile', 'carte', 'virement', 'autre'];
 const STOCK_MOVEMENT_TYPES = ['entree', 'sortie', 'ajustement'];
 const money2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -4127,7 +4340,7 @@ app.post('/api/admin/pos/products/:id/movements', ...POS, (req, res) => {
 });
 
 // Ventes
-app.post('/api/admin/pos/sales', ...POS, (req, res) => {
+app.post('/api/admin/pos/sales', ...POS, requirePerm('pos.sell'), (req, res) => {
   const b = req.body || {};
   const items = (Array.isArray(b.items) ? b.items : [])
     .map((i) => ({ product_id: Number(i?.product_id) || 0, qty: Math.trunc(Number(i?.qty) || 0) }))

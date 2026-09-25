@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api, getSavedUser } from '../../api.js';
+import { attHm, orgDate } from '../../orgTime.js';
 import { PageTitle, Field } from './AdminUI.jsx';
 
 const LEAVE_TYPES = {
@@ -214,7 +215,6 @@ function MyChatCard() {
   );
 }
 
-const attHm = (v) => String(v || '').slice(11, 16);
 const attDuration = (a) => {
   const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
   const e = new Date(String(a.clock_out || a.last_seen).replace(' ', 'T') + 'Z').getTime();
@@ -237,7 +237,7 @@ function MyPresenceCard() {
     return () => clearInterval(id);
   }, [load]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = orgDate();
   const todayRow = rows.find((r) => r.date === today);
   const ongoing = todayRow && !todayRow.clock_out;
   const recent = rows.slice(1, 15);

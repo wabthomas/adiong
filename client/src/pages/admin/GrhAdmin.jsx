@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, getSavedUser } from '../../api.js';
+import { attHm } from '../../orgTime.js';
+import { usePerm } from '../../usePerm.js';
 import { useSite } from '../../hooks/useSite.jsx';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
@@ -2930,8 +2932,8 @@ function AdminDocsTab() {
 function AttendanceForm({ initial, onSaved, onClose }) {
   const [f, setF] = useState({
     date: initial.date ?? '',
-    clock_in: initial.clock_in ? String(initial.clock_in).slice(11, 16) : '',
-    clock_out: initial.clock_out ? String(initial.clock_out).slice(11, 16) : ''
+    clock_in: attHm(initial.clock_in),
+    clock_out: attHm(initial.clock_out)
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -2981,7 +2983,6 @@ function AttendanceForm({ initial, onSaved, onClose }) {
   );
 }
 
-const attHm = (v) => String(v || '').slice(11, 16);
 const attDuration = (a) => {
   const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
   const e = new Date(String(a.clock_out || a.last_seen).replace(' ', 'T') + 'Z').getTime();
@@ -3131,7 +3132,7 @@ function AttendanceTab({ employees }) {
 }
 
 export default function GrhAdmin() {
-  const isSuper = getSavedUser()?.role === 'super_admin';
+  const isSuper = usePerm('grh.payroll', ['super_admin']);
   const [tab, setTab] = useState('overview');
   const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { api, getSavedUser, setMoneyCurrency } from '../../api.js';
+import { api, setMoneyCurrency } from '../../api.js';
 import { useSite } from '../../hooks/useSite.jsx';
+import { usePerm } from '../../usePerm.js';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
 
 const TABS = [
@@ -264,7 +265,7 @@ export default function SettingsAdmin() {
   const [modules, setModules] = useState(null);
   const [modMsg, setModMsg] = useState('');
 
-  const isSuper = getSavedUser()?.role === 'super_admin';
+  const isSuper = usePerm('modules.manage', ['super_admin']);
   const visibleTabs = isSuper ? TABS : TABS.filter((t) => t.id !== 'modules');
 
   useEffect(() => {
