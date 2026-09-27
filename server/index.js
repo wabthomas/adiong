@@ -135,6 +135,16 @@ const auditMiddleware = (req, res, next) => {
 };
 app.use(auditMiddleware);
 
+const ipBlocked = (ip) => {
+  try { return !!db.prepare('SELECT 1 FROM ip_blocklist WHERE ip = ?').get(ip); } catch { return false; }
+};
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return next();
+  const ip = clientIp(req);
+  if (ip && ipBlocked(ip)) return res.status(403).json({ blocked: true, error: 'Accès refusé' });
+  next();
+});
+
 // Chemins typiques des scanners WordPress (l'ancien site en était victime) → 404 uniforme
 const SUSPICIOUS_PATHS = [
   /^\/wp-/, /^\/xmlrpc\.php/, /^\/wp-admin/, /^\/wp-login/, /^\/wp-content/, /^\/wp-includes/,
@@ -1556,6 +1566,50 @@ app.get('/api/admin/audit', authRequired, (req, res) => {
   const top = db.prepare('SELECT ip, COUNT(*) n FROM audit_log GROUP BY ip ORDER BY n DESC, ip LIMIT 10').all();
   const byStatus = db.prepare('SELECT status, COUNT(*) n FROM audit_log GROUP BY status').all();
   res.json({ rows, top_ips: top, by_status: byStatus });
+});
+
+const isValidIp = (v) => {
+  const t = String(v || '').trim();
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(t) && t.split('.').every((o) => Number(o) <= 255);
+};
+
+app.get('/api/admin/security/blocklist', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  res.json(db.prepare('SELECT * FROM ip_blocklist ORDER BY created_at DESC').all());
+});
+
+app.post('/api/admin/security/blocklist', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const ip = String(req.body?.ip || '').trim();
+  const reason = String(req.body?.reason || '').slice(0, 300);
+  if (!isValidIp(ip)) return res.status(400).json({ error: 'Adresse IPv4 invalide' });
+  try {
+    db.prepare('INSERT INTO ip_blocklist (ip, reason, created_by) VALUES (?, ?, ?)').run(ip, reason, req.user.id);
+  } catch {
+    return res.status(409).json({ error: 'Cette adresse est déjà bloquée' });
+  }
+  logSecurity('ip_block', clientIp(req), req.user.email, ip);
+  res.json({ ok: true, ip });
+});
+
+app.delete('/api/admin/security/blocklist/:ip', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const info = db.prepare('DELETE FROM ip_blocklist WHERE ip = ?').run(String(req.params.ip || ''));
+  if (!info.changes) return res.status(404).json({ error: 'Adresse inconnue' });
+  logSecurity('ip_unblock', clientIp(req), req.user.email, String(req.params.ip));
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/security/alerts', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const alerts = db.prepare(`
+    SELECT ip, COUNT(*) AS n, MAX(created_at) AS last_at
+    FROM security_events
+    WHERE type = 'login_fail' AND created_at > datetime('now', '-15 minutes')
+    GROUP BY ip HAVING n >= 5 ORDER BY n DESC LIMIT 50
+  `).all();
+  const blocked = new Set(db.prepare('SELECT ip FROM ip_blocklist').all().map((r) => r.ip));
+  res.json(alerts.map((a) => ({ ...a, blocked: blocked.has(a.ip) })));
 });
 
 app.get('/api/admin/users', authRequired, requirePerm('users.view'), (req, res) => {

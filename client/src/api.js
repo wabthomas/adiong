@@ -174,7 +174,11 @@ export const api = {
       if (params.q) q.set('q', params.q);
       const s = q.toString();
       return req(`/api/admin/audit${s ? `?${s}` : ''}`, { auth: true });
-    }
+    },
+    blocklist: () => req('/api/admin/security/blocklist', { auth: true }),
+    blockIp: (ip, reason) => req('/api/admin/security/blocklist', { method: 'POST', body: { ip, reason }, auth: true }),
+    unblockIp: (ip) => req(`/api/admin/security/blocklist/${encodeURIComponent(ip)}`, { method: 'DELETE', auth: true }),
+    alerts: () => req('/api/admin/security/alerts', { auth: true })
   },
   invites: {
     list: () => req('/api/admin/invites', { auth: true }),

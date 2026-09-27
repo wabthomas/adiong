@@ -269,6 +269,27 @@ def main():
         s, au2 = call("GET", "/api/admin/audit?method=PUT", token=T)
         check("filtre méthode (PUT)", s == 200 and all(r.get("method") == "PUT" for r in au2.get("rows", [])) and len(au2.get("rows", [])) >= 1, f"n={len(au2.get('rows', []))}")
 
+        print("== Protection : alertes & IP bloquées ==")
+        s, _ = call("POST", "/api/admin/security/blocklist", {"ip": "203.0.113.77", "reason": f"Test E2E {stamp}"}, token=T)
+        check("blocage d'IP (200)", s == 200 and _.get("ok"), f"status={s} {_}")
+        s, _ = call("POST", "/api/admin/security/blocklist", {"ip": "203.0.113.77"}, token=T)
+        check("doublon (409)", s == 409, f"status={s}")
+        s, _ = call("POST", "/api/admin/security/blocklist", {"ip": "999.1.1.1"}, token=T)
+        check("IP invalide (400)", s == 400, f"status={s}")
+        s, bl = call("GET", "/api/admin/security/blocklist", token=T)
+        check("IP listée comme bloquée", s == 200 and any(b.get("ip") == "203.0.113.77" for b in bl), f"n={len(bl) if isinstance(bl, list) else bl}")
+        for i in range(5):
+            s, _ = call("POST", "/api/auth/login", {"email": "e2e-bad@example.org", "password": f"Mauvais-{stamp}-{i}"})
+            if s == 429:
+                break
+        time.sleep(1)
+        s, al = call("GET", "/api/admin/security/alerts", token=T)
+        check("alerte échecs de connexion (≥5/15 min)", s == 200 and any(a.get("n", 0) >= 5 for a in al), f"status={s} {al}")
+        s, _ = call("DELETE", "/api/admin/security/blocklist/203.0.113.77", token=T)
+        check("déblocage (200)", s == 200, f"status={s}")
+        s, _ = call("DELETE", "/api/admin/security/blocklist/203.0.113.77", token=T)
+        check("déblocage inconnu (404)", s == 404, f"status={s}")
+
         print("== Mode maintenance ==")
         call("PUT", "/api/admin/modules", {"maintenance_enabled": True, "maintenance_message": "E2E maintenance"}, token=T)
         s, m503 = call("GET", "/api/public/articles")

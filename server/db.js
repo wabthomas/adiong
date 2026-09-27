@@ -208,6 +208,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_ip ON audit_log(ip);
+
+CREATE TABLE IF NOT EXISTS ip_blocklist (
+  ip TEXT PRIMARY KEY,
+  reason TEXT NOT NULL DEFAULT '',
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 const migrate = (sql) => { try { db.exec(sql); } catch {  } };

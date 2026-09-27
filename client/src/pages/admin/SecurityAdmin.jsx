@@ -4,7 +4,8 @@ import { PageTitle } from './AdminUI.jsx';
 
 const TABS = [
   { id: 'audit', label: 'Journal d’audit', hint: 'Actions admin & IP réelles' },
-  { id: 'evenements', label: 'Événements', hint: 'Connexions, sauvegardes' }
+  { id: 'evenements', label: 'Événements', hint: 'Connexions, sauvegardes' },
+  { id: 'protection', label: 'Protection', hint: 'Alertes & IP bloquées' }
 ];
 
 const METHOD_STYLES = {
@@ -189,6 +190,136 @@ function EventsTab() {
   );
 }
 
+function ProtectionTab() {
+  const [alerts, setAlerts] = useState(null);
+  const [blocked, setBlocked] = useState(null);
+  const [ip, setIp] = useState('');
+  const [reason, setReason] = useState('');
+  const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    Promise.all([api.adminSecurity.alerts(), api.adminSecurity.blocklist()])
+      .then(([a, b]) => { setAlerts(a); setBlocked(b); })
+      .catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const doBlock = async (target, why) => {
+    setMsg('');
+    try {
+      await api.adminSecurity.blockIp(target, why);
+      setMsg(`✓ ${target} bloquée — toutes ses requêtes reçoivent 403.`);
+      setIp('');
+      load();
+    } catch (e) {
+      setMsg(`✗ ${e.message}`);
+    }
+  };
+
+  const doUnblock = async (target) => {
+    setMsg('');
+    try {
+      await api.adminSecurity.unblockIp(target);
+      setMsg(`✓ ${target} débloquée.`);
+      load();
+    } catch (e) {
+      setMsg(`✗ ${e.message}`);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="card space-y-4 p-6">
+        <div>
+          <h3 className="font-display text-lg font-bold text-ink-900">Alertes de connexion</h3>
+          <p className="mt-1 text-sm text-ink-500">
+            Adresses ayant produit 5 échecs de connexion ou plus sur les 15 dernières minutes.
+          </p>
+        </div>
+        {alerts === null && <p className="text-sm text-ink-400">Chargement…</p>}
+        {alerts && alerts.length === 0 && (
+          <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+            Aucune alerte en cours — aucun pic d’échecs de connexion.
+          </p>
+        )}
+        {alerts && alerts.length > 0 && (
+          <div className="divide-y divide-ink-50 rounded-xl border border-ink-100">
+            {alerts.map((a) => (
+              <div key={a.ip} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div>
+                  <p className="font-mono text-sm font-bold text-red-700">{a.ip}</p>
+                  <p className="text-xs text-ink-400">{a.n} échec(s) · dernier : {String(a.last_at).slice(11, 19)}</p>
+                </div>
+                <button
+                  type="button"
+                  disabled={a.blocked}
+                  onClick={() => doBlock(a.ip, 'Alerte : échecs de connexion répétés')}
+                  className="btn-ghost !px-4 !py-2 text-sm !text-red-600 disabled:opacity-40"
+                >
+                  {a.blocked ? 'Déjà bloquée' : 'Bloquer cette IP'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card space-y-4 p-6">
+        <div>
+          <h3 className="font-display text-lg font-bold text-ink-900">Bloquer une adresse</h3>
+          <p className="mt-1 text-sm text-ink-500">
+            Toute requête venant de cette adresse est refusée (403) sur l’ensemble de l’API.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs font-bold text-ink-500">
+            Adresse IP
+            <input className="input mt-1 !w-44 !py-2 font-mono text-sm" placeholder="203.0.113.10" value={ip} onChange={(e) => setIp(e.target.value)} />
+          </label>
+          <label className="text-xs font-bold text-ink-500">
+            Motif
+            <input className="input mt-1 !w-64 !py-2 text-sm" placeholder="Ex. tentative de force brute" value={reason} onChange={(e) => setReason(e.target.value)} />
+          </label>
+          <button type="button" className="btn-primary !py-2 text-sm" disabled={!ip} onClick={() => doBlock(ip, reason)}>
+            Bloquer
+          </button>
+        </div>
+        {msg && (
+          <p className={`rounded-xl px-4 py-3 text-sm font-semibold ${msg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
+            {msg}
+          </p>
+        )}
+        {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+      </div>
+
+      <div className="card space-y-4 p-6">
+        <h3 className="font-display text-lg font-bold text-ink-900">Adresses bloquées ({blocked?.length ?? '…'})</h3>
+        {blocked && blocked.length === 0 && (
+          <p className="text-sm text-ink-400">Aucune adresse bloquée.</p>
+        )}
+        {blocked && blocked.length > 0 && (
+          <div className="divide-y divide-ink-50 rounded-xl border border-ink-100">
+            {blocked.map((b) => (
+              <div key={b.ip} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="font-mono text-sm font-bold text-ink-800">{b.ip}</p>
+                  <p className="truncate text-xs text-ink-400">
+                    {b.reason || 'Sans motif'} · bloquée le {String(b.created_at).slice(0, 10)}
+                  </p>
+                </div>
+                <button type="button" onClick={() => doUnblock(b.ip)} className="btn-ghost !px-4 !py-2 text-sm">
+                  Débloquer
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SecurityAdmin() {
   const [tab, setTab] = useState('audit');
 
@@ -214,6 +345,7 @@ export default function SecurityAdmin() {
       </div>
       {tab === 'audit' && <AuditTab />}
       {tab === 'evenements' && <EventsTab />}
+      {tab === 'protection' && <ProtectionTab />}
     </div>
   );
 }
