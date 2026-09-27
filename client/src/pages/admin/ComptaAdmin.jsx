@@ -15,6 +15,8 @@ const TABS = [
   { id: 'in_kind', group: 'Saisie', label: 'Contributions en nature', hint: 'Apports reçus (971) et donnés (911)' },
   { id: 'balance', group: 'Analyse', label: 'Balance', hint: 'Totaux débits / crédits par compte' },
   { id: 'ledger', group: 'Analyse', label: 'Grand livre', hint: 'Mouvements d\u2019un compte' },
+  { id: 'cashbook', group: 'Analyse', label: 'Livre de caisse', hint: 'Encaissements et décaissements (compte 531)' },
+  { id: 'bankbook', group: 'Analyse', label: 'Livre de banque', hint: 'Comptes bancaires, Mobile Money et suspense (51x, 581)' },
   { id: 'states', group: 'Analyse', label: 'États financiers', hint: 'Bilan et compte de résultat' }
 ];
 
@@ -99,6 +101,8 @@ export default function ComptaAdmin() {
       {tab === 'in_kind' && <InKindTab refresh={refresh} />}
       {tab === 'balance' && <BalanceTab />}
       {tab === 'ledger' && <LedgerTab />}
+      {tab === 'cashbook' && <CashBookTab book="caisse" />}
+      {tab === 'bankbook' && <CashBookTab book="banque" />}
       {tab === 'states' && <StatesTab />}
     </div>
   );
@@ -1196,6 +1200,95 @@ function LedgerTab() {
             {acc && <p className="mt-3 text-xs text-ink-400">{acc.code} — {acc.name} · nature : {NATURES[acc.nature] || acc.nature}</p>}
           </div>
         )}
+      </Section>
+    </div>
+  );
+}
+
+function CashBookTab({ book }) {
+  const [from, setFrom] = useState(month1());
+  const [to, setTo] = useState(today());
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const isCaisse = book === 'caisse';
+  const title = isCaisse ? 'Livre de caisse' : 'Livre de banque';
+  const desc = isCaisse
+    ? 'Encaissements et décaissements de la caisse (compte 531), en ordre chronologique avec solde courant.'
+    : 'Mouvements des comptes bancaires, Mobile Money et suspense (511, 512, 516, 5161-63, 581), avec solde courant.';
+
+  useEffect(() => {
+    api.compta.cashBook({ book, from, to }).then((r) => { setData(r); setError(''); }).catch((e) => setError(e.message || 'Erreur'));
+  }, [book, from, to]);
+
+  const rows = data?.rows || [];
+  const exportCsv = () => {
+    if (!rows.length) return;
+    downloadCsv(`livre-${book}-${from}_${to}.csv`,
+      ['Date', 'Réf.', 'Journal', 'Libellé', 'Compte', 'Encaissements (USD)', 'Décaissements (USD)', 'Solde (USD)'],
+      rows.map((r) => [r.date, r.ref, r.journal_code, r.line_label || r.label || '', r.account_code, (r.debit || 0).toFixed(2), (r.credit || 0).toFixed(2), r.cum.toFixed(2)]));
+  };
+  const exportPdf = () => {
+    if (!rows.length) return;
+    api.compta.statements.download(`/api/admin/compta/cash-book?book=${book}&from=${from}&to=${to}&format=pdf`, `livre-${book}-${from}_${to}.pdf`).catch((e) => setError(e.message || 'Export impossible'));
+  };
+
+  return (
+    <div className="space-y-6">
+      {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
+      <Section title={title} desc={desc}
+        action={
+          <div className="flex gap-2">
+            <button onClick={exportCsv} disabled={!rows.length} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
+            <button onClick={exportPdf} disabled={!rows.length} className="rounded-xl bg-brand-600 px-3 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-40">Export PDF</button>
+          </div>
+        }>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" />
+          <span className="text-xs text-ink-400">au</span>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" />
+          {data && (
+            <span className="ml-auto text-sm text-ink-500">
+              Solde initial : <b className="tabular-nums text-ink-900">{fmt(data.opening)}</b>
+              <span className="mx-2 text-ink-300">·</span>
+              Solde de fin : <b className={`tabular-nums ${data.closing >= 0 ? 'text-ink-900' : 'text-red-600'}`}>{fmt(data.closing)}</b>
+            </span>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-100 text-left text-xs font-bold uppercase tracking-wider text-ink-400">
+                <th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Réf.</th><th className="py-2 pr-3">Journal</th>
+                <th className="py-2 pr-3">Libellé</th><th className="py-2 pr-3">Compte</th>
+                <th className="py-2 pr-3 text-right">Encaissements</th><th className="py-2 pr-3 text-right">Décaissements</th>
+                <th className="py-2 text-right">Solde</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data?.opening !== 0 && data && (
+                <tr className="border-b border-ink-50 bg-ink-50/50">
+                  <td className="py-2 pr-3 text-xs text-ink-400">—</td>
+                  <td className="py-2 pr-3" colSpan={4}><span className="text-xs font-bold text-ink-500">Solde au {from ? `1er jour avant le ${from}` : '1/01'}</span></td>
+                  <td className="py-2 pr-3 text-right tabular-nums" colSpan={2}></td>
+                  <td className="py-2 text-right font-semibold tabular-nums text-ink-700">{fmt(data.opening)}</td>
+                </tr>
+              )}
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-ink-50 last:border-0">
+                  <td className="py-2 pr-3 whitespace-nowrap">{r.date}</td>
+                  <td className="py-2 pr-3 font-mono text-xs text-ink-500">{r.ref}</td>
+                  <td className="py-2 pr-3"><span className="rounded-md bg-ink-50 px-1.5 py-0.5 text-xs font-bold text-ink-500">{r.journal_code}</span></td>
+                  <td className="py-2 pr-3 text-ink-900">{r.line_label || r.label}</td>
+                  <td className="py-2 pr-3 font-mono text-xs">{r.account_code}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{r.debit ? fmt(r.debit) : '—'}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{r.credit ? fmt(r.credit) : '—'}</td>
+                  <td className={`py-2 text-right font-semibold tabular-nums ${r.cum >= 0 ? 'text-ink-900' : 'text-red-600'}`}>{fmt(r.cum)}</td>
+                </tr>
+              ))}
+              {data && rows.length === 0 && <tr><td colSpan={8} className="py-8 text-center text-sm text-ink-400">Aucun mouvement sur la période.</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </Section>
     </div>
   );

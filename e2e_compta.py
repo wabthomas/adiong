@@ -151,6 +151,48 @@ def main():
     s, led = call("GET", "/api/admin/compta/ledger?account=611&from=2026-01-01&to=2026-12-31", token=T)
     check("grand livre 611", s == 200 and isinstance(led, list) and any(isinstance(r, dict) and r.get("ref") == ref1 for r in led), f"status={s}")
 
+    print("== Livres de caisse et de banque ==")
+    s, ca = call("POST", "/api/admin/compta/entries", {
+        "date": "2026-05-04", "journal": "CAI", "label": "Encaissement espèces E2E",
+        "lines": [{"account_code": "531", "debit": 100, "credit": 0, "label": "Caisse"},
+                  {"account_code": "749", "debit": 0, "credit": 100, "label": "Dons espèces"}]
+    }, token=T)
+    check("encaissement caisse 531 (201)", s in (200, 201) and ca.get("ref"), f"status={s} {ca}")
+    ref_a = ca.get("ref")
+    s, cb = call("POST", "/api/admin/compta/entries", {
+        "date": "2026-05-11", "journal": "CAI", "label": "Paiement espèces E2E",
+        "lines": [{"account_code": "641", "debit": 40, "credit": 0, "label": "Salaires"},
+                  {"account_code": "531", "debit": 0, "credit": 40, "label": "Caisse"}]
+    }, token=T)
+    check("décaissement caisse 531 (201)", s in (200, 201) and cb.get("ref"), f"status={s} {cb}")
+    ref_b = cb.get("ref")
+    s, cc = call("POST", "/api/admin/compta/entries", {
+        "date": "2026-05-18", "journal": "BQ", "label": "Virement banque E2E",
+        "lines": [{"account_code": "511", "debit": 250, "credit": 0, "label": "Banque"},
+                  {"account_code": "749", "debit": 0, "credit": 250, "label": "Don affecté"}]
+    }, token=T)
+    check("mouvement banque 511 (201)", s in (200, 201) and cc.get("ref"), f"status={s} {cc}")
+
+    s, lc = call("GET", "/api/admin/compta/cash-book?book=caisse&from=2026-05-01&to=2026-05-31", token=T)
+    lc_rows = lc.get("rows") if isinstance(lc, dict) else []
+    check("livre de caisse (2 lignes, solde 60)", s == 200 and len(lc_rows) == 2 and lc.get("opening") == 0 and lc.get("closing") == 60, f"status={s} n={len(lc_rows)}")
+    check("livre de caisse : solde courant (100 puis 60)", bool(lc_rows) and lc_rows[0].get("ref") == ref_a and lc_rows[0].get("cum") == 100 and lc_rows[1].get("cum") == 60, f"{[r.get('cum') for r in lc_rows]}")
+    s, lc2 = call("GET", "/api/admin/compta/cash-book?book=caisse", token=T)
+    check("livre de caisse sans période (solde 60)", s == 200 and lc2.get("closing") == 60, f"status={s} closing={lc2.get('closing') if isinstance(lc2, dict) else '-'}")
+    s, lb = call("GET", "/api/admin/compta/cash-book?book=banque&from=2026-05-01&to=2026-05-31", token=T)
+    lb_rows = lb.get("rows") if isinstance(lb, dict) else []
+    check("livre de banque (solde initial -100, fin 150)", s == 200 and lb.get("opening") == -100 and lb.get("closing") == 150 and len(lb_rows) == 1, f"status={s} opening={lb.get('opening') if isinstance(lb, dict) else '-'}")
+    s, _ = call("GET", "/api/admin/compta/cash-book?book=x", token=T)
+    check("livre inconnu (400)", s == 400, f"status={s}")
+    s, csv = call("GET", "/api/admin/compta/cash-book?book=caisse&from=2026-05-01&to=2026-05-31&format=csv", token=T)
+    check("export CSV livre de caisse", s == 200 and "Date;Réf." in str(csv.get("raw", "")), f"status={s}")
+    s, pdf = call("GET", "/api/admin/compta/cash-book?book=caisse&from=2026-05-01&to=2026-05-31&format=pdf", token=T)
+    check("export PDF livre de caisse", s == 200 and str(pdf.get("raw", "")).startswith("pdf"), f"status={s}")
+    for refx in (ca.get("id"), cb.get("id"), cc.get("id")):
+        call("DELETE", f"/api/admin/compta/entries/{refx}", token=T)
+    s, _ = call("GET", "/api/admin/compta/cash-book?book=caisse", token=T)
+    check("écritures du livre purgées (solde 0)", s == 200 and isinstance(_, dict) and _.get("closing") == 0, f"closing={_.get('closing') if isinstance(_, dict) else '-'}")
+
     print("== Immobilisations ==")
     s, a1 = call("POST", "/api/admin/compta/assets", {
         "label": f"PC portable E2E {stamp}", "account_code": "211", "amount": 1200,

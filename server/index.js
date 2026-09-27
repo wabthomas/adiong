@@ -5282,6 +5282,68 @@ app.get('/api/admin/compta/ledger', ...COMPTA, async (req, res) => {
   res.json(rows);
 });
 
+const CASHBOOKS = {
+  caisse: { label: 'Livre de caisse', codes: ['531'] },
+  banque: { label: 'Livre de banque', codes: ['511', '512', '516', '5161', '5162', '5163', '581'] }
+};
+app.get('/api/admin/compta/cash-book', ...COMPTA, async (req, res) => {
+  const book = CASHBOOKS[String(req.query.book || '')];
+  if (!book) return res.status(400).json({ error: 'Livre inconnu (paramètre book : caisse ou banque)' });
+  const ph = book.codes.map(() => '?').join(', ');
+  const where = `FROM acc_entry_lines l JOIN acc_entries e ON e.id = l.entry_id WHERE l.account_code IN (${ph})`;
+  let opening = 0;
+  if (req.query.from) {
+    const r = db.prepare(`SELECT COALESCE(SUM(l.debit), 0) - COALESCE(SUM(l.credit), 0) AS t ${where} AND e.date < ?`).get(...book.codes, req.query.from);
+    opening = cmoney(Number(r?.t) || 0);
+  }
+  const params = [...book.codes];
+  let sql = `SELECT e.id AS entry_id, e.ref, e.date, e.journal_code, e.label, l.account_code, l.label AS line_label, l.debit, l.credit ${where}`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  sql += ' ORDER BY e.date, e.id, l.id';
+  let cum = opening;
+  const rows = db.prepare(sql).all(...params).map((r) => {
+    cum = cmoney(cum + r.debit - r.credit);
+    return { ...r, cum };
+  });
+  const period = `du ${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'}`;
+  if (String(req.query.format || '') === 'csv') {
+    const esc = (v) => { const s = String(v ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = ['Date;Réf.;Journal;Libellé;Compte;Encaissements;Décaissements;Solde'];
+    rows.forEach((r) => lines.push([r.date, r.ref, r.journal_code, r.line_label || r.label || '', r.account_code, r.debit, r.credit, r.cum].map(esc).join(';')));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="livre-${req.query.book}.csv"`);
+    res.send('\uFEFF' + lines.join('\n'));
+    return;
+  }
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      return await comptaTablePdf(res, {
+        title: book.label,
+        subtitle: `${period} · solde initial : ${fmtMoney(opening)}`,
+        pdfName: `livre-${req.query.book}-${req.query.from || 'debut'}-${req.query.to || 'aujourdhui'}`,
+        columns: [
+          { label: 'Date', width: 56, align: 'left' },
+          { label: 'Réf.', width: 78, align: 'left' },
+          { label: 'Journal', width: 40, align: 'left' },
+          { label: 'Libellé', width: 168, align: 'left' },
+          { label: 'Compte', width: 34, align: 'left' },
+          { label: 'Encaiss.', width: 48, align: 'right' },
+          { label: 'Décaiss.', width: 48, align: 'right' },
+          { label: 'Solde', width: 47, align: 'right' }
+        ],
+        rows: rows.map((r) => [r.date, r.ref, r.journal_code, pdfSafeText(r.line_label || r.label || ''), r.account_code, fmtMoney(r.debit), fmtMoney(r.credit), fmtMoney(r.cum)]),
+        totals: rows.length ? ['', 'Soldes', '', '', '', fmtMoney(rows.reduce((a, r) => a + r.debit, 0)), fmtMoney(rows.reduce((a, r) => a + r.credit, 0)), fmtMoney(cum)] : null
+      });
+    } catch (err) {
+      console.error('[compta] pdf cash-book', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json({ book: req.query.book, opening, closing: cum, rows });
+});
+
 // ---------- États financiers SYCEBNL ----------
 const pdfSafeText = (t) => String(t ?? '').replace(/[\u2190-\u21FF\u2200-\u22FF\u2600-\u27BF]/g, '-');
 

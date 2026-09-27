@@ -555,6 +555,12 @@ export const api = {
       const s = q.toString();
       return req(`/api/admin/compta/ledger${s ? `?${s}` : ''}`, { auth: true });
     },
+    cashBook: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) q.set(k, v);
+      const s = q.toString();
+      return req(`/api/admin/compta/cash-book${s ? `?${s}` : ''}`, { auth: true });
+    },
     statements: {
       balanceSheet: (at) => req(`/api/admin/compta/statements/balance-sheet${at ? `?at=${encodeURIComponent(at)}` : ''}`, { auth: true }),
       result: (from, to) => req(`/api/admin/compta/statements/result?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { auth: true }),
