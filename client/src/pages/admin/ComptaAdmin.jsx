@@ -1,22 +1,137 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api.js';
 import { Field, Modal } from './AdminUI.jsx';
 
 function Dialog({ title, onClose, wide, children }) {
-  return <Dialog open title={title} onClose={onClose} wide={wide}>{children}</Dialog>;
+  return <Modal open title={title} onClose={onClose} wide={wide}>{children}</Modal>;
+}
+
+/** Sélecteur de compte avec barre de recherche (code ou intitulé). */
+function AccountSearch({ accounts, value, onChange, placeholder = 'Rechercher un compte…', emptyLabel = 'Compte…', className = '' }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const wrap = useRef(null);
+  const inputRef = useRef(null);
+
+  const selected = accounts.find((a) => a.code === value);
+  const needle = q.trim().toLowerCase();
+  const filtered = !needle
+    ? accounts
+    : accounts.filter((a) => `${a.code} ${a.name}`.toLowerCase().includes(needle));
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (wrap.current && !wrap.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const openPicker = () => {
+    setQ('');
+    setOpen(true);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const pick = (code) => {
+    onChange(code);
+    setOpen(false);
+    setQ('');
+  };
+
+  return (
+    <div ref={wrap} className={`relative ${className}`}>
+      {!open ? (
+        <button type="button" onClick={openPicker}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border-0 bg-white px-2 py-1.5 text-left text-sm ring-1 ring-ink-200 hover:ring-brand-400">
+          <span className={`truncate ${selected ? 'font-medium text-ink-800' : 'text-ink-400'}`}>
+            {selected ? `${selected.code} — ${selected.name}` : emptyLabel}
+          </span>
+          <Icon name="search" className="h-3.5 w-3.5 shrink-0 text-ink-400" />
+        </button>
+      ) : (
+        <>
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setOpen(false);
+              if (e.key === 'Enter' && filtered[0]) { e.preventDefault(); pick(filtered[0].code); }
+            }}
+            placeholder={placeholder}
+            className="w-full rounded-lg border-0 bg-white px-2 py-1.5 text-sm ring-2 ring-brand-500"
+          />
+          <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto rounded-xl bg-white py-1 shadow-lift ring-1 ring-ink-100">
+            {value && (
+              <button type="button" onClick={() => pick('')} className="block w-full px-3 py-1.5 text-left text-xs font-semibold text-ink-400 hover:bg-ink-50">
+                Effacer la sélection
+              </button>
+            )}
+            {filtered.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-ink-400">Aucun compte ne correspond</p>
+            ) : filtered.slice(0, 80).map((a) => (
+              <button
+                key={a.code}
+                type="button"
+                onClick={() => pick(a.code)}
+                className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-brand-50 ${a.code === value ? 'bg-brand-50 font-semibold text-brand-800' : 'text-ink-700'}`}
+              >
+                <span className="font-mono text-xs font-bold text-ink-500">{a.code}</span>
+                <span className="ml-2">{a.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 const TABS = [
-  { id: 'dash', group: 'Pilotage', label: 'Tableau de bord', hint: 'Trésorerie et activité du mois' },
-  { id: 'exercises', group: 'Pilotage', label: 'Exercices', hint: 'Clôture SYCEBNL et report du résultat' },
-  { id: 'journal', group: 'Saisie', label: 'Journal', hint: 'Écritures, annulations et recherche' },
-  { id: 'plan', group: 'Saisie', label: 'Plan de comptes', hint: 'Comptes SYCEBNL (9 classes)' },
-  { id: 'assets', group: 'Saisie', label: 'Immobilisations', hint: 'Acquisitions et dotations aux amortissements' },
-  { id: 'in_kind', group: 'Saisie', label: 'Contributions en nature', hint: 'Apports reçus (971) et donnés (911)' },
-  { id: 'balance', group: 'Analyse', label: 'Balance', hint: 'Totaux débits / crédits par compte' },
-  { id: 'ledger', group: 'Analyse', label: 'Grand livre', hint: 'Mouvements d\u2019un compte' },
-  { id: 'states', group: 'Analyse', label: 'États financiers', hint: 'Bilan et compte de résultat' }
+  { id: 'dash', group: 'Pilotage', label: 'Tableau de bord', hint: 'Trésorerie et activité du mois', icon: 'dash' },
+  { id: 'exercises', group: 'Pilotage', label: 'Exercices', hint: 'Clôture SYCEBNL et report du résultat', icon: 'calendar' },
+  { id: 'journal', group: 'Saisie', label: 'Journal', hint: 'Écritures, annulations et recherche', icon: 'journal' },
+  { id: 'plan', group: 'Saisie', label: 'Plan de comptes', hint: 'Comptes SYCEBNL (9 classes)', icon: 'plan' },
+  { id: 'assets', group: 'Saisie', label: 'Immobilisations', hint: 'Acquisitions et dotations aux amortissements', icon: 'assets' },
+  { id: 'in_kind', group: 'Saisie', label: 'Contributions en nature', hint: 'Apports reçus (971) et donnés (911)', icon: 'gift' },
+  { id: 'balance', group: 'Analyse', label: 'Balance', hint: 'Totaux débits / crédits par compte', icon: 'balance' },
+  { id: 'ledger', group: 'Analyse', label: 'Grand livre', hint: "Mouvements d'un compte", icon: 'ledger' },
+  { id: 'states', group: 'Analyse', label: 'États financiers', hint: 'Bilan et compte de résultat', icon: 'states' }
 ];
+
+/** Chemins Heroicons outline (viewBox 24) pour titres / onglets. */
+const ICONS = {
+  dash: 'M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z',
+  calendar: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5',
+  journal: 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z',
+  plan: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5',
+  assets: 'M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-6.75 0h.75m-.75 3h.75m-.75 3h.75',
+  gift: 'M21 11.25v8.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 1 0 9.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1 1 14.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z',
+  balance: 'M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z',
+  ledger: 'M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25',
+  states: 'M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z',
+  chart: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z',
+  bank: 'M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.151A60.075 60.075 0 0 1 18.75 19.5M6 3h12m-6 9h.008v.008H12V12Zm0 3h.008v.008H12V15Z',
+  up: 'M2.25 18 9 11.25l4.306 4.306a11.95 11.95 0 0 1 5.814-5.518l2.74-1.22m0 0-5.94-2.281m5.94 2.28-2.28 5.941',
+  down: 'M2.25 6 9 12.75l4.286-4.286a11.948 11.948 0 0 1 4.306 6.43l.776 2.898m0 0 3.182-5.511m-3.182 5.51-5.511-3.181',
+  result: 'M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 0 3 2.48Z M12 18a3.75 3.75 0 0 0 .495-7.468 5.99 5.99 0 0 0-1.925 3.547 5.975 5.975 0 0 1-2.133-1.001A3.75 3.75 0 0 0 12 18Z',
+  shield: 'M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z',
+  lock: 'M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z',
+  search: 'm21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z',
+  report: 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z'
+};
+
+function Icon({ name, className = 'h-4 w-4' }) {
+  const d = ICONS[name];
+  if (!d) return null;
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.7" stroke="currentColor" className={`shrink-0 ${className}`} aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
 
 const JOURNALS = { O: 'Ouverture', ACH: 'Achats', VEN: 'Ventes & ressources', CAI: 'Caisse', BQ: 'Banque', OD: 'Opérations diverses' };
 const NATURES = { asset: 'Actif', liability: 'Passif', equity: 'Capitaux propres', expense: 'Charge', income: 'Produit' };
@@ -86,7 +201,8 @@ export default function ComptaAdmin() {
       <div className="flex flex-wrap gap-1 rounded-2xl bg-white p-1.5 ring-1 ring-ink-950/5">
         {TABS.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} title={t.hint}
-            className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${tab === t.id ? 'bg-brand-600 text-white' : 'text-ink-500 hover:bg-ink-50'}`}>
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors ${tab === t.id ? 'bg-brand-600 text-white' : 'text-ink-500 hover:bg-ink-50'}`}>
+            <Icon name={t.icon} className={`h-4 w-4 ${tab === t.id ? 'opacity-95' : 'opacity-70'}`} />
             {t.label}
           </button>
         ))}
@@ -104,14 +220,23 @@ export default function ComptaAdmin() {
   );
 }
 
-function Section({ title, desc, action, children, padded = true }) {
+function Section({ title, desc, action, children, padded = true, icon }) {
   return (
     <section className="overflow-hidden rounded-2xl bg-white ring-1 ring-ink-950/5">
       {(title || action) && (
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-100 px-6 py-4">
           <div className="min-w-0">
-            {title && <h3 className="font-display text-base font-bold text-ink-900">{title}</h3>}
-            {desc && <p className="mt-0.5 text-sm text-ink-400">{desc}</p>}
+            {title && (
+              <h3 className="flex items-center gap-2 font-display text-base font-bold text-ink-900">
+                {icon && (
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-700">
+                    <Icon name={icon} className="h-4 w-4" />
+                  </span>
+                )}
+                {title}
+              </h3>
+            )}
+            {desc && <p className={`mt-0.5 text-sm text-ink-400 ${icon ? 'pl-10' : ''}`}>{desc}</p>}
           </div>
           {action}
         </div>
@@ -121,11 +246,14 @@ function Section({ title, desc, action, children, padded = true }) {
   );
 }
 
-function StatCard({ label, value, sub, tone = 'brand' }) {
+function StatCard({ label, value, sub, tone = 'brand', icon }) {
   const tones = { brand: 'bg-brand-50 text-brand-700', accent: 'bg-accent-50 text-accent-800', ink: 'bg-ink-50 text-ink-600', good: 'bg-emerald-50 text-emerald-700', warn: 'bg-amber-50 text-amber-800', danger: 'bg-red-50 text-red-700' };
   return (
     <div className={`rounded-2xl p-5 ring-1 ${tones[tone] || tones.brand}`}>
-      <p className="text-xs font-bold uppercase tracking-wider opacity-70">{label}</p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wider opacity-70">{label}</p>
+        {icon && <Icon name={icon} className="h-4 w-4 opacity-50" />}
+      </div>
       <p className="mt-1 font-display text-2xl font-extrabold sm:text-3xl">{value}</p>
       {sub && <p className="mt-1 text-xs opacity-70">{sub}</p>}
     </div>
@@ -198,21 +326,21 @@ function DashTab({ overview, refresh, goTo }) {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Trésorerie totale" value={`${fmt(overview.treasury)} $`} sub="Caisse, banques et Mobile Money (classe 5)" tone="brand" />
-        <StatCard label={`Ressources ${overview.month}`} value={`${fmt(overview.resources)} $`} sub="Dons, subventions, cotisations, activités" tone="good" />
-        <StatCard label={`Charges ${overview.month}`} value={`${fmt(overview.charges)} $`} sub="Par nature (classes 6, 8, 9)" tone={overview.charges > overview.resources ? 'danger' : 'ink'} />
-        <StatCard label="Résultat du mois" value={`${fmt(overview.surplus)} $`} sub={overview.surplus >= 0 ? 'Surplus' : 'Déficit'} tone={overview.surplus >= 0 ? 'accent' : 'danger'} />
+        <StatCard icon="bank" label="Trésorerie totale" value={`${fmt(overview.treasury)} $`} sub="Caisse, banques et Mobile Money (classe 5)" tone="brand" />
+        <StatCard icon="up" label={`Ressources ${overview.month}`} value={`${fmt(overview.resources)} $`} sub="Dons, subventions, cotisations, activités" tone="good" />
+        <StatCard icon="down" label={`Charges ${overview.month}`} value={`${fmt(overview.charges)} $`} sub="Par nature (classes 6, 8, 9)" tone={overview.charges > overview.resources ? 'danger' : 'ink'} />
+        <StatCard icon="result" label="Résultat du mois" value={`${fmt(overview.surplus)} $`} sub={overview.surplus >= 0 ? 'Surplus' : 'Déficit'} tone={overview.surplus >= 0 ? 'accent' : 'danger'} />
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label={`Ressources de l\u2019exercice ${overview.exercise.start_date.slice(0, 4)}`} value={`${fmt(overview.year_ressources)} $`} sub="Cumul de l\u2019exercice en cours" tone="good" />
-        <StatCard label={`Charges de l\u2019exercice ${overview.exercise.start_date.slice(0, 4)}`} value={`${fmt(overview.year_charges)} $`} sub="Cumul de l\u2019exercice en cours" tone={overview.year_charges > overview.year_ressources ? 'danger' : 'ink'} />
-        <StatCard label="Résultat de l\u2019exercice" value={`${fmt(overview.year_result)} $`} sub={overview.year_result >= 0 ? 'Surplus en cours' : 'Déficit en cours'} tone={overview.year_result >= 0 ? 'accent' : 'danger'} />
-        <StatCard label="Surplus reporté (171)" value={`${fmt(overview.reported_surplus)} $`} sub="Résultats antérieurs reportés à la clôture" tone="brand" />
+        <StatCard icon="up" label={`Ressources de l'exercice ${overview.exercise.start_date.slice(0, 4)}`} value={`${fmt(overview.year_ressources)} $`} sub="Cumul de l'exercice en cours" tone="good" />
+        <StatCard icon="down" label={`Charges de l'exercice ${overview.exercise.start_date.slice(0, 4)}`} value={`${fmt(overview.year_charges)} $`} sub="Cumul de l'exercice en cours" tone={overview.year_charges > overview.year_ressources ? 'danger' : 'ink'} />
+        <StatCard icon="result" label="Résultat de l'exercice" value={`${fmt(overview.year_result)} $`} sub={overview.year_result >= 0 ? 'Surplus en cours' : 'Déficit en cours'} tone={overview.year_result >= 0 ? 'accent' : 'danger'} />
+        <StatCard icon="ledger" label="Surplus reporté (171)" value={`${fmt(overview.reported_surplus)} $`} sub="Résultats antérieurs reportés à la clôture" tone="brand" />
       </div>
-      <Section title="Ressources et charges — 12 derniers mois" desc="Vue mensuelle de l\u2019activité (comptes de nature « ressources » et « charges »).">
+      <Section icon="chart" title="Ressources et charges — 12 derniers mois" desc="Vue mensuelle de l'activité (comptes de nature « ressources » et « charges »).">
         {trend ? <TrendChart data={trend} /> : <p className="text-sm text-ink-400">Chargement…</p>}
       </Section>
-      <Section title="Dernières écritures" desc="Les dons confirmés, les ventes POS et les paies envoyées génèrent automatiquement leurs écritures."
+      <Section icon="journal" title="Dernières écritures" desc="Les dons confirmés, les ventes POS et les paies envoyées génèrent automatiquement leurs écritures."
         action={<button onClick={refresh} className="rounded-xl px-3 py-1.5 text-sm font-semibold text-brand-700 hover:bg-brand-50">Actualiser</button>}>
         {recent.length === 0 ? (
           <p className="text-sm text-ink-400">Aucune écriture pour le moment. Créez la première dans le Journal, ou confirmez un don.</p>
@@ -240,11 +368,11 @@ function DashTab({ overview, refresh, goTo }) {
           <button onClick={() => goTo('journal')} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700">+ Nouvelle écriture</button>
         </div>
       </Section>
-      <Section title="Conformité SYCEBNL" desc="Rappel du référentiel appliqué à la comptabilité d\u2019ADI.">
+      <Section icon="shield" title="Conformité SYCEBNL" desc="Rappel du référentiel appliqué à la comptabilité d'ADI.">
         <div className="grid gap-4 text-sm text-ink-600 sm:grid-cols-3">
           <div className="rounded-xl bg-ink-50/60 p-4">
             <p className="font-bold text-ink-900">Système normal</p>
-            <p className="mt-1">Comptabilité d\u2019engagement en partie double. Exercice ouvert au 1er janvier 2026 (bilan d\u2019ouverture à zéro).</p>
+            <p className="mt-1">Comptabilité d'engagement en partie double. Exercice ouvert au 1er janvier 2026 (bilan d'ouverture à zéro).</p>
           </div>
           <div className="rounded-xl bg-ink-50/60 p-4">
             <p className="font-bold text-ink-900">Plan à 9 classes</p>
@@ -252,7 +380,7 @@ function DashTab({ overview, refresh, goTo }) {
           </div>
           <div className="rounded-xl bg-ink-50/60 p-4">
             <p className="font-bold text-ink-900">Vocabulaire OSC</p>
-            <p className="mt-1">Surplus / déficit (pas bénéfice-perte), membres (pas clients), ressources de l\u2019exercice. États : bilan, compte de résultat, exports CSV et PDF.</p>
+            <p className="mt-1">Surplus / déficit (pas bénéfice-perte), membres (pas clients), ressources de l'exercice. États : bilan, compte de résultat, exports CSV et PDF.</p>
           </div>
         </div>
       </Section>
@@ -285,7 +413,7 @@ function ExercisesTab() {
   return (
     <div className="space-y-6">
       {error && <div className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
-      <Section title="Clôture d'exercice" desc="Clôturer l'exercice : ① génère les dotations aux amortissements manquantes de l'exercice (651 → 281/283), ② éteint les soldes des comptes de charges (6xx) et de ressources (7xx), ③ reporte le résultat au surplus reporté (171) via les comptes de transit 178/168, ④ verrouille définitivement l'exercice (plus aucune écriture datée de la période) et ouvre l'exercice suivant.">
+      <Section icon="lock" title="Clôture d'exercice" desc="Clôturer l'exercice : ① génère les dotations aux amortissements manquantes de l'exercice (651 → 281/283), ② éteint les soldes des comptes de charges (6xx) et de ressources (7xx), ③ reporte le résultat au surplus reporté (171) via les comptes de transit 178/168, ④ verrouille définitivement l'exercice (plus aucune écriture datée de la période) et ouvre l'exercice suivant.">
         <div className="space-y-3">
           {exs.map((ex) => (
             <div key={ex.id} className={`flex flex-wrap items-center gap-4 rounded-xl border p-4 ${ex.status === 'ouvert' ? 'border-brand-200 bg-brand-50/40' : 'border-ink-100 bg-ink-50/50'}`}>
@@ -379,7 +507,7 @@ function JournalTab({ refresh }) {
 
   const openDetail = (id) => api.compta.entries.get(id).then(setDetail).catch(() => {});
   const reverse = async (e) => {
-    if (!window.confirm(`Annuler l\u2019écriture ${e.ref} ? Une écriture de contre-sens sera créée (l\u2019origine est conservée).`)) return;
+    if (!window.confirm(`Annuler l'écriture ${e.ref} ? Une écriture de contre-sens sera créée (l'origine est conservée).`)) return;
     setBusy(true); setError('');
     try {
       await api.compta.entries.reverse(e.id);
@@ -389,7 +517,7 @@ function JournalTab({ refresh }) {
     setBusy(false);
   };
   const remove = async (e) => {
-    if (!window.confirm(`Supprimer définitivement l\u2019écriture manuelle ${e.ref} ?`)) return;
+    if (!window.confirm(`Supprimer définitivement l'écriture manuelle ${e.ref} ?`)) return;
     setBusy(true); setError('');
     try {
       await api.compta.entries.remove(e.id);
@@ -402,7 +530,7 @@ function JournalTab({ refresh }) {
   return (
     <div className="space-y-6">
       {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
-      <Section title="Écritures" desc={`${entries.length} écriture(s) — les automatiques (dons, POS, paie) s’annulent sans s’effacer.`}
+      <Section icon="journal" title="Écritures" desc={`${entries.length} écriture(s) — les automatiques (dons, POS, paie) s'annulent sans s'effacer.`}
         action={
           <div className="flex gap-2">
             <button onClick={exportCsv} disabled={entries.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
@@ -557,18 +685,21 @@ function NewEntryModal({ onClose, onCreated }) {
         <div className="space-y-2">
           <p className="text-xs font-bold uppercase tracking-wider text-ink-400">Lignes (partie double : total débits = total crédits)</p>
           {lines.map((l, i) => (
-            <div key={i} className="grid gap-2 rounded-xl bg-ink-50/60 p-3 sm:grid-cols-[110px_1fr_110px_110px_32px]">
-              <select value={l.account_code} onChange={(e) => setLine(i, 'account_code', e.target.value)} className="rounded-lg border-0 bg-white px-2 py-1.5 text-sm ring-1 ring-ink-200">
-                <option value="">Compte…</option>
-                {accounts.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name.slice(0, 28)}</option>)}
-              </select>
+            <div key={i} className="grid gap-2 rounded-xl bg-ink-50/60 p-3 sm:grid-cols-[minmax(200px,1.4fr)_1fr_110px_110px_32px]">
+              <AccountSearch
+                accounts={accounts.filter((a) => a.active !== 0)}
+                value={l.account_code}
+                onChange={(code) => setLine(i, 'account_code', code)}
+                placeholder="Code ou nom du compte…"
+                emptyLabel="Compte…"
+              />
               <input value={l.label} onChange={(e) => setLine(i, 'label', e.target.value)} placeholder="Libellé de la ligne (facultatif)" className="rounded-lg border-0 bg-white px-2 py-1.5 text-sm ring-1 ring-ink-200" />
               <input type="number" min="0" step="0.01" value={l.debit} onChange={(e) => setLine(i, 'debit', e.target.value)} placeholder="Débit" className="rounded-lg border-0 bg-white px-2 py-1.5 text-right text-sm tabular-nums ring-1 ring-ink-200" />
               <input type="number" min="0" step="0.01" value={l.credit} onChange={(e) => setLine(i, 'credit', e.target.value)} placeholder="Crédit" className="rounded-lg border-0 bg-white px-2 py-1.5 text-right text-sm tabular-nums ring-1 ring-ink-200" />
-              <button onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} className="grid place-items-center rounded-lg text-ink-400 hover:bg-red-50 hover:text-red-600" title="Retirer la ligne">✕</button>
+              <button type="button" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} className="grid place-items-center rounded-lg text-ink-400 hover:bg-red-50 hover:text-red-600" title="Retirer la ligne">✕</button>
             </div>
           ))}
-          <button onClick={() => setLines((ls) => [...ls, { account_code: '', label: '', debit: '', credit: '' }])} className="text-sm font-bold text-brand-700 hover:underline">+ Ajouter une ligne</button>
+          <button type="button" onClick={() => setLines((ls) => [...ls, { account_code: '', label: '', debit: '', credit: '' }])} className="text-sm font-bold text-brand-700 hover:underline">+ Ajouter une ligne</button>
         </div>
         <div className={`flex items-center justify-between rounded-xl px-4 py-3 ${balanced ? 'bg-emerald-50' : 'bg-amber-50'}`}>
           <span className={`text-sm font-bold ${balanced ? 'text-emerald-700' : 'text-amber-800'}`}>
@@ -577,8 +708,8 @@ function NewEntryModal({ onClose, onCreated }) {
           <span className="text-sm font-semibold tabular-nums text-ink-600">{fmt(totalDebit)} $ · {fmt(totalCredit)} $</span>
         </div>
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-bold text-ink-500 hover:bg-ink-50">Annuler</button>
-          <button disabled={busy || !balanced} onClick={submit} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">Valider l\u2019écriture</button>
+          <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-bold text-ink-500 hover:bg-ink-50">Annuler</button>
+          <button type="button" disabled={busy || !balanced} onClick={submit} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">Valider l'écriture</button>
         </div>
       </div>
     </Dialog>
@@ -601,7 +732,7 @@ function PlanTab() {
   return (
     <div className="space-y-6">
       {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
-      <Section title="Plan de comptes SYCEBNL" desc="74 comptes de base pré-remplis (9 classes) — vous pouvez ajouter les vôtres ou renommer."
+      <Section icon="plan" title="Plan de comptes SYCEBNL" desc="74 comptes de base pré-remplis (9 classes) — vous pouvez ajouter les vôtres ou renommer."
         action={<button onClick={() => { setShowNew(true); setError(''); }} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700">+ Nouveau compte</button>}>
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher par code ou nom…" className="w-64 rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200 focus:ring-2 focus:ring-brand-500" />
@@ -718,7 +849,7 @@ function AssetsTab({ refresh }) {
   const year = new Date().toISOString().slice(0, 4);
 
   const depreciate = async () => {
-    if (!window.confirm(`Générer les dotations aux amortissements de l\u2019exercice ${year} pour tous les actifs en service ?`)) return;
+    if (!window.confirm(`Générer les dotations aux amortissements de l'exercice ${year} pour tous les actifs en service ?`)) return;
     setBusy(true); setError(''); setNotice('');
     try {
       const r = await api.compta.assets.depreciate(year);
@@ -739,7 +870,7 @@ function AssetsTab({ refresh }) {
   };
 
   const remove = async (a) => {
-    if (!window.confirm(`Supprimer « ${a.label} » ? L\u2019écriture d\u2019acquisition et les dotations liées seront aussi supprimées.`)) return;
+    if (!window.confirm(`Supprimer « ${a.label} » ? L'écriture d'acquisition et les dotations liées seront aussi supprimées.`)) return;
     setBusy(true); setError('');
     try {
       await api.compta.assets.remove(a.id);
@@ -762,11 +893,11 @@ function AssetsTab({ refresh }) {
       {!assets ? <p className="text-sm text-ink-400">Chargement…</p> : (
         <>
           <div className="grid gap-4 sm:grid-cols-3">
-            <StatCard label="Valeur brute" value={`${fmt(totalAcq)} $`} sub={`${assets.length} actif(s) immobilisé(s) (classe 2)`} tone="brand" />
-            <StatCard label="Amortissements cumulés" value={`${fmt(totalProv)} $`} sub="Comptes 281 / 283" tone="ink" />
-            <StatCard label="Valeur nette comptable" value={`${fmt(totalNet)} $`} sub="Brut − amortissements" tone={totalNet > 0 ? 'good' : 'danger'} />
+            <StatCard icon="assets" label="Valeur brute" value={`${fmt(totalAcq)} $`} sub={`${assets.length} actif(s) immobilisé(s) (classe 2)`} tone="brand" />
+            <StatCard icon="down" label="Amortissements cumulés" value={`${fmt(totalProv)} $`} sub="Comptes 281 / 283" tone="ink" />
+            <StatCard icon="result" label="Valeur nette comptable" value={`${fmt(totalNet)} $`} sub="Brut − amortissements" tone={totalNet > 0 ? 'good' : 'danger'} />
           </div>
-          <Section title="Registre des immobilisations" desc="Chaque acquisition génère une écriture (compte 2xx débiteur / trésorerie créditeur). Les dotations aux amortissements (lignes droites, 651 → 281/283) sont générées ici, puis automatiquement à la clôture de l\u2019exercice."
+          <Section icon="assets" title="Registre des immobilisations" desc="Chaque acquisition génère une écriture (compte 2xx débiteur / trésorerie créditeur). Les dotations aux amortissements (lignes droites, 651 → 281/283) sont générées ici, puis automatiquement à la clôture de l'exercice."
             action={
               <div className="flex gap-2">
                 <button onClick={depreciate} disabled={busy || assets.length === 0} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">Dotations {year}</button>
@@ -820,7 +951,7 @@ function AssetsTab({ refresh }) {
               <div className="rounded-xl bg-ink-50/70 p-3"><p className="text-xs uppercase tracking-wider text-ink-400">Compte</p><p className="font-mono text-xs font-bold text-ink-700">{detail.account_code}</p></div>
               <div className="rounded-xl bg-ink-50/70 p-3"><p className="text-xs uppercase tracking-wider text-ink-400">Acquis le</p><p className="font-semibold">{detail.acquired_at}</p></div>
               <div className="rounded-xl bg-ink-50/70 p-3"><p className="text-xs uppercase tracking-wider text-ink-400">Valeur brute</p><p className="font-display text-lg font-extrabold">{fmt(detail.amount)} $</p></div>
-              <div className="rounded-xl bg-ink-50/70 p-3"><p className="text-xs uppercase tracking-wider text-ink-400">Durée d\u2019utilité</p><p className="font-semibold">{detail.useful_life} an(s) — {fmt(Math.round(detail.amount / detail.useful_life * 100) / 100)} $/an</p></div>
+              <div className="rounded-xl bg-ink-50/70 p-3"><p className="text-xs uppercase tracking-wider text-ink-400">Durée d'utilité</p><p className="font-semibold">{detail.useful_life} an(s) — {fmt(Math.round(detail.amount / detail.useful_life * 100) / 100)} $/an</p></div>
               <div className="rounded-xl bg-indigo-50/70 p-3"><p className="text-xs uppercase tracking-wider text-indigo-400">Amort. cumulés</p><p className="font-display text-lg font-extrabold text-indigo-700">{fmt(detail.accumulated)} $</p></div>
               <div className="rounded-xl bg-emerald-50/70 p-3"><p className="text-xs uppercase tracking-wider text-emerald-500">Valeur nette</p><p className="font-display text-lg font-extrabold text-emerald-700">{fmt(detail.net)} $</p></div>
             </div>
@@ -850,7 +981,7 @@ function NewAssetModal({ accounts, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const class2 = accounts.filter((a) => a.active && String(a.class) === '2' && !a.code.startsWith('28') && !a.code.startsWith('29'));
+  const class2 = accounts.filter((a) => a.active !== 0 && [2, '2'].includes(a.class) && !String(a.code).startsWith('28') && !String(a.code).startsWith('29'));
   const valid = label.trim() !== '' && Number(amount) > 0 && date !== '';
 
   const submit = async () => {
@@ -868,14 +999,19 @@ function NewAssetModal({ accounts, onClose, onSaved }) {
         {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
         <Field label="Libellé"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Ex. Ordinateur portable — bureau projet" className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200 focus:ring-2 focus:ring-brand-500" /></Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Compte d\u2019immobilisation (classe 2)">
-            <select value={code} onChange={(e) => setCode(e.target.value)} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200">
-              {class2.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
-            </select>
+          <Field label="Compte d'immobilisation (classe 2)">
+            <AccountSearch
+              accounts={class2}
+              value={code}
+              onChange={(c) => setCode(c || '211')}
+              placeholder="Code ou nom (classe 2)…"
+              emptyLabel="Choisir un compte…"
+              className="[&_button]:rounded-xl [&_button]:bg-ink-50 [&_button]:px-3 [&_button]:py-2 [&_input]:rounded-xl [&_input]:bg-ink-50 [&_input]:px-3 [&_input]:py-2"
+            />
           </Field>
-          <Field label="Montant d\u2019acquisition (USD)"><input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1500.00" className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-right text-sm tabular-nums ring-1 ring-ink-200" /></Field>
-          <Field label="Date d\u2019acquisition"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" /></Field>
-          <Field label="Durée d\u2019utilité (années)"><input type="number" min="1" max="50" value={life} onChange={(e) => setLife(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" /></Field>
+          <Field label="Montant d'acquisition (USD)"><input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1500.00" className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-right text-sm tabular-nums ring-1 ring-ink-200" /></Field>
+          <Field label="Date d'acquisition"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" /></Field>
+          <Field label="Durée d'utilité (années)"><input type="number" min="1" max="50" value={life} onChange={(e) => setLife(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" /></Field>
         </div>
         <Field label="Mode de règlement (trésorerie)">
           <select value={method} onChange={(e) => setMethod(e.target.value)} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200">
@@ -884,10 +1020,10 @@ function NewAssetModal({ accounts, onClose, onSaved }) {
             <option value="mobile_money">Mobile Money (516)</option>
           </select>
         </Field>
-        <p className="text-xs text-ink-400">Écriture générée : {code} débit {amount || '…'} / trésorerie crédit — puis dotation annuelle de {amount && Number(amount) > 0 ? `${fmt(Math.round((Number(amount) / life) * 100) / 100)} $` : '…'} (651 → {code === '243' ? '283' : '281'}) jusqu\u2019à amortissement complet.</p>
+        <p className="text-xs text-ink-400">Écriture générée : {code} débit {amount || '…'} / trésorerie crédit — puis dotation annuelle de {amount && Number(amount) > 0 ? `${fmt(Math.round((Number(amount) / life) * 100) / 100)} $` : '…'} (651 → {code === '243' ? '283' : '281'}) jusqu'à amortissement complet.</p>
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-bold text-ink-500 hover:bg-ink-50">Annuler</button>
-          <button disabled={busy || !valid} onClick={submit} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">Enregistrer l\u2019acquisition</button>
+          <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-bold text-ink-500 hover:bg-ink-50">Annuler</button>
+          <button type="button" disabled={busy || !valid} onClick={submit} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">Enregistrer l'acquisition</button>
         </div>
       </div>
     </Dialog>
@@ -914,7 +1050,7 @@ function InKindTab({ refresh }) {
   const totalDonne = (rows || []).filter((r) => r.direction === 'donne').reduce((s, r) => s + r.amount, 0);
 
   const remove = async (r) => {
-    if (!window.confirm(`Supprimer cette contribution en nature (${r.partner}) ? L\u2019écriture associée sera aussi supprimée.`)) return;
+    if (!window.confirm(`Supprimer cette contribution en nature (${r.partner}) ? L'écriture associée sera aussi supprimée.`)) return;
     setBusy(true); setError('');
     try {
       await api.compta.inKind.remove(r.id);
@@ -929,10 +1065,10 @@ function InKindTab({ refresh }) {
       {!rows ? <p className="text-sm text-ink-400">Chargement…</p> : (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
-            <StatCard label="Contributions reçues" value={`${fmt(totalRecu)} $`} sub="Apports volontaires en nature reçus (971)" tone="good" />
-            <StatCard label="Contributions données" value={`${fmt(totalDonne)} $`} sub="Apports en nature consentis (911)" tone="warn" />
+            <StatCard icon="gift" label="Contributions reçues" value={`${fmt(totalRecu)} $`} sub="Apports volontaires en nature reçus (971)" tone="good" />
+            <StatCard icon="down" label="Contributions données" value={`${fmt(totalDonne)} $`} sub="Apports en nature consentis (911)" tone="warn" />
           </div>
-          <Section title="Contributions en nature" desc="Nouveauté SYCEBNL (classe 9) : les apports volontaires de biens et services reçus (compte 971) et donnés (compte 911), valorisés au prix courant. Chaque saisie génère son écriture en partie double."
+          <Section icon="gift" title="Contributions en nature" desc="Nouveauté SYCEBNL (classe 9) : les apports volontaires de biens et services reçus (compte 971) et donnés (compte 911), valorisés au prix courant. Chaque saisie génère son écriture en partie double."
             action={<button onClick={() => { setShowNew(true); setError(''); }} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700">+ Nouvelle contribution</button>}>
             {rows.length === 0 ? (
               <div className="py-10 text-center">
@@ -988,7 +1124,9 @@ function NewInKindModal({ accounts, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const options = accounts.filter((a) => a.active && (direction === 'recu' ? [3, 6].includes(a.class) : a.class === 3));
+  const options = accounts.filter((a) => a.active !== 0 && (direction === 'recu'
+    ? [3, 6, '3', '6'].includes(a.class)
+    : [3, '3'].includes(a.class)));
 
   const submit = async () => {
     setBusy(true); setError('');
@@ -1007,7 +1145,7 @@ function NewInKindModal({ accounts, onClose, onSaved }) {
         {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" /></Field>
-          <Field label="Sens de l\u2019apport">
+          <Field label="Sens de l'apport">
             <select value={direction} onChange={(e) => { setDirection(e.target.value); setCode(''); }} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200">
               <option value="recu">Reçue par ADI (971)</option>
               <option value="donne">Donnée par ADI (911)</option>
@@ -1019,10 +1157,14 @@ function NewInKindModal({ accounts, onClose, onSaved }) {
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={`Compte concerné (${direction === 'recu' ? 'classe 3 ou 6' : 'classe 3'})`}>
-            <select value={code} onChange={(e) => setCode(e.target.value)} className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200">
-              <option value="">Choisir…</option>
-              {options.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
-            </select>
+            <AccountSearch
+              accounts={options}
+              value={code}
+              onChange={setCode}
+              placeholder="Code ou nom du compte…"
+              emptyLabel="Choisir un compte…"
+              className="[&_button]:rounded-xl [&_button]:bg-ink-50 [&_button]:px-3 [&_button]:py-2 [&_input]:rounded-xl [&_input]:bg-ink-50 [&_input]:px-3 [&_input]:py-2"
+            />
           </Field>
           <Field label="Valorisation (USD)"><input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="500.00" className="w-full rounded-xl border-0 bg-ink-50 px-3 py-2 text-right text-sm tabular-nums ring-1 ring-ink-200" /></Field>
         </div>
@@ -1033,8 +1175,8 @@ function NewInKindModal({ accounts, onClose, onSaved }) {
             : 'Écriture générée : 911 débiteur (charge en nature) + compte de stocks créditeur.'}
         </p>
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-bold text-ink-500 hover:bg-ink-50">Annuler</button>
-          <button disabled={busy || !valid} onClick={submit} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">Enregistrer</button>
+          <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-bold text-ink-500 hover:bg-ink-50">Annuler</button>
+          <button type="button" disabled={busy || !valid} onClick={submit} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">Enregistrer la contribution</button>
         </div>
       </div>
     </Dialog>
@@ -1069,7 +1211,7 @@ function BalanceTab() {
   return (
     <div className="space-y-6">
       {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
-      <Section title="Balance" desc="Totaux de débit et de crédit par compte sur la période."
+      <Section icon="balance" title="Balance" desc="Totaux de débit et de crédit par compte sur la période."
         action={
           <div className="flex gap-2">
             <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
@@ -1151,7 +1293,7 @@ function LedgerTab() {
   return (
     <div className="space-y-6">
       {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
-      <Section title="Grand livre" desc="Mouvements successifs et soldes courants d’un compte."
+      <Section icon="ledger" title="Grand livre" desc="Mouvements successifs et soldes courants d'un compte."
         action={
           <div className="flex gap-2">
             <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
@@ -1159,10 +1301,14 @@ function LedgerTab() {
           </div>
         }>
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <select value={account} onChange={(e) => { setAccount(e.target.value); setLoaded(false); }} className="w-72 rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200 focus:ring-2 focus:ring-brand-500">
-            <option value="">Choisir un compte…</option>
-            {accounts.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
-          </select>
+          <AccountSearch
+            accounts={accounts.filter((a) => a.active !== 0)}
+            value={account}
+            onChange={(code) => { setAccount(code); setLoaded(false); }}
+            placeholder="Code ou nom du compte…"
+            emptyLabel="Choisir un compte…"
+            className="w-80 [&_button]:rounded-xl [&_button]:bg-ink-50 [&_button]:px-3 [&_button]:py-2 [&_input]:rounded-xl [&_input]:bg-ink-50 [&_input]:px-3 [&_input]:py-2"
+          />
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" />
           <span className="text-xs text-ink-400">au</span>
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" />
@@ -1245,7 +1391,7 @@ function StatesTab() {
     <div className="space-y-6">
       {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
       <div className="grid gap-6 xl:grid-cols-2">
-        <Section title="Bilan (SYCEBNL)" desc={`Au ${at} — USD`}
+        <Section icon="states" title="Bilan (SYCEBNL)" desc={`Au ${at} — USD`}
           action={
             <div className="flex gap-2">
               <button onClick={() => download(`/api/admin/compta/statements/balance-sheet?at=${at}&format=csv`, `bilan-${at}.csv`)} className="rounded-xl px-3 py-1.5 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50">CSV</button>
@@ -1281,7 +1427,7 @@ function StatesTab() {
           ) : <p className="text-sm text-ink-400">Chargement…</p>}
         </Section>
 
-        <Section title="Compte de résultat (SYCEBNL)" desc={`Du ${from} au ${to} — charges par nature`}
+        <Section icon="chart" title="Compte de résultat (SYCEBNL)" desc={`Du ${from} au ${to} — charges par nature`}
           action={
             <div className="flex gap-2">
               <button onClick={() => download(`/api/admin/compta/statements/result?from=${from}&to=${to}&format=csv`, `compte-de-resultat-${from}_${to}.csv`)} className="rounded-xl px-3 py-1.5 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50">CSV</button>
@@ -1321,7 +1467,7 @@ function StatesTab() {
               )}
               {cr.charges.length === 0 && cr.ressources.length === 0 && <p className="text-sm text-ink-400">Aucune activité sur la période.</p>}
               <div className={`mt-6 flex items-center justify-between rounded-xl px-4 py-3 ${cr.resultat >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                <span className="text-sm font-bold text-ink-900">{cr.resultat >= 0 ? 'Surplus de l\u2019exercice' : 'Déficit de l\u2019exercice'}</span>
+                <span className="text-sm font-bold text-ink-900">{cr.resultat >= 0 ? "Surplus de l'exercice" : "Déficit de l'exercice"}</span>
                 <span className={`font-display text-xl font-extrabold ${cr.resultat >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{fmt(Math.abs(cr.resultat))} $</span>
               </div>
             </div>

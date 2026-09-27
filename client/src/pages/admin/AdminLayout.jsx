@@ -136,6 +136,11 @@ const ITEM_AREAS = {
 };
 
 const COLLAPSE_KEY = 'adiong_admin_nav_open';
+const SIDEBAR_KEY = 'adiong_admin_sidebar_collapsed';
+const ICONS_PANEL = {
+  collapse: 'M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5',
+  expand: 'M5.25 4.5l7.5 7.5-7.5 7.5m6-15l7.5 7.5-7.5 7.5'
+};
 
 function MiniIcon({ d, className = 'h-5 w-5' }) {
   return (
@@ -182,6 +187,10 @@ function loadOpenGroups() {
   }
 }
 
+function loadSidebarCollapsed() {
+  try { return localStorage.getItem(SIDEBAR_KEY) === '1'; } catch { return false; }
+}
+
 export default function AdminLayout() {
   const nav = useNavigate();
   const { pathname } = useLocation();
@@ -196,10 +205,19 @@ export default function AdminLayout() {
   const [permMap, setPermMap] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
   const [openGroups, setOpenGroups] = useState(loadOpenGroups);
+  const [collapsed, setCollapsed] = useState(loadSidebarCollapsed);
   const menuRef = useRef(null);
   const role = savedUser?.role || 'admin';
   const page = currentPage(pathname);
   const initials = (savedUser?.full_name || savedUser?.email || 'A').slice(0, 2).toUpperCase();
+
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   const ctx = useMemo(
     () => ({ role, grhEnabled, posEnabled, chatEnabled, comptaEnabled, permMap }),
@@ -305,54 +323,83 @@ export default function AdminLayout() {
     });
   };
 
-  const linkCls = ({ isActive }) =>
-    `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
-      isActive ? 'bg-brand-600 text-white shadow-soft' : 'text-ink-600 hover:bg-brand-50 hover:text-brand-700'
-    }`;
+  const sidebar = (mode = 'desktop') => {
+    const rail = mode === 'desktop' && collapsed;
 
-  const subLinkCls = ({ isActive }) =>
-    `flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors ${
-      isActive ? 'bg-brand-600 text-white shadow-soft' : 'text-ink-500 hover:bg-brand-50 hover:text-brand-700'
-    }`;
+    const linkCls = ({ isActive }) =>
+      `relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
+        rail ? 'justify-center px-2' : ''
+      } ${
+        isActive ? 'bg-brand-600 text-white shadow-soft' : 'text-ink-600 hover:bg-brand-50 hover:text-brand-700'
+      }`;
 
-  const renderLink = (it, { sub = false } = {}) => (
-    <NavLink
-      key={it.to}
-      to={it.to}
-      end={it.end}
-      className={sub ? subLinkCls : linkCls}
-      onClick={() => setOpen(false)}
-    >
-      <MiniIcon d={it.icon} className={sub ? 'h-4 w-4 shrink-0' : 'h-5 w-5 shrink-0'} />
-      <span className="flex-1 truncate">{it.label}</span>
-      {it.chat && chatUnread > 0 && (
-        <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-accent-500 px-1.5 text-[10px] font-black text-white">
-          {chatUnread > 99 ? '99+' : chatUnread}
-        </span>
-      )}
-    </NavLink>
-  );
+    const subLinkCls = ({ isActive }) =>
+      `relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors ${
+        rail ? 'justify-center px-2' : ''
+      } ${
+        isActive ? 'bg-brand-600 text-white shadow-soft' : 'text-ink-500 hover:bg-brand-50 hover:text-brand-700'
+      }`;
 
-  const sidebar = (
+    const renderLink = (it, { sub = false } = {}) => (
+      <NavLink
+        key={it.to}
+        to={it.to}
+        end={it.end}
+        title={rail ? it.label : undefined}
+        className={sub ? subLinkCls : linkCls}
+        onClick={() => setOpen(false)}
+      >
+        <MiniIcon d={it.icon} className={sub ? 'h-4 w-4 shrink-0' : 'h-5 w-5 shrink-0'} />
+        {!rail && <span className="flex-1 truncate">{it.label}</span>}
+        {!rail && it.chat && chatUnread > 0 && (
+          <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-accent-500 px-1.5 text-[10px] font-black text-white">
+            {chatUnread > 99 ? '99+' : chatUnread}
+          </span>
+        )}
+        {rail && it.chat && chatUnread > 0 && (
+          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-accent-500 ring-2 ring-white" />
+        )}
+      </NavLink>
+    );
+
+    return (
     <div className="flex h-full flex-col bg-white">
-      <div className="flex items-center gap-3 px-5 py-5">
-        <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-600 text-white">
+      <div className={`flex items-center gap-3 py-5 ${rail ? 'justify-center px-2' : 'px-5'}`}>
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-600 text-white">
           <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
             <circle cx="12" cy="8" r="3" fill="#fc7a03" stroke="none" />
             <path d="M5 18.5c1.4-4 4-5.5 7-5.5s5.6 1.5 7 5.5" strokeLinecap="round" />
           </svg>
         </span>
-        <div>
-          <p className="font-display font-bold text-ink-900">ADI ONG</p>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Admin</p>
-        </div>
+        {!rail && (
+          <div className="min-w-0">
+            <p className="font-display font-bold text-ink-900">ADI ONG</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Admin</p>
+          </div>
+        )}
       </div>
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4">
+      <nav className={`flex-1 space-y-1 overflow-y-auto pb-4 ${rail ? 'px-1.5' : 'px-3'}`}>
         {visibleTree.map((node) => {
-          if (node.type === 'link') return renderLink(node);
+          if (node.type === 'link') {
+            return (
+              <div key={node.to} className="relative">
+                {renderLink(node)}
+              </div>
+            );
+          }
 
           const expanded = !!openGroups[node.id];
           const childActive = node.children.some((c) => pathActive(pathname, c.to, c.end));
+
+          if (rail) {
+            return (
+              <div key={node.id} className="space-y-0.5 pt-0.5">
+                {node.children.map((c) => (
+                  <div key={c.to} className="relative">{renderLink(c, { sub: true })}</div>
+                ))}
+              </div>
+            );
+          }
 
           return (
             <div key={node.id} className="pt-0.5">
@@ -393,18 +440,41 @@ export default function AdminLayout() {
           </p>
         )}
       </nav>
+      {mode === 'desktop' && (
+        <div className={`border-t border-ink-100 p-2 ${rail ? 'flex justify-center' : ''}`}>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            title={collapsed ? 'Étendre le menu' : 'Réduire le menu'}
+            aria-label={collapsed ? 'Étendre le menu' : 'Réduire le menu'}
+            className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-ink-500 transition-colors hover:bg-ink-50 hover:text-ink-800 ${
+              rail ? 'justify-center px-2' : 'w-full'
+            }`}
+          >
+            <MiniIcon d={collapsed ? ICONS_PANEL.expand : ICONS_PANEL.collapse} className="h-5 w-5 shrink-0" />
+            {!rail && <span>Réduire</span>}
+          </button>
+        </div>
+      )}
     </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen bg-[#f4f6fb]">
       <div className="flex">
-        <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-ink-100 lg:block">{sidebar}</aside>
+        <aside
+          className={`sticky top-0 hidden h-screen shrink-0 border-r border-ink-100 transition-[width] duration-200 ease-out lg:block ${
+            collapsed ? 'w-[4.5rem]' : 'w-64'
+          }`}
+        >
+          {sidebar('desktop')}
+        </aside>
 
         {open && (
           <div className="fixed inset-0 z-50 lg:hidden">
             <div className="absolute inset-0 bg-ink-950/40" onClick={() => setOpen(false)} />
-            <aside className="absolute top-0 left-0 h-full w-72 bg-white shadow-lift">{sidebar}</aside>
+            <aside className="absolute top-0 left-0 h-full w-72 bg-white shadow-lift">{sidebar('mobile')}</aside>
           </div>
         )}
 
@@ -418,6 +488,15 @@ export default function AdminLayout() {
                 aria-label="Ouvrir le menu"
               >
                 <MiniIcon d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+              </button>
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                className="hidden h-10 w-10 place-items-center rounded-xl bg-ink-50 text-ink-700 hover:bg-brand-50 hover:text-brand-700 lg:grid"
+                title={collapsed ? 'Étendre le menu' : 'Réduire le menu'}
+                aria-label={collapsed ? 'Étendre le menu' : 'Réduire le menu'}
+              >
+                <MiniIcon d={collapsed ? ICONS_PANEL.expand : ICONS_PANEL.collapse} className="h-5 w-5" />
               </button>
 
               <div className="min-w-0 flex-1">
