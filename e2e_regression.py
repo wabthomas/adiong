@@ -258,6 +258,17 @@ def main():
             check("user non-super créé pour le test 403", s == 200, f"status={s}")
         call("DELETE", f"/api/admin/articles/{mk_id}", token=T)
 
+        print("== Audit des actions (IP réelle) ==")
+        s, au = call("GET", "/api/admin/audit", token=T)
+        au_rows = au.get("rows") if isinstance(au, dict) else []
+        check("journal d'audit lisible (super)", s == 200 and len(au_rows) >= 1, f"status={s} n={len(au_rows)}")
+        check("IP enregistrée sur chaque ligne", all(r.get("ip") for r in au_rows), f"{[r.get('ip') for r in au_rows][:3]}")
+        check("écriture admin tracée (PUT modules)", any(r.get("method") == "PUT" and r.get("path") == "/api/admin/modules" and r.get("email") for r in au_rows))
+        check("login public tracé", any(r.get("path") == "/api/auth/login" for r in au_rows))
+        check("top_ips et by_status fournis", isinstance(au.get("top_ips"), list) and isinstance(au.get("by_status"), list))
+        s, au2 = call("GET", "/api/admin/audit?method=PUT", token=T)
+        check("filtre méthode (PUT)", s == 200 and all(r.get("method") == "PUT" for r in au2.get("rows", [])) and len(au2.get("rows", [])) >= 1, f"n={len(au2.get('rows', []))}")
+
         print("== Mode maintenance ==")
         call("PUT", "/api/admin/modules", {"maintenance_enabled": True, "maintenance_message": "E2E maintenance"}, token=T)
         s, m503 = call("GET", "/api/public/articles")

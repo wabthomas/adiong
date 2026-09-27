@@ -165,7 +165,16 @@ export const api = {
     removeRole: (key) => req(`/api/admin/roles/${encodeURIComponent(key)}`, { method: 'DELETE', auth: true })
   },
   adminSecurity: {
-    events: () => req('/api/admin/security', { auth: true })
+    events: () => req('/api/admin/security', { auth: true }),
+    audit: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.from) q.set('from', params.from);
+      if (params.to) q.set('to', params.to);
+      if (params.method) q.set('method', params.method);
+      if (params.q) q.set('q', params.q);
+      const s = q.toString();
+      return req(`/api/admin/audit${s ? `?${s}` : ''}`, { auth: true });
+    }
   },
   invites: {
     list: () => req('/api/admin/invites', { auth: true }),

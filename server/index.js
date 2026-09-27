@@ -100,6 +100,41 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '2mb' }));
 
+// IP réelle : derrière un reverse proxy, X-Forwarded-For fait foi (TRUST_PROXY=1 ou NODE_ENV=production)
+const TRUST_PROXY = process.env.TRUST_PROXY === '1' || process.env.NODE_ENV === 'production';
+if (TRUST_PROXY) app.set('trust proxy', true);
+const clientIp = (req) => {
+  if (TRUST_PROXY) {
+    const h = req.headers['x-forwarded-for'];
+    if (h) {
+      const first = String(h).split(',')[0].trim();
+      if (first && first !== '::1') return first;
+    }
+  }
+  return req.ip || '';
+};
+
+// Journal d'audit : écritures admin + actions publiques sensibles (avec IP réelle)
+const AUDIT_PUBLIC = [
+  { method: 'POST', re: /^\/api\/donate$/ },
+  { method: 'POST', re: /^\/api\/public\/shop\/orders$/ },
+  { method: 'POST', re: /^\/api\/register$/ },
+  { method: 'POST', re: /^\/api\/auth\/login$/ }
+];
+const auditMiddleware = (req, res, next) => {
+  const isPublic = AUDIT_PUBLIC.some((a) => a.method === req.method && a.re.test(req.path));
+  const isAdminWrite = req.path.startsWith('/api/admin/') && req.method !== 'GET' && req.method !== 'HEAD';
+  if (!isPublic && !isAdminWrite) return next();
+  res.on('finish', () => {
+    try {
+      db.prepare('INSERT INTO audit_log (user_id, email, role, method, path, ip, ua, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(req.user?.id || null, req.user?.email || '', req.user?.role || 'public', req.method, String(req.path).slice(0, 300), clientIp(req), String(req.headers['user-agent'] || '').slice(0, 200), res.statusCode);
+    } catch { /* non bloquant */ }
+  });
+  next();
+};
+app.use(auditMiddleware);
+
 // Chemins typiques des scanners WordPress (l'ancien site en était victime) → 404 uniforme
 const SUSPICIOUS_PATHS = [
   /^\/wp-/, /^\/xmlrpc\.php/, /^\/wp-admin/, /^\/wp-login/, /^\/wp-content/, /^\/wp-includes/,
@@ -1501,6 +1536,26 @@ app.get('/api/admin/security', authRequired, requirePerm('security.view'), (req,
     rows = rows.filter((e) => !hidden.has(String(e.email || '').toLowerCase()));
   }
   res.json(rows);
+});
+
+app.get('/api/admin/audit', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const { from, to, method, q } = req.query;
+  const where = [];
+  const params = [];
+  if (from) { where.push('date(created_at) >= ?'); params.push(String(from).slice(0, 10)); }
+  if (to) { where.push('date(created_at) <= ?'); params.push(String(to).slice(0, 10)); }
+  if (method) { where.push('method = ?'); params.push(String(method).toUpperCase().slice(0, 10)); }
+  if (q) {
+    where.push('(path LIKE ? OR email LIKE ? OR ip LIKE ?)');
+    const like = `%${String(q).slice(0, 100)}%`;
+    params.push(like, like, like);
+  }
+  const sql = `SELECT * FROM audit_log ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 1000`;
+  const rows = db.prepare(sql).all(...params);
+  const top = db.prepare('SELECT ip, COUNT(*) n FROM audit_log GROUP BY ip ORDER BY n DESC, ip LIMIT 10').all();
+  const byStatus = db.prepare('SELECT status, COUNT(*) n FROM audit_log GROUP BY status').all();
+  res.json({ rows, top_ips: top, by_status: byStatus });
 });
 
 app.get('/api/admin/users', authRequired, requirePerm('users.view'), (req, res) => {

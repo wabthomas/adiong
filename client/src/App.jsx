@@ -33,6 +33,7 @@ const MediaAdmin = lazy(() => import('./pages/admin/MediaAdmin.jsx'));
 const UsersAdmin = lazy(() => import('./pages/admin/UsersAdmin.jsx'));
 const ProfileAdmin = lazy(() => import('./pages/admin/ProfileAdmin.jsx'));
 const SettingsAdmin = lazy(() => import('./pages/admin/SettingsAdmin.jsx'));
+const SecurityAdmin = lazy(() => import('./pages/admin/SecurityAdmin.jsx'));
 const GrhAdmin = lazy(() => import('./pages/admin/GrhAdmin.jsx'));
 const PosAdmin = lazy(() => import('./pages/admin/PosAdmin.jsx'));
 const ComptaAdmin = lazy(() => import('./pages/admin/ComptaAdmin.jsx'));
@@ -176,6 +177,7 @@ export default function App() {
           <Route path="compta" element={<AdminPage><ComptaAdmin /></AdminPage>} />
           <Route path="partenaires" element={<AdminPage><PartnersAdmin /></AdminPage>} />
           <Route path="parametres" element={<AdminPage><SettingsAdmin /></AdminPage>} />
+          <Route path="securite" element={<AdminPage><SecurityAdmin /></AdminPage>} />
         </Route>
         <Route path="/*" element={<Shell />} />
       </Routes>
