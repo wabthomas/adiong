@@ -323,7 +323,15 @@ def main():
     s, csvh = call("GET", "/api/admin/compta/statements/result?from=2026-01-01&to=2026-12-31&format=csv", token=T)
     check("export CSV résultat (200)", s == 200, f"status={s}")
     s, pdfh = call("GET", "/api/admin/compta/statements/balance-sheet?at=2026-12-31&format=pdf", token=T)
-    check("export PDF bilan (200)", s == 200, f"status={s}")
+    check("export PDF bilan (200)", s == 200 and str(pdfh.get("raw", "")).startswith("pdf"), f"status={s}")
+    s, pdfj = call("GET", "/api/admin/compta/entries?from=2026-01-01&to=2026-12-31&format=pdf", token=T)
+    check("export PDF journal (200)", s == 200 and str(pdfj.get("raw", "")).startswith("pdf"), f"status={s}")
+    s, pdfb = call("GET", "/api/admin/compta/balance?from=2026-01-01&to=2026-12-31&format=pdf", token=T)
+    check("export PDF balance (200)", s == 200 and str(pdfb.get("raw", "")).startswith("pdf"), f"status={s}")
+    s, pdfl = call("GET", "/api/admin/compta/ledger?account=511&from=2026-01-01&to=2026-12-31&format=pdf", token=T)
+    check("export PDF grand livre 511 (200)", s == 200 and str(pdfl.get("raw", "")).startswith("pdf"), f"status={s}")
+    s, pdfl2 = call("GET", "/api/admin/compta/ledger?format=pdf", token=T)
+    check("grand livre PDF sans compte 400", s == 400, f"status={s}")
 
     print(f"\n==== RÉSULTAT : {OK} OK / {KO} KO ====")
     if FAILS:

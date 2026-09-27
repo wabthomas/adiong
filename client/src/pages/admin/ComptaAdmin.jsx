@@ -366,6 +366,16 @@ function JournalTab({ refresh }) {
       ['Réf.', 'Date', 'Journal', 'Libellé', 'Source', 'Montant (USD)'],
       entries.map((e) => [e.ref, e.date, e.journal_code, e.label || '', label(e), e.total.toFixed(2)]));
   };
+  const exportPdf = () => {
+    if (entries.length === 0) return;
+    const p = new URLSearchParams();
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    if (journal) p.set('journal', journal);
+    if (q) p.set('q', q);
+    p.set('format', 'pdf');
+    api.compta.statements.download(`/api/admin/compta/entries?${p.toString()}`, `journal-${today()}.pdf`).catch((e) => setError(e.message || 'Export impossible'));
+  };
 
   const openDetail = (id) => api.compta.entries.get(id).then(setDetail).catch(() => {});
   const reverse = async (e) => {
@@ -396,6 +406,7 @@ function JournalTab({ refresh }) {
         action={
           <div className="flex gap-2">
             <button onClick={exportCsv} disabled={entries.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
+            <button onClick={exportPdf} disabled={entries.length === 0} className="rounded-xl bg-brand-600 px-3 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-40">Export PDF</button>
             <button onClick={() => { setShowNew(true); setError(''); }} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-bold text-white hover:bg-brand-700">
               + Nouvelle écriture
             </button>
@@ -1050,12 +1061,21 @@ function BalanceTab() {
       ['Compte', 'Intitulé', 'Nature', 'Débit (USD)', 'Crédit (USD)', 'Solde D−C (USD)'],
       rows.map((r) => [r.code, r.name, NATURES[r.nature] || r.nature, r.debit.toFixed(2), r.credit.toFixed(2), r.balance.toFixed(2)]));
   };
+  const exportPdf = () => {
+    if (rows.length === 0) return;
+    api.compta.statements.download(`/api/admin/compta/balance?from=${from}&to=${to}&format=pdf`, `balance-${from}_${to}.pdf`).catch((e) => setError(e.message || 'Export impossible'));
+  };
 
   return (
     <div className="space-y-6">
       {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
       <Section title="Balance" desc="Totaux de débit et de crédit par compte sur la période."
-        action={<button onClick={exportCsv} disabled={rows.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>}>
+        action={
+          <div className="flex gap-2">
+            <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
+            <button onClick={exportPdf} disabled={rows.length === 0} className="rounded-xl bg-brand-600 px-3 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-40">Export PDF</button>
+          </div>
+        }>
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" />
           <span className="text-xs text-ink-400">au</span>
@@ -1108,6 +1128,7 @@ function LedgerTab() {
   const [to, setTo] = useState(today());
   const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => { api.compta.accounts.list().then(setAccounts).catch(() => {}); }, []);
   useEffect(() => {
@@ -1122,11 +1143,21 @@ function LedgerTab() {
       ['Date', 'Réf.', 'Journal', 'Libellé', 'Débit (USD)', 'Crédit (USD)', 'Cumul (USD)'],
       rows.map((r) => [r.date, r.ref, r.journal_code, r.line_label || r.label || '', (r.debit || 0).toFixed(2), (r.credit || 0).toFixed(2), r.cum.toFixed(2)]));
   };
+  const exportPdf = () => {
+    if (rows.length === 0) return;
+    api.compta.statements.download(`/api/admin/compta/ledger?account=${account}&from=${from}&to=${to}&format=pdf`, `grand-livre-${account}-${from}_${to}.pdf`).catch((e) => setError(e.message || 'Export impossible'));
+  };
 
   return (
     <div className="space-y-6">
+      {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
       <Section title="Grand livre" desc="Mouvements successifs et soldes courants d’un compte."
-        action={<button onClick={exportCsv} disabled={rows.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>}>
+        action={
+          <div className="flex gap-2">
+            <button onClick={exportCsv} disabled={rows.length === 0} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
+            <button onClick={exportPdf} disabled={rows.length === 0} className="rounded-xl bg-brand-600 px-3 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-40">Export PDF</button>
+          </div>
+        }>
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <select value={account} onChange={(e) => { setAccount(e.target.value); setLoaded(false); }} className="w-72 rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200 focus:ring-2 focus:ring-brand-500">
             <option value="">Choisir un compte…</option>

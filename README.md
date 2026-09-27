@@ -250,16 +250,17 @@ attribuable à d'autres rôles via la matrice des droits (zone « Comptabilité 
   **graphique des 12 derniers mois** (ressources vs charges) et dernières écritures.
 - **Journal** : écritures en **partie double** (débits = contrôlés contre les crédits à la
   saisie), journaux Ouverture / Achats / Ventes / Caisse / Banque / Divers, références
-  `EC-AAAA-####`, filtres (période, journal, texte, compte), **pagination**, **export CSV**,
-  **annulation par contre-sens** (l'origine est conservée) et suppression des saisies
-  manuelles uniquement.
+  `EC-AAAA-####`, filtres (période, journal, texte, compte), **pagination**, **exports CSV
+  et PDF** (respectant les filtres actifs), **annulation par contre-sens** (l'origine est
+  conservée) et suppression des saisies manuelles uniquement.
 - **Plan de comptes** : **74 comptes SYCEBNL pré-remplis** sur les **9 classes** du
   référentiel (1 Ressources durables · 2 Actif immobilisé · 3 Stocks · 4 Tiers · 5
   Trésorerie — dont Airtel / M-Pesa / Orange Money · 6 Charges · 7 Ressources — dont dons et
   legs · 8 Hors activités ordinaires · 9 Contributions en nature), **filtre par classe**,
   recherche, extensible et renomable.
 - **Balance** et **grand livre** : totaux débits/crédits et soldes courants par compte,
-  bornés par période, **exportables en CSV**.
+  bornés par période, **exportables en CSV et PDF** (page A4, en-tête et pied de page
+  ADI, pagination automatique).
 - **Immobilisations** : registre de la classe 2 (valeur brute, amortissements cumulés,
   valeur nette comptable). Chaque acquisition génère son écriture (compte 2xx / trésorerie
   selon le règlement). **Dotations aux amortissements en lignes droites** (651 → 281, ou

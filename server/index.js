@@ -5103,7 +5103,7 @@ app.put('/api/admin/compta/accounts/:id', ...COMPTA_WRITE, (req, res) => {
 
 app.get('/api/admin/compta/journals', ...COMPTA, (req, res) => res.json(db.prepare('SELECT * FROM acc_journals ORDER BY code').all()));
 
-app.get('/api/admin/compta/entries', ...COMPTA, (req, res) => {
+app.get('/api/admin/compta/entries', ...COMPTA, async (req, res) => {
   const params = [];
   let sql = `SELECT e.*,
     (SELECT COALESCE(SUM(l.debit), 0) FROM acc_entry_lines l WHERE l.entry_id = e.id) AS total,
@@ -5114,8 +5114,32 @@ app.get('/api/admin/compta/entries', ...COMPTA, (req, res) => {
   if (req.query.journal) { sql += ' AND e.journal_code = ?'; params.push(req.query.journal); }
   if (req.query.q) { sql += ' AND (e.label LIKE ? OR e.ref LIKE ?)'; params.push(`%${req.query.q}%`, `%${req.query.q}%`); }
   if (req.query.account) { sql += ' AND EXISTS (SELECT 1 FROM acc_entry_lines l2 WHERE l2.entry_id = e.id AND l2.account_code = ?)'; params.push(req.query.account); }
-  sql += ' ORDER BY e.id DESC LIMIT 200';
-  res.json(db.prepare(sql).all(...params));
+  sql += ' ORDER BY e.id DESC LIMIT 500';
+  const rows = db.prepare(sql).all(...params);
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      const period = `${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'}`;
+      return await comptaTablePdf(res, {
+        title: 'Journal des écritures',
+        subtitle: `${period} - ${rows.length} écriture(s)${req.query.journal ? ` - journal ${req.query.journal}` : ''}`,
+        pdfName: `journal-compta-${new Date().toISOString().slice(0, 10)}`,
+        columns: [
+          { label: 'Réf.', width: 90, align: 'left' },
+          { label: 'Date', width: 62, align: 'left' },
+          { label: 'Journal', width: 48, align: 'left' },
+          { label: 'Libellé', width: 190, align: 'left' },
+          { label: 'Source', width: 75, align: 'left' },
+          { label: 'Montant', width: 50, align: 'right' }
+        ],
+        rows: rows.map((e) => [e.ref, e.date, e.journal_code, e.label || '', e.source, fmtMoney(e.total)])
+      });
+    } catch (err) {
+      console.error('[compta] pdf journal', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json(rows);
 });
 
 app.get('/api/admin/compta/entries/:id', ...COMPTA, (req, res) => {
@@ -5174,7 +5198,7 @@ app.delete('/api/admin/compta/entries/:id', ...COMPTA_WRITE, (req, res) => {
   res.json({ ok: true, with_reversal: !!rev });
 });
 
-app.get('/api/admin/compta/balance', ...COMPTA, (req, res) => {
+app.get('/api/admin/compta/balance', ...COMPTA, async (req, res) => {
   const params = [];
   let sql = `SELECT l.account_code AS code, a.name, a.nature,
       COALESCE(SUM(l.debit), 0) AS debit, COALESCE(SUM(l.credit), 0) AS credit
@@ -5185,14 +5209,41 @@ app.get('/api/admin/compta/balance', ...COMPTA, (req, res) => {
   if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
   if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
   sql += ' GROUP BY l.account_code ORDER BY l.account_code';
-  res.json(db.prepare(sql).all(...params).map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) })));
+  const rows = db.prepare(sql).all(...params).map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) }));
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      const NATURE_FR = { asset: 'Actif', liability: 'Passif', equity: 'Capitaux propres', expense: 'Charge', income: 'Produit' };
+      const totD = cmoney(rows.reduce((s, r) => s + r.debit, 0));
+      const totC = cmoney(rows.reduce((s, r) => s + r.credit, 0));
+      return await comptaTablePdf(res, {
+        title: 'Balance',
+        subtitle: `Du ${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'} - ${rows.length} compte(s)`,
+        pdfName: `balance-${req.query.from || 'debut'}-${req.query.to || 'aujourdhui'}`,
+        columns: [
+          { label: 'Compte', width: 45, align: 'left' },
+          { label: 'Intitulé', width: 185, align: 'left' },
+          { label: 'Nature', width: 75, align: 'left' },
+          { label: 'Débit', width: 60, align: 'right' },
+          { label: 'Crédit', width: 60, align: 'right' },
+          { label: 'Solde D-C', width: 90, align: 'right' }
+        ],
+        rows: rows.map((r) => [r.code, r.name, NATURE_FR[r.nature] || r.nature, fmtMoney(r.debit), fmtMoney(r.credit), fmtMoney(r.balance)]),
+        totals: ['', 'Totaux', '', fmtMoney(totD), fmtMoney(totC), fmtMoney(cmoney(totD - totC))]
+      });
+    } catch (err) {
+      console.error('[compta] pdf balance', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json(rows);
 });
 
-app.get('/api/admin/compta/ledger', ...COMPTA, (req, res) => {
+app.get('/api/admin/compta/ledger', ...COMPTA, async (req, res) => {
   const account = String(req.query.account || '');
   if (!account) return res.status(400).json({ error: 'Compte requis (paramètre account)' });
-  if (!db.prepare('SELECT id FROM acc_accounts WHERE code = ?').get(account))
-    return res.status(404).json({ error: 'Compte inconnu' });
+  const acc = db.prepare('SELECT * FROM acc_accounts WHERE code = ?').get(account);
+  if (!acc) return res.status(404).json({ error: 'Compte inconnu' });
   const params = [account];
   let sql = `SELECT e.id AS entry_id, e.ref, e.date, e.journal_code, e.label, l.label AS line_label, l.debit, l.credit
     FROM acc_entry_lines l JOIN acc_entries e ON e.id = l.entry_id
@@ -5201,13 +5252,108 @@ app.get('/api/admin/compta/ledger', ...COMPTA, (req, res) => {
   if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
   sql += ' ORDER BY e.date, e.id, l.id';
   let cum = 0;
-  res.json(db.prepare(sql).all(...params).map((r) => {
+  const rows = db.prepare(sql).all(...params).map((r) => {
     cum = cmoney(cum + r.debit - r.credit);
     return { ...r, cum };
-  }));
+  });
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      return await comptaTablePdf(res, {
+        title: 'Grand livre',
+        subtitle: `${acc.code} - ${acc.name} · du ${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'}`,
+        pdfName: `grand-livre-${acc.code}-${req.query.from || 'debut'}-${req.query.to || 'aujourdhui'}`,
+        columns: [
+          { label: 'Date', width: 58, align: 'left' },
+          { label: 'Réf.', width: 82, align: 'left' },
+          { label: 'Journal', width: 42, align: 'left' },
+          { label: 'Libellé', width: 168, align: 'left' },
+          { label: 'Débit', width: 56, align: 'right' },
+          { label: 'Crédit', width: 56, align: 'right' },
+          { label: 'Cumul', width: 53, align: 'right' }
+        ],
+        rows: rows.map((r) => [r.date, r.ref, r.journal_code, r.line_label || r.label || '', fmtMoney(r.debit), fmtMoney(r.credit), fmtMoney(r.cum)])
+      });
+    } catch (err) {
+      console.error('[compta] pdf ledger', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json(rows);
 });
 
 // ---------- États financiers SYCEBNL ----------
+const pdfSafeText = (t) => String(t ?? '').replace(/[\u2190-\u21FF\u2200-\u22FF\u2600-\u27BF]/g, '-');
+
+const comptaTablePdf = async (res, { title, subtitle, pdfName, columns, rows, totals }) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const W = 595.28, H = 841.89;
+  let page = doc.addPage([W, H]);
+  const [font, fontBold] = await Promise.all([
+    doc.embedFont(StandardFonts.Helvetica),
+    doc.embedFont(StandardFonts.HelveticaBold)
+  ]);
+  const brand = rgb(0.059, 0.227, 0.533);
+  const ink = rgb(0.1, 0.12, 0.18);
+  const gray = rgb(0.45, 0.5, 0.58);
+  const siteName = getSetting('site_name') || 'ADI ONG';
+  const tagline = getSetting('site_tagline') || '';
+
+  const drawTitle = () => {
+    page.drawRectangle({ x: 0, y: H - 88, width: W, height: 88, color: brand });
+    page.drawText(siteName.toUpperCase(), { x: 40, y: H - 60, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+    if (tagline) page.drawText(pdfSafeText(tagline).slice(0, 90), { x: 40, y: H - 78, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+    page.drawText(pdfSafeText(title), { x: 40, y: H - 118, size: 20, font: fontBold, color: ink });
+    if (subtitle) page.drawText(pdfSafeText(subtitle), { x: 40, y: H - 136, size: 10, font, color: gray });
+  };
+  drawTitle();
+  const colX = [];
+  { let x = 46; for (const c of columns) { colX.push(x); x += c.width; } }
+  let y = H - 164;
+  const drawHeader = () => {
+    page.drawRectangle({ x: 40, y: y - 14, width: W - 80, height: 17, color: brand });
+    columns.forEach((c, i) => {
+      page.drawText(c.label.toUpperCase(), { x: c.align === 'right' ? colX[i] + c.width - 6 : colX[i], y: y - 10, size: 8.5, font: fontBold, color: rgb(1, 1, 1), align: c.align === 'right' ? 'right' : 'left' });
+    });
+    y -= 26;
+  };
+  const fit = (t, c) => {
+    let s = pdfSafeText(t);
+    const avail = c.width - 6;
+    while (s.length > 1 && font.widthOfTextAtSize(s, 8.5) > avail) s = s.slice(0, -1);
+    return s;
+  };
+  const newPage = () => {
+    page = doc.addPage([W, H]);
+    page.drawText(`${pdfSafeText(siteName)} - ${pdfSafeText(title)} (suite)`, { x: 40, y: H - 40, size: 10, font: fontBold, color: gray });
+    y = H - 70;
+    drawHeader();
+  };
+  const drawRow = (cells, bold, bg) => {
+    if (y < 62) newPage();
+    if (bg) page.drawRectangle({ x: 40, y: y - 12, width: W - 80, height: 15, color: bg });
+    columns.forEach((c, i) => {
+      page.drawText(fit(cells[i], c), { x: c.align === 'right' ? colX[i] + c.width - 6 : colX[i], y, size: 8.5, font: bold ? fontBold : font, color: ink, align: c.align === 'right' ? 'right' : 'left' });
+    });
+    y -= 13.5;
+  };
+  drawHeader();
+  for (const r of rows) drawRow(r, false, null);
+  if (totals) {
+    if (y < 66) newPage();
+    page.drawRectangle({ x: 40, y: y - 3, width: W - 80, height: 1.2, color: gray });
+    y -= 5;
+    drawRow(totals, true, rgb(0.93, 0.95, 0.98));
+  }
+  const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  .  ');
+  if (footer) page.drawText(pdfSafeText(footer).slice(0, 100), { x: 40, y: 30, size: 7.5, font, color: gray });
+  page.drawText('Etabli le ' + new Date().toISOString().slice(0, 10) + ' - SYCEBNL (OHADA)', { x: W - 48, y: 30, size: 7.5, font, color: gray, align: 'right' });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${pdfName || 'export'}.pdf"`);
+  res.send(Buffer.from(await doc.save()));
+};
 const comptaBalances = (from, to) => {
   const params = [];
   let sql = `SELECT l.account_code AS code, a.name, a.nature, a.class,
