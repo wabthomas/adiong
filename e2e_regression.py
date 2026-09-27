@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Test E2E de régression générale : site public, auth, contenu, dons,
 # boutique en ligne / POS, mode maintenance, modules et réglages.
+import io
 import json
 import os
 import sqlite3
@@ -209,6 +210,53 @@ def main():
         call("PUT", "/api/admin/modules", {"pos_enabled": False}, token=T)
         s, shop = call("GET", "/api/public/shop")
         check("boutique fermée → 403", s == 403, f"status={s} {shop}")
+
+        print("== Sauvegarde / restauration ==")
+        s, _ = call("POST", "/api/admin/articles", {"title": f"E2E BACKUP MARKER {stamp}", "content": "test", "published": 0}, token=T)
+        check("article marqueur créé", s == 200 and _.get("id"), f"status={s}")
+        mk_id = _.get("id")
+        s, zbuf = call("GET", "/api/admin/backup", token=T, raw=True)
+        check("sauvegarde ZIP téléchargée", s == 200 and isinstance(zbuf, bytes) and zbuf[:2] == b"PK", f"status={s}")
+        s, _ = call("POST", "/api/admin/articles", {"title": f"E2E BACKUP LATER {stamp}", "content": "test", "published": 0}, token=T)
+        check("article post-sauvegarde créé", s == 200, f"status={s}")
+
+        def multipart_post(path, field, filename, content, ctype, tok):
+            boundary = "----E2EBoundary" + stamp
+            body = io.BytesIO()
+            body.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{filename}"\r\nContent-Type: {ctype}\r\n\r\n'.encode())
+            body.write(content)
+            body.write(f'\r\n--{boundary}--\r\n'.encode())
+            r = urllib.request.Request(BASE + path, data=body.getvalue(), method="POST")
+            r.add_header("Authorization", "Bearer " + tok)
+            r.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+            try:
+                with urllib.request.urlopen(r) as resp:
+                    return resp.status, json.loads(resp.read().decode())
+            except urllib.error.HTTPError as e:
+                try:
+                    return e.code, json.loads(e.read().decode())
+                except Exception:
+                    return e.code, {}
+
+        s, rd = multipart_post("/api/admin/backup/restore", "file", "bk.zip", zbuf, "application/zip", T)
+        check("restauration 200", s == 200 and rd.get("ok"), f"status={s} {rd}")
+        check("compteurs restaurés", rd.get("restored", {}).get("users", 0) >= 1, f"{rd.get('restored')}")
+        s, arts = call("GET", "/api/admin/articles?limit=200", token=T)
+        titles = [a.get("title") for a in arts] if isinstance(arts, list) else []
+        check("état restauré (marqueur oui / post-sauvegarde non)",
+              f"E2E BACKUP MARKER {stamp}" in titles and f"E2E BACKUP LATER {stamp}" not in titles, f"n={len(titles)}")
+        s, rd = multipart_post("/api/admin/backup/restore", "file", "x.txt", b"pas un zip", "text/plain", T)
+        check("fichier non .zip rejeté (400)", s == 400, f"status={s} {rd}")
+        s, _ = call("POST", "/api/admin/users", {"email": f"e2e-nonsup-{stamp}@exemple.org", "password": "E2E-backup-2026!", "full_name": "Non Sup", "role": "admin"}, token=T)
+        nonsup_id = _.get("id") if isinstance(_, dict) else None
+        if nonsup_id:
+            t2 = call("POST", "/api/auth/login", {"email": f"e2e-nonsup-{stamp}@exemple.org", "password": "E2E-backup-2026!"})[1].get("token")
+            s, _ = call("GET", "/api/admin/backup", token=t2, raw=True)
+            check("backup refusé au non-super (403)", s == 403, f"status={s}")
+            call("DELETE", f"/api/admin/users/{nonsup_id}", token=T)
+        else:
+            check("user non-super créé pour le test 403", s == 200, f"status={s}")
+        call("DELETE", f"/api/admin/articles/{mk_id}", token=T)
 
         print("== Mode maintenance ==")
         call("PUT", "/api/admin/modules", {"maintenance_enabled": True, "maintenance_message": "E2E maintenance"}, token=T)

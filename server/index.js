@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -11,7 +12,9 @@ import multer from 'multer';
 import Jimp from 'jimp';
 import QRCode from 'qrcode';
 import { fileURLToPath } from 'node:url';
-import db, { newUniqueCode, ensureUserCodes } from './db.js';
+import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb } from './db.js';
+import AdmZip from 'adm-zip';
+import { DatabaseSync } from 'node:sqlite';
 import { seedIfEmpty, ensureSettings, syncMediaLibrary } from './seed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1592,7 +1595,132 @@ app.put('/api/admin/modules', authRequired, requirePerm('modules.manage'), (req,
     is_super: true
   });
 });
+// ---------- Sauvegarde / restauration de la base de données (super admin) ----------
+const BACKUP_DIR = path.join(os.tmpdir(), 'adiong-backup-' + process.pid);
+const backupUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      try { fs.mkdirSync(BACKUP_DIR, { recursive: true }); } catch { /* existant */ }
+      cb(null, BACKUP_DIR);
+    },
+    filename: (req, file, cb) => cb(null, `restore-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`)
+  }),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (String(file.originalname || '').toLowerCase().endsWith('.zip')) cb(null, true);
+    else cb(new Error('Fichier .zip requis'));
+  }
+});
 
+const collectUploads = (dir, prefix, out = []) => {
+  if (!fs.existsSync(dir)) return out;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) collectUploads(full, `${prefix}/${e.name}`, out);
+    else out.push(`${prefix}/${e.name}`);
+  }
+  return out;
+};
+
+app.get('/api/admin/backup', authRequired, requirePerm('modules.manage'), (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+    checkpointDb();
+    const zip = new AdmZip();
+    zip.addLocalFile(path.join(__dirname, 'data', 'adiong.db'), 'db', 'adiong.db');
+    for (const rel of collectUploads(uploadDir, 'uploads')) {
+      zip.addLocalFile(path.join(uploadDir, rel.slice('uploads/'.length)), 'uploads', rel.slice('uploads/'.length));
+    }
+    const counts = {};
+    for (const r of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
+      try { counts[r.name] = db.prepare(`SELECT COUNT(*) n FROM "${r.name}"`).get().n; } catch { counts[r.name] = -1; }
+    }
+    zip.addFile('manifest.json', Buffer.from(JSON.stringify({
+      app: 'ADI ONG',
+      created_at: new Date().toISOString(),
+      node: process.version,
+      tables: counts
+    }, null, 2)));
+    const buf = zip.toBuffer();
+    logSecurity('backup_export', req.ip, req.user.email);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="adiong-sauvegarde-${new Date().toISOString().slice(0, 10)}.zip"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[backup]', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Sauvegarde impossible' });
+  }
+});
+
+const backupUploadSafe = (req, res, next) => {
+  backupUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Fichier invalide' });
+    next();
+  });
+};
+
+app.post('/api/admin/backup/restore', authRequired, requirePerm('modules.manage'), backupUploadSafe, (req, res) => {
+  const tmpFile = req.file?.path;
+  const fail = (code, msg) => {
+    try { if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    res.status(code).json({ error: msg });
+  };
+  if (req.user.role !== 'super_admin') return fail(403, 'Réservé au super administrateur');
+  if (!req.file) return fail(400, 'Fichier de sauvegarde manquant');
+  let zip;
+  try { zip = new AdmZip(tmpFile); } catch { return fail(400, 'Archive ZIP invalide'); }
+  const dbEntry = zip.getEntries().find((e) => e.entryName === 'db/adiong.db' || e.entryName.endsWith('adiong.db'));
+  if (!dbEntry) return fail(400, 'Base de données absente de l’archive');
+  const candidate = path.join(BACKUP_DIR, `candidate-${Date.now()}.db`);
+  try {
+    fs.writeFileSync(candidate, dbEntry.getData());
+  } catch { return fail(500, 'Lecture de l’archive impossible'); }
+  let check;
+  try {
+    check = new DatabaseSync(candidate);
+    const tables = new Set(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
+    if (!tables.has('users') || !tables.has('settings')) {
+      check.close();
+      fs.unlinkSync(candidate);
+      return fail(400, 'Archive non reconnue comme une sauvegarde ADI ONG');
+    }
+  } catch {
+    try { fs.unlinkSync(candidate); } catch { /* ignore */ }
+    return fail(400, 'Base de données corrompue dans l’archive');
+  }
+  const restoredCounts = {};
+  try {
+    for (const t of ['users', 'articles', 'campaigns', 'causes', 'donations']) {
+      try { restoredCounts[t] = check.prepare(`SELECT COUNT(*) n FROM "${t}"`).get().n; } catch { restoredCounts[t] = 0; }
+    }
+  } finally {
+    check.close();
+  }
+  try {
+    checkpointDb();
+    const dbFile = path.join(__dirname, 'data', 'adiong.db');
+    fs.renameSync(candidate, dbFile);
+    for (const suffix of ['-wal', '-shm']) {
+      try { fs.unlinkSync(dbFile + suffix); } catch { /* absent */ }
+    }
+    const uploadsEntries = zip.getEntries().filter((e) => e.entryName.startsWith('uploads/') && !e.isDirectory);
+    for (const e of uploadsEntries) {
+      const target = path.join(uploadDir, e.entryName.slice('uploads/'.length));
+      try {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, e.getData());
+      } catch { /* fichier non critique */ }
+    }
+    reopenDb();
+    logSecurity('backup_restore', req.ip, req.user.email, JSON.stringify(restoredCounts).slice(0, 200));
+    res.json({ ok: true, restored: restoredCounts, files: uploadsEntries.length });
+  } catch (err) {
+    console.error('[backup] restore', err);
+    fail(500, 'Restauration impossible — l’application a été rouverte avec la base trouvée');
+  }
+});
+
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 app.get('/api/admin/permissions', authRequired, (req, res) => {
   const canManage = req.user.role === 'super_admin' || permEnabled(req.user.role, 'roles.manage');

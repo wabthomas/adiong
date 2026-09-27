@@ -8,8 +8,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-export const db = new DatabaseSync(path.join(dataDir, 'adiong.db'));
-db.exec('PRAGMA journal_mode = WAL;');
+const DB_FILE = path.join(dataDir, 'adiong.db');
+const _dbRef = { db: new DatabaseSync(DB_FILE) };
+_dbRef.db.exec('PRAGMA journal_mode = WAL;');
+
+export const db = new Proxy({}, {
+  get(_, prop) {
+    const v = _dbRef.db[prop];
+    return typeof v === 'function' ? v.bind(_dbRef.db) : v;
+  }
+});
+
+export function checkpointDb() {
+  try { _dbRef.db.exec('PRAGMA wal_checkpoint(TRUNCATE);'); } catch { /* déjà fermé */ }
+}
+
+export function reopenDb() {
+  try { _dbRef.db.close(); } catch { /* déjà fermé */ }
+  _dbRef.db = new DatabaseSync(DB_FILE);
+  _dbRef.db.exec('PRAGMA journal_mode = WAL;');
+  return _dbRef.db;
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (

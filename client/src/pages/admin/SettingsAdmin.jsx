@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, setMoneyCurrency } from '../../api.js';
+import { api, setMoneyCurrency, getToken } from '../../api.js';
 import { useSite } from '../../hooks/useSite.jsx';
 import { usePerm } from '../../usePerm.js';
 import { PageTitle, Field, Modal, ImageInput } from './AdminUI.jsx';
@@ -13,6 +13,7 @@ const TABS = [
   { id: 'apropos', label: 'À propos', hint: 'Présentation, valeurs', icon: 'M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z' },
   { id: 'dons', label: 'Dons', hint: 'Montants et collectes', icon: 'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z' },
   { id: 'compteurs', label: 'Compteurs', hint: 'Stats et listes', icon: 'M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z' },
+  { id: 'sauvegarde', label: 'Sauvegarde', hint: 'Exporter / restaurer les données', icon: 'M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0-3-3m3 3 3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z' },
   { id: 'modules', label: 'Modules', hint: 'GRH, POS, maintenance', icon: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z' }
 ];
 
@@ -264,9 +265,12 @@ export default function SettingsAdmin() {
   const [pwMsg, setPwMsg] = useState(null);
   const [modules, setModules] = useState(null);
   const [modMsg, setModMsg] = useState('');
+  const [bkFile, setBkFile] = useState(null);
+  const [bkBusy, setBkBusy] = useState(false);
+  const [bkMsg, setBkMsg] = useState('');
 
   const isSuper = usePerm('modules.manage', ['super_admin']);
-  const visibleTabs = isSuper ? TABS : TABS.filter((t) => t.id !== 'modules');
+  const visibleTabs = isSuper ? TABS : TABS.filter((t) => !['modules', 'sauvegarde'].includes(t.id));
 
   useEffect(() => {
     api.adminSettings.get().then((data) => {
@@ -328,6 +332,32 @@ export default function SettingsAdmin() {
         : '✓ Comptabilité désactivée — le menu est masqué, l’API fermée et plus aucune écriture automatique n’est créée.');
     } catch (e) {
       setModMsg(`✗ ${e.message}`);
+    }
+  };
+
+  const restoreBackup = async () => {
+    if (!bkFile) return;
+    if (!confirm('Restaurer cette sauvegarde ?\nToutes les données actuelles seront remplacées par celles de l’archive.')) return;
+    setBkBusy(true);
+    setBkMsg('');
+    try {
+      const t = getToken();
+      const fd = new FormData();
+      fd.append('file', bkFile);
+      const res = await fetch('/api/admin/backup/restore', {
+        method: 'POST',
+        headers: t ? { Authorization: `Bearer ${t}` } : {},
+        body: fd
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || `Échec (HTTP ${res.status})`);
+      const r = d.restored || {};
+      setBkMsg(`✓ Restauration terminée — ${r.users ?? 0} compte(s), ${r.articles ?? 0} article(s), ${r.donations ?? 0} don(s), ${d.files ?? 0} fichier(s) de médias. L’espace admin se reconnecte automatiquement au prochain chargement.`);
+      setBkFile(null);
+    } catch (e) {
+      setBkMsg(`✗ ${e.message}`);
+    } finally {
+      setBkBusy(false);
     }
   };
 
@@ -1022,6 +1052,67 @@ export default function SettingsAdmin() {
               {modMsg}
             </p>
           )}
+        </div>
+      )}
+
+      {tab === 'sauvegarde' && isSuper && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <p className="text-sm font-semibold text-amber-900">
+              Zone réservée au super administrateur. La restauration <strong>remplace toutes les données
+              actuelles</strong> par celles de l’archive : téléchargez d’abord une sauvegarde de l’état actuel.
+            </p>
+          </div>
+
+          <div className="card flex flex-wrap items-center justify-between gap-6 p-7">
+            <div className="min-w-0 flex-1">
+              <h3 className="font-display text-lg font-bold text-ink-900">Télécharger la sauvegarde</h3>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Archive ZIP complète : base de données (contenus, utilisateurs, GRH, POS, comptabilité,
+                sécurité) et fichiers de médias (images du site, pièces jointes, preuves de paiement).
+                À conserver hors ligne ou à envoyer à un autre ordinateur.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-primary shrink-0 !px-5 !py-2.5 text-sm"
+              onClick={() => api.compta.statements.download('/api/admin/backup', `adiong-sauvegarde-${new Date().toISOString().slice(0, 10)}.zip`)}
+            >
+              Télécharger le ZIP
+            </button>
+          </div>
+
+          <div className="card space-y-5 p-7">
+            <div>
+              <h3 className="font-display text-lg font-bold text-ink-900">Restaurer une sauvegarde</h3>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Sélectionnez une archive créée par cette fonction (ou sur un autre ordinateur), puis validez.
+                La vérification de l’archive est faite avant toute remise en place.
+              </p>
+            </div>
+            <input
+              type="file"
+              accept=".zip,application/zip"
+              className="block w-full max-w-md cursor-pointer rounded-lg border border-ink-200 bg-white text-sm text-ink-600 file:mr-4 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-brand-50 file:px-4 file:py-2.5 file:text-sm file:font-bold file:text-brand-700 hover:file:bg-brand-100"
+              onChange={(e) => { setBkFile(e.target.files?.[0] || null); setBkMsg(''); }}
+            />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="btn-primary !px-5 !py-2.5 text-sm"
+                disabled={!bkFile || bkBusy}
+                onClick={restoreBackup}
+              >
+                {bkBusy ? 'Restauration en cours…' : 'Restaurer cette sauvegarde'}
+              </button>
+              {bkFile && <span className="text-xs font-semibold text-ink-400">{bkFile.name} — {Math.max(1, Math.round(bkFile.size / 1024))} Ko</span>}
+            </div>
+            {bkMsg && (
+              <p className={`rounded-xl px-4 py-3 text-sm font-semibold ${bkMsg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
+                {bkMsg}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
