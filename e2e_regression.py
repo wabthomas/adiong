@@ -188,6 +188,24 @@ def main():
         check("statut invalide → 400", s == 400, f"status={s}")
         s, bc = call("GET", "/api/admin/pos/products/by-barcode/999001", token=T)
         check("recherche par code-barres", s == 200 and bc.get("id") == pid, f"status={s}")
+
+        print("== Fiche de stock ==")
+        s, fc = call("GET", f"/api/admin/pos/products/{pid}/stock-card", token=T)
+        fc_rows = fc.get("movements") if isinstance(fc, dict) else []
+        check("fiche complète (solde 3, 2 lignes)", s == 200 and fc.get("opening") == 0 and fc.get("closing") == 3 and len(fc_rows) == 2, f"status={s} n={len(fc_rows)} closing={fc.get('closing') if isinstance(fc, dict) else '-'}")
+        check("fiche : parcours 5 → 3", [r.get("balance") for r in fc_rows] == [5, 3], f"{[r.get('balance') for r in fc_rows]}")
+        s, _ = call("POST", f"/api/admin/pos/products/{pid}/movements", {"type": "entree", "qty": 4, "reason": f"Réappro E2E {stamp}"}, token=T)
+        check("entrée de réappro (200)", s == 200, f"status={s}")
+        s, fc2 = call("GET", f"/api/admin/pos/products/{pid}/stock-card", token=T)
+        fc2_rows = fc2.get("movements") if isinstance(fc2, dict) else []
+        check("fiche après réappro (solde 7, 3 lignes)", s == 200 and fc2.get("closing") == 7 and len(fc2_rows) == 3 and fc2_rows[-1].get("balance") == 7, f"closing={fc2.get('closing') if isinstance(fc2, dict) else '-'}")
+        s, csv = call("GET", f"/api/admin/pos/products/{pid}/stock-card?format=csv", token=T, raw=True)
+        check("export CSV fiche de stock", s == 200 and isinstance(csv, bytes) and b"Date;Type;Motif" in csv, f"status={s}")
+        s, pdf = call("GET", f"/api/admin/pos/products/{pid}/stock-card?format=pdf", token=T, raw=True)
+        check("export PDF fiche de stock", s == 200 and isinstance(pdf, bytes) and pdf[:4] == b"%PDF", f"status={s}")
+        s, _ = call("GET", "/api/admin/pos/products/999999/stock-card", token=T)
+        check("fiche produit inconnu (404)", s == 404, f"status={s}")
+
         call("PUT", "/api/admin/modules", {"pos_enabled": False}, token=T)
         s, shop = call("GET", "/api/public/shop")
         check("boutique fermée → 403", s == 403, f"status={s} {shop}")
@@ -237,6 +255,7 @@ def main():
                         (f"Donateur E2E {stamp}", f"don{stamp}@exemple.org"))
             order_ref = (order or {}).get("reference", "x")
             cur.execute("DELETE FROM stock_movements WHERE reason LIKE ?", (f"Commande en ligne {order_ref}%",))
+            cur.execute("DELETE FROM stock_movements WHERE reason LIKE ?", (f"Réappro E2E {stamp}%",))
             cur.execute("DELETE FROM shop_orders WHERE customer_name LIKE ?", (f"Client E2E {stamp}",))
             cur.execute("DELETE FROM stock_products WHERE name LIKE ?", (f"Produit E2E {stamp}",))
             cur.execute("DELETE FROM stock_categories WHERE name LIKE ?", (f"Catégorie E2E {stamp}",))

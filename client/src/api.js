@@ -457,6 +457,13 @@ export const api = {
       update: (id, b) => req(`/api/admin/pos/products/${id}`, { method: 'PUT', body: b, auth: true }),
       get: (id) => req(`/api/admin/pos/products/${id}`, { auth: true }),
       remove: (id) => req(`/api/admin/pos/products/${id}`, { method: 'DELETE', auth: true }),
+      stockCard: (id, params = {}) => {
+        const q = new URLSearchParams();
+        if (params.from) q.set('from', params.from);
+        if (params.to) q.set('to', params.to);
+        const s = q.toString();
+        return req(`/api/admin/pos/products/${id}/stock-card${s ? `?${s}` : ''}`, { auth: true });
+      },
       movement: (id, b) => req(`/api/admin/pos/products/${id}/movements`, { method: 'POST', body: b, auth: true }),
       byBarcode: (code) => req(`/api/admin/pos/products/by-barcode/${encodeURIComponent(code)}`, { auth: true })
     },

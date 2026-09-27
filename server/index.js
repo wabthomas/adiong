@@ -4365,6 +4365,104 @@ app.post('/api/admin/pos/products/:id/movements', ...POS, (req, res) => {
   res.json({ ok: true, stock: nextStock });
 });
 
+// Fiche de stock
+app.get('/api/admin/pos/products/:id/stock-card', ...POS, (req, res) => {
+  try {
+    const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Produit introuvable' });
+    const { from, to, format } = req.query;
+    const all = db.prepare('SELECT m.*, u.email AS by_name FROM stock_movements m LEFT JOIN users u ON u.id = m.created_by WHERE m.product_id = ? ORDER BY m.id ASC').all(p.id);
+    let bal = 0;
+    let opening = 0;
+    const movements = [];
+    let totalIn = 0;
+    let totalOut = 0;
+    for (const m of all) {
+      const day = String(m.created_at || '').slice(0, 10);
+      const balBefore = bal;
+      if (m.type === 'entree') bal += m.qty;
+      else if (m.type === 'sortie') bal -= m.qty;
+      else bal = m.new_stock || 0;
+      let inQ = 0;
+      let outQ = 0;
+      if (m.type === 'entree') inQ = m.qty;
+      else if (m.type === 'sortie') outQ = m.qty;
+      else {
+        const delta = bal - balBefore;
+        if (delta >= 0) inQ = delta;
+        else outQ = -delta;
+      }
+      const inPeriod = (!from || day >= from) && (!to || day <= to);
+      if (inPeriod) {
+        movements.push({
+          id: m.id,
+          date: day,
+          type: m.type,
+          reason: m.reason || '',
+          by: m.by_name || '',
+          in: inQ,
+          out: outQ,
+          balance: bal
+        });
+        totalIn += inQ;
+        totalOut += outQ;
+      } else if (from && day < from) {
+        opening = bal;
+      }
+    }
+    const closing = p.stock;
+    const period = [from, to].filter(Boolean).join(' → ') || 'Toute la période';
+    const TYPE_LABEL = { entree: 'Entrée', sortie: 'Sortie', ajustement: 'Ajustement' };
+    if (format === 'csv') {
+      const esc = (v) => { const t = String(v ?? ''); return /[;\"\n]/.test(t) ? `\"${t.replace(/\"/g, '\"\"')}\"` : t; };
+      const lines = [
+        `Produit;${esc(p.name)}`,
+        `Période;${esc(period)}`,
+        `Solde initial;${opening}`,
+        '',
+        'Date;Type;Motif;Par;Entrées;Sorties;Solde',
+        ...movements.map((m) => [m.date, TYPE_LABEL[m.type] || m.type, esc(m.reason), esc(m.by), m.in, m.out, m.balance].join(';')),
+        '',
+        `Totaux;;${totalIn};${totalOut};`,
+        `Solde final;${closing}`
+      ];
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="fiche-stock-' + p.id + '.csv"');
+      return res.send('\uFEFF' + lines.join('\r\n'));
+    }
+    if (format === 'pdf') {
+      return comptaTablePdf(res, {
+        title: `Fiche de stock — ${p.name}`,
+        subtitle: `Période : ${period} · Solde initial : ${opening} · Solde final : ${closing}`,
+        pdfName: `fiche-stock-${p.id}.pdf`,
+        columns: [
+          { label: 'Date', width: 62, align: 'left' },
+          { label: 'Type', width: 82, align: 'left' },
+          { label: 'Motif', width: 240, align: 'left' },
+          { label: 'Par', width: 105, align: 'left' },
+          { label: 'Entrées', width: 52, align: 'right' },
+          { label: 'Sorties', width: 52, align: 'right' },
+          { label: 'Solde', width: 52, align: 'right' }
+        ],
+        rows: movements.map((m) => [
+          m.date,
+          TYPE_LABEL[m.type] || m.type,
+          pdfSafeText(m.reason),
+          pdfSafeText(m.by),
+          String(m.in),
+          String(m.out),
+          String(m.balance)
+        ]),
+        totals: ['', '', 'Totaux', '', String(totalIn), String(totalOut), String(closing)]
+      });
+    }
+    res.json({ product: { id: p.id, name: p.name, barcode: p.barcode, reference: p.reference, stock: p.stock }, opening, closing, total_in: totalIn, total_out: totalOut, movements });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// Ventes
 // Ventes
 app.post('/api/admin/pos/sales', ...POS, requirePerm('pos.sell'), (req, res) => {
   const b = req.body || {};
