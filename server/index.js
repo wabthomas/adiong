@@ -2072,7 +2072,7 @@ app.get('/api/admin/grh/attendance', ...GRH, (req, res) => {
   let sql = ATTENDANCE_SQL;
   const where = [];
   const params = [];
-  if (month && /^\d{4}-\d{2}$/.test(month)) { where.push('a.date >= ? AND a.date < ?'); params.push(`${month}-01`, `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)) , 1)).toISOString().slice(0, 7)}`); }
+  if (month && /^\d{4}-\d{2}$/.test(month)) { where.push('a.date >= ? AND a.date < ?'); params.push(`${month}-01`, new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 10)); }
   else { const today = orgParts().date; where.push('a.date >= ?'); params.push(today.slice(0, 8) + '01'); }
   if (employee_id) { where.push('a.employee_id = ?'); params.push(employee_id); }
   if (q) { where.push('e.full_name LIKE ?'); params.push(`%${q}%`); }
@@ -2114,7 +2114,7 @@ app.delete('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
 
 app.get('/api/admin/grh/attendance/export', ...GRH, (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : orgParts().date.slice(0, 7);
-  const end = `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 7)}`;
+  const end = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 10);
   const rows = db.prepare(`${ATTENDANCE_SQL} WHERE a.date >= ? AND a.date < ? ORDER BY a.date, e.full_name`).all(`${month}-01`, end);
   const dur = (a) => {
     const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
