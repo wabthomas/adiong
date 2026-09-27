@@ -268,6 +268,9 @@ export default function SettingsAdmin() {
   const [bkFile, setBkFile] = useState(null);
   const [bkBusy, setBkBusy] = useState(false);
   const [bkMsg, setBkMsg] = useState('');
+  const [maintLast, setMaintLast] = useState('');
+  const [maintBusy, setMaintBusy] = useState(false);
+  const [maintResult, setMaintResult] = useState(null);
 
   const isSuper = usePerm('modules.manage', ['super_admin']);
   const visibleTabs = isSuper ? TABS : TABS.filter((t) => !['modules', 'sauvegarde'].includes(t.id));
@@ -358,6 +361,28 @@ export default function SettingsAdmin() {
       setBkMsg(`✗ ${e.message}`);
     } finally {
       setBkBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isSuper && tab === 'sauvegarde') {
+      api.adminSettings.maintenanceLast().then((d) => setMaintLast(d.last || '')).catch(() => {});
+    }
+  }, [isSuper, tab]);
+
+  const runMaintenance = async () => {
+    if (!confirm('Lancer la maintenance ?
+La base sera optimisée (VACUUM), les journaux de plus d’un an purgés et les fichiers orphelins supprimés.')) return;
+    setMaintBusy(true);
+    setMaintResult(null);
+    try {
+      const d = await api.adminSettings.maintenance();
+      setMaintResult(d);
+      setMaintLast(d.at || '');
+    } catch (e) {
+      setMaintResult({ error: e.message });
+    } finally {
+      setMaintBusy(false);
     }
   };
 
@@ -1110,6 +1135,33 @@ export default function SettingsAdmin() {
             {bkMsg && (
               <p className={`rounded-xl px-4 py-3 text-sm font-semibold ${bkMsg.startsWith('✓') ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-700'}`}>
                 {bkMsg}
+              </p>
+            )}
+          </div>
+
+          <div className="card space-y-4 p-7">
+            <div>
+              <h3 className="font-display text-lg font-bold text-ink-900">Maintenance du système</h3>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">
+                Optimise la base de données (VACUUM / ANALYZE), purge les journaux d’audit et de sécurité de
+                plus d’un an, et supprime les fichiers orphelins (médias, preuves de don, documents) qui ne sont
+                plus référencés nulle part. Les images du site (dossier <code>seed</code>) ne sont jamais touchées.
+                Une passe légère (optimisation + purge des journaux) s’exécute automatiquement chaque nuit à 3 h.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <button type="button" className="btn-primary !px-5 !py-2.5 text-sm" disabled={maintBusy} onClick={runMaintenance}>
+                {maintBusy ? 'Maintenance en cours…' : 'Lancer la maintenance'}
+              </button>
+              <span className="text-xs font-semibold text-ink-400">
+                Dernière exécution : {maintLast ? String(maintLast).replace('T', ' ').slice(0, 16) : 'jamais'}
+              </span>
+            </div>
+            {maintResult && (
+              <p className={`rounded-xl px-4 py-3 text-sm font-semibold ${maintResult.error ? 'bg-red-50 text-red-700' : 'bg-brand-50 text-brand-700'}`}>
+                {maintResult.error
+                  ? `✗ ${maintResult.error}`
+                  : `✓ Maintenance terminée — base optimisée, ${maintResult.logs_purged} ligne(s) de journal purgée(s), ${maintResult.orphan_files.length} fichier(s) orphelin(s) supprimé(s).`}
               </p>
             )}
           </div>

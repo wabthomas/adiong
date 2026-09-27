@@ -290,6 +290,29 @@ def main():
         s, _ = call("DELETE", "/api/admin/security/blocklist/203.0.113.77", token=T)
         check("déblocage inconnu (404)", s == 404, f"status={s}")
 
+        print("== Maintenance ==")
+        os.makedirs("server/data/donation-proofs", exist_ok=True)
+        os.makedirs("server/data/cvs", exist_ok=True)
+        open("server/data/donation-proofs/e2e-orpheline-" + stamp + ".pdf", "w").write("x")
+        open("server/data/cvs/e2e-orpheline-" + stamp + ".pdf", "w").write("x")
+        con2 = sqlite3.connect(DB_FILE, timeout=10)
+        con2.execute("INSERT INTO security_events (type, ip, email, detail, created_at) VALUES ('login_fail', '1.2.3.4', 'vieux@ex.org', 'purge e2e', datetime('now', '-400 days'))")
+        con2.commit()
+        con2.close()
+        s, mt = call("POST", "/api/admin/maintenance", token=T)
+        check("maintenance 200", s == 200 and mt.get("ok"), f"status={s} {mt}")
+        check("VACUUM/ANALYZE effectués", mt.get("vacuum") is True)
+        check("journal vieux purgé", mt.get("logs_purged", 0) >= 1, f"purged={mt.get('logs_purged')}")
+        mfiles = {o.get("file") for o in mt.get("orphan_files", [])}
+        check("orphelins supprimés",
+              f"data/donation-proofs/e2e-orpheline-{stamp}.pdf" in mfiles and f"data/cvs/e2e-orpheline-{stamp}.pdf" in mfiles, str(mfiles))
+        check("fichiers orphelins absents",
+              not os.path.exists(f"server/data/donation-proofs/e2e-orpheline-{stamp}.pdf")
+              and not os.path.exists(f"server/data/cvs/e2e-orpheline-{stamp}.pdf"))
+        check("images du site préservées", os.path.exists("server/uploads/seed/about.jpg"))
+        s, mt2 = call("GET", "/api/admin/maintenance", token=T)
+        check("horodatage de la dernière maintenance", s == 200 and bool(mt2.get("last")), f"{mt2}")
+
         print("== Mode maintenance ==")
         call("PUT", "/api/admin/modules", {"maintenance_enabled": True, "maintenance_message": "E2E maintenance"}, token=T)
         s, m503 = call("GET", "/api/public/articles")

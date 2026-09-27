@@ -1828,7 +1828,110 @@ app.post('/api/admin/backup/restore', authRequired, requirePerm('modules.manage'
     fail(500, 'Restauration impossible — l’application a été rouverte avec la base trouvée');
   }
 });
+// ---------- Maintenance : optimisation BDD, purge des journaux, orphelins (super admin) ----------
+const runMaintenanceCore = (deep) => {
+  const report = { vacuum: false, logs_purged: 0, orphan_files: [] };
+  try { db.exec('ANALYZE'); } catch { /* non bloquant */ }
+  try { db.exec('VACUUM'); report.vacuum = true; } catch { /* non bloquant */ }
+  try {
+    const info1 = db.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-365 days')").run();
+    const info2 = db.prepare("DELETE FROM security_events WHERE created_at < datetime('now', '-365 days')").run();
+    report.logs_purged = (info1.changes || 0) + (info2.changes || 0);
+  } catch { /* non bloquant */ }
+  if (deep) {
+    const referenced = new Set();
+    const add = (v) => {
+      if (!v) return;
+      const t = String(v);
+      const m = t.match(/\/uploads\/[^?\s"']+/);
+      if (m) referenced.add(m[0].replace(/^\//, ''));
+    };
+    const addBasename = (dirRel, v) => {
+      if (!v) return;
+      const b = String(v).split('/').pop();
+      if (b) referenced.add(`${dirRel}/${b}`);
+    };
+    for (const r of db.prepare('SELECT url, filename FROM media').all()) { add(r.url); if (r.filename) addBasename('uploads/media', r.filename); }
+    for (const t of ['articles', 'campaigns', 'causes']) {
+      const cols = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+      const imgCols = ['image', 'seo_image'].filter((c) => cols.includes(c));
+      if (imgCols.length) {
+        for (const r of db.prepare(`SELECT ${imgCols.join(', ')} FROM ${t}`).all())
+          for (const c of imgCols) add(r[c]);
+      }
+    }
+    for (const r of db.prepare('SELECT photo FROM users').all()) add(r.photo);
+    for (const r of db.prepare('SELECT value FROM settings').all()) add(r.value);
+    for (const r of db.prepare('SELECT proof FROM donations').all()) addBasename('data/donation-proofs', r.proof);
+    for (const r of db.prepare('SELECT file FROM grh_documents').all()) addBasename('data/employee-docs', r.file);
+    for (const r of db.prepare('SELECT cv_file FROM grh_candidates').all()) addBasename('data/cvs', r.cv_file);
+    for (const r of db.prepare('SELECT file FROM grh_admin_docs').all()) addBasename('data/admin-docs', r.file);
+    for (const r of db.prepare('SELECT attachment FROM chat_messages').all()) addBasename('uploads/chat', r.attachment);
 
+    const orphans = (dirRel) => {
+      const dir = path.join(__dirname, dirRel);
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!e.isFile()) continue;
+        if (referenced.has(`${dirRel}/${e.name}`)) continue;
+        const full = path.join(dir, e.name);
+        try {
+          const st = fs.statSync(full);
+          fs.unlinkSync(full);
+          report.orphan_files.push({ file: `${dirRel}/${e.name}`, size: st.size });
+        } catch { /* concurrent ou protégé */ }
+      }
+    };
+    orphans('data/donation-proofs');
+    orphans('data/employee-docs');
+    orphans('data/cvs');
+    orphans('data/admin-docs');
+    orphans('uploads/media');
+    orphans('uploads/docs');
+    orphans('uploads/chat');
+  }
+  return report;
+};
+
+app.get('/api/admin/maintenance', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  res.json({ last: getSetting('last_maintenance') || '' });
+});
+
+app.post('/api/admin/maintenance', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  try {
+    const report = runMaintenanceCore(true);
+    setSetting('last_maintenance', new Date().toISOString());
+    logSecurity('maintenance', clientIp(req), req.user.email, `purge=${report.logs_purged} fichiers=${report.orphan_files.length}`);
+    res.json({ ok: true, ...report, at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[maintenance]', err);
+    res.status(500).json({ error: 'Maintenance impossible' });
+  }
+});
+
+const nextDailyMaintenanceDelay = () => {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(3, 0, 5, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  return target - now;
+};
+const scheduleDailyMaintenance = () => {
+  setTimeout(() => {
+    try {
+      const r = runMaintenanceCore(false);
+      console.log(`[maintenance] quotidienne terminée : purge=${r.logs_purged}, vacuum=${r.vacuum}`);
+    } catch (e) {
+      console.error('[maintenance] quotidienne', e);
+    }
+    scheduleDailyMaintenance();
+  }, nextDailyMaintenanceDelay());
+};
+scheduleDailyMaintenance();
+
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 app.get('/api/admin/permissions', authRequired, (req, res) => {

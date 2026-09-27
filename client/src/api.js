@@ -127,7 +127,9 @@ export const api = {
   },
   adminSettings: {
     get: () => req('/api/admin/settings', { auth: true }),
-    update: (b) => req('/api/admin/settings', { method: 'PUT', body: b, auth: true })
+    update: (b) => req('/api/admin/settings', { method: 'PUT', body: b, auth: true }),
+    maintenance: () => req('/api/admin/maintenance', { method: 'POST', body: {}, auth: true }),
+    maintenanceLast: () => req('/api/admin/maintenance', { auth: true })
   },
   media: {
     list: (q = '', type = '') => {
