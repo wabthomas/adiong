@@ -773,6 +773,29 @@ migrate(`CREATE TABLE IF NOT EXISTS acc_exercises (
   closed_by TEXT NOT NULL DEFAULT ''
 )`);
 db.prepare("INSERT OR IGNORE INTO acc_exercises (start_date, end_date) VALUES ('2026-01-01', '2026-12-31')").run();
+migrate(`CREATE TABLE IF NOT EXISTS acc_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL,
+  account_code TEXT NOT NULL,
+  amount REAL NOT NULL,
+  acquired_at TEXT NOT NULL,
+  useful_life INTEGER NOT NULL DEFAULT 5,
+  status TEXT NOT NULL DEFAULT 'en_service',
+  ceded_at TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS acc_in_kind (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  partner TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  amount REAL NOT NULL,
+  account_code TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
 
 function ensureComptaSeed() {
   const journals = [['O', 'Ouverture'], ['ACH', 'Achats'], ['VEN', 'Ventes & ressources'], ['CAI', 'Caisse'], ['BQ', 'Banque'], ['OD', 'Opérations diverses']];

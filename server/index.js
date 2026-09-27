@@ -4831,23 +4831,62 @@ const comptaExerciseInfo = () => {
   return ex;
 };
 const comptaExerciseBalances = (start, end) => {
-  const rows = db.prepare(`SELECT l.account_code AS code, a.class,
+  const rows = db.prepare(`SELECT l.account_code AS code, a.nature,
       COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
     FROM acc_entry_lines l
     JOIN acc_entries e ON e.id = l.entry_id
     JOIN acc_accounts a ON a.code = l.account_code
-    WHERE e.date >= ? AND e.date <= ? AND a.class IN (6, 7)
+    WHERE e.date >= ? AND e.date <= ? AND a.nature IN ('expense', 'income')
     GROUP BY l.account_code`).all(start, end);
-  const charges = rows.filter((r) => r.class === 6 && cmoney(r.d - r.c) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.d - r.c) }));
-  const resources = rows.filter((r) => r.class === 7 && cmoney(r.c - r.d) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.c - r.d) }));
+  const charges = rows.filter((r) => r.nature === 'expense' && cmoney(r.d - r.c) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.d - r.c) }));
+  const resources = rows.filter((r) => r.nature === 'income' && cmoney(r.c - r.d) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.c - r.d) }));
   const totalCharges = cmoney(charges.reduce((s, c) => s + c.amount, 0));
   const totalResources = cmoney(resources.reduce((s, c) => s + c.amount, 0));
   return { charges, resources, totalCharges, totalResources, result: cmoney(totalResources - totalCharges) };
 };
+// source_id des dotations = asset_id * 10000 + année (une dotation par actif et par année)
+const comptaAssetAccumulated = (assetId) =>
+  db.prepare(`SELECT COALESCE(SUM(l.credit), 0) v FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    WHERE e.source = 'depreciation' AND e.source_id >= ? AND e.source_id < ? AND l.account_code LIKE '28%'`)
+    .get(assetId * 10000, assetId * 10000 + 10000).v;
+const comptaAssetRows = () => db.prepare('SELECT * FROM acc_assets ORDER BY acquired_at, id').all().map((a) => {
+  const accumulated = cmoney(comptaAssetAccumulated(a.id));
+  return { ...a, accumulated, net: cmoney(a.amount - accumulated), fully_depreciated: a.status === 'en_service' && accumulated >= a.amount - 0.005 };
+});
+const comptaGenerateDepreciations = (year, user) => {
+  year = Number(year);
+  const date = `${year}-12-31`;
+  let created = 0;
+  for (const a of db.prepare("SELECT * FROM acc_assets WHERE status = 'en_service'").all()) {
+    if (a.acquired_at > date) continue;
+    const startYear = Number(a.acquired_at.slice(0, 4));
+    const endYear = startYear + Math.max(1, a.useful_life) - 1;
+    if (year < startYear || year > endYear) continue;
+    const sourceId = a.id * 10000 + year;
+    if (db.prepare("SELECT id FROM acc_entries WHERE source = 'depreciation' AND source_id = ?").get(sourceId)) continue;
+    const accumulated = cmoney(comptaAssetAccumulated(a.id));
+    if (accumulated >= a.amount - 0.005) continue;
+    const annual = cmoney(a.amount / Math.max(1, a.useful_life));
+    const amount = year === endYear ? cmoney(a.amount - accumulated) : cmoney(Math.min(annual, a.amount - accumulated));
+    if (amount <= 0) continue;
+    createComptaEntry({
+      date, journal: 'OD',
+      label: `Dotations aux amortissements ${year} — ${a.label}`,
+      lines: [
+        { account_code: '651', debit: amount, credit: 0, label: 'Dotation aux amortissements' },
+        { account_code: a.account_code === '243' ? '283' : '281', debit: 0, credit: amount, label: `Amortissement ${a.account_code}` }
+      ],
+      source: 'depreciation', sourceId, createdBy: user
+    });
+    created++;
+  }
+  return created;
+};
 const TREASURY_BY_METHOD = {
   airtel: '5161', mpesa: '5162', orange: '5163',
   mobile: '516', carte: '511', virement: '511',
-  especes: '531', cash: '531', autre: '581'
+  especes: '531', cash: '531', caisse: '531', autre: '581'
 };
 const cmoney = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -4986,16 +5025,48 @@ app.get('/api/admin/compta/overview', ...COMPTA, (req, res) => {
   const getN = (n) => rm.find((x) => x.nature === n);
   const resources = getN('income') ? cmoney(getN('income').c - getN('income').d) : 0;
   const charges = getN('expense') ? cmoney(getN('expense').d - getN('expense').c) : 0;
+  const ex = comptaExerciseInfo();
+  const yb = comptaExerciseBalances(ex.start_date, ex.end_date);
+  const reported = db.prepare("SELECT COALESCE(SUM(l.credit - l.debit), 0) v FROM acc_entry_lines l WHERE l.account_code = '171'").get().v;
   res.json({
     month,
     treasury: cmoney(tr.d - tr.c),
     resources,
     charges,
     surplus: cmoney(resources - charges),
-    exercise: comptaExerciseInfo(),
+    exercise: ex,
+    year_result: yb.result,
+    year_charges: yb.totalCharges,
+    year_ressources: yb.totalResources,
+    reported_surplus: cmoney(reported),
     entries: db.prepare('SELECT COUNT(*) AS n FROM acc_entries').get().n,
     accounts: db.prepare('SELECT COUNT(*) AS n FROM acc_accounts WHERE active = 1').get().n
   });
+});
+
+app.get('/api/admin/compta/trend', ...COMPTA, (req, res) => {
+  const n = Math.min(24, Math.max(3, Number(req.query.months) || 12));
+  const now = new Date();
+  const months = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    months.push(d.toISOString().slice(0, 7));
+  }
+  const first = months[0] + '-01';
+  const lastD = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+  const last = lastD.toISOString().slice(0, 10);
+  const rows = db.prepare(`SELECT substr(e.date, 1, 7) m, a.nature,
+      COALESCE(SUM(l.debit), 0) d, COALESCE(SUM(l.credit), 0) c
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE e.date >= ? AND e.date <= ? AND a.nature IN ('income', 'expense')
+    GROUP BY m, a.nature`).all(first, last);
+  res.json(months.map((m) => ({
+    month: m,
+    ressources: cmoney(rows.filter((r) => r.m === m && r.nature === 'income').reduce((s, r) => s + r.c - r.d, 0)),
+    charges: cmoney(rows.filter((r) => r.m === m && r.nature === 'expense').reduce((s, r) => s + r.d - r.c, 0))
+  })));
 });
 
 app.get('/api/admin/compta/accounts', ...COMPTA, (req, res) => {
@@ -5377,28 +5448,30 @@ app.post('/api/admin/compta/exercises/:id/close', ...COMPTA_CLOSE, (req, res) =>
   if (ex.status !== 'ouvert') return res.status(409).json({ error: 'Cet exercice est déjà clôturé' });
   const openCount = db.prepare("SELECT COUNT(*) n FROM acc_exercises WHERE status = 'ouvert'").get().n;
   if (openCount > 1) return res.status(409).json({ error: 'Un seul exercice peut être ouvert à la fois' });
-  const b = comptaExerciseBalances(ex.start_date, ex.end_date);
-  if (!b.charges.length && !b.resources.length) return res.status(400).json({ error: 'Aucun mouvement sur cet exercice — rien à clôturer' });
   const today = new Date().toISOString().slice(0, 10);
   const date = today < ex.start_date ? ex.start_date : (today > ex.end_date ? ex.end_date : today);
   const year = ex.start_date.slice(0, 4);
-  const linesA = [
-    ...b.charges.map((c) => ({ account_code: c.code, debit: 0, credit: c.amount, label: `Charges ${c.code} clôturées` })),
-    ...b.resources.map((r) => ({ account_code: r.code, debit: r.amount, credit: 0, label: `Ressources ${r.code} clôturées` }))
-  ];
-  if (b.result >= 0) linesA.push({ account_code: '178', debit: 0, credit: b.result, label: "Surplus de l'exercice (transit)" });
-  else linesA.push({ account_code: '168', debit: -b.result, credit: 0, label: "Déficit de l'exercice (transit)" });
-  const linesB = b.result >= 0
-    ? [
-      { account_code: '178', debit: b.result, credit: 0, label: "Report du surplus de l'exercice" },
-      { account_code: '171', debit: 0, credit: b.result, label: 'Surplus reporté' }
-    ]
-    : [
-      { account_code: '171', debit: -b.result, credit: 0, label: 'Imputation du déficit sur le surplus reporté' },
-      { account_code: '168', debit: 0, credit: -b.result, label: "Déficit de l'exercice (transit)" }
-    ];
   try {
     runTx(() => {
+      comptaGenerateDepreciations(year, req.user.email);
+      const b = comptaExerciseBalances(ex.start_date, ex.end_date);
+      if (!b.charges.length && !b.resources.length)
+        throw Object.assign(new Error('Aucun mouvement sur cet exercice — rien à clôturer'), { status: 400 });
+      const linesA = [
+        ...b.charges.map((c) => ({ account_code: c.code, debit: 0, credit: c.amount, label: `Charges ${c.code} clôturées` })),
+        ...b.resources.map((r) => ({ account_code: r.code, debit: r.amount, credit: 0, label: `Ressources ${r.code} clôturées` }))
+      ];
+      if (b.result >= 0) linesA.push({ account_code: '178', debit: 0, credit: b.result, label: "Surplus de l'exercice (transit)" });
+      else linesA.push({ account_code: '168', debit: -b.result, credit: 0, label: "Déficit de l'exercice (transit)" });
+      const linesB = b.result >= 0
+        ? [
+          { account_code: '178', debit: b.result, credit: 0, label: "Report du surplus de l'exercice" },
+          { account_code: '171', debit: 0, credit: b.result, label: 'Surplus reporté' }
+        ]
+        : [
+          { account_code: '171', debit: -b.result, credit: 0, label: 'Imputation du déficit sur le surplus reporté' },
+          { account_code: '168', debit: 0, credit: -b.result, label: "Déficit de l'exercice (transit)" }
+        ];
       createComptaEntry({ date, journal: 'OD', label: `Clôture des charges et ressources — exercice ${year}`, lines: linesA, source: 'cloture', sourceId: ex.id, createdBy: req.user.email });
       createComptaEntry({ date, journal: 'OD', label: b.result >= 0 ? `Report du résultat de l'exercice ${year} (surplus ${b.result.toFixed(2)} USD)` : `Report du résultat de l'exercice ${year} (déficit ${(-b.result).toFixed(2)} USD)`, lines: linesB, source: 'cloture2', sourceId: ex.id, createdBy: req.user.email });
       db.prepare("UPDATE acc_exercises SET status = 'cloture', result = ?, closed_at = ?, closed_by = ? WHERE id = ?").run(b.result, new Date().toISOString(), req.user.email, ex.id);
@@ -5411,6 +5484,143 @@ app.post('/api/admin/compta/exercises/:id/close', ...COMPTA_CLOSE, (req, res) =>
     return res.status(500).json({ error: 'Clôture impossible — l\'exercice est inchangé' });
   }
   res.json(db.prepare('SELECT * FROM acc_exercises WHERE id = ?').get(ex.id));
+});
+
+// ---------- Immobilisations & amortissements (classes 2 / 28) ----------
+app.get('/api/admin/compta/assets', ...COMPTA, (req, res) => {
+  res.json(comptaAssetRows());
+});
+
+app.post('/api/admin/compta/assets', ...COMPTA, (req, res) => {
+  const label = String(req.body?.label || '').trim().slice(0, 120);
+  const code = String(req.body?.account_code || '').trim();
+  const amount = cmoney(req.body?.amount);
+  const date = String(req.body?.acquired_at || '').slice(0, 10);
+  const life = Math.max(1, Math.min(50, Number(req.body?.useful_life) || 5));
+  const method = String(req.body?.payment_method || 'virement');
+  if (!label) return res.status(400).json({ error: 'Libellé requis' });
+  if (!/^\d{3}$/.test(code) || code[0] !== '2' || code.startsWith('28') || code.startsWith('29'))
+    return res.status(400).json({ error: 'Compte d\u2019immobilisation invalide (classe 2, hors 28x/29x)' });
+  if (!db.prepare('SELECT id FROM acc_accounts WHERE code = ?').get(code))
+    return res.status(400).json({ error: 'Compte inconnu dans le plan' });
+  if (amount <= 0) return res.status(400).json({ error: 'Montant invalide' });
+  const treasury = TREASURY_BY_METHOD[method] || '511';
+  const id = db.prepare('INSERT INTO acc_assets (label, account_code, amount, acquired_at, useful_life, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(label, code, amount, date, life, req.user.email).lastInsertRowid;
+  try {
+    createComptaEntry({
+      date, journal: treasury === '531' ? 'CAI' : 'BQ',
+      label: `Acquisition \u2014 ${label}`,
+      lines: [
+        { account_code: code, debit: amount, credit: 0, label },
+        { account_code: treasury, debit: 0, credit: amount, label: 'R\u00e8glement' }
+      ],
+      source: 'asset', sourceId: id, createdBy: req.user.email
+    });
+  } catch (err) {
+    db.prepare('DELETE FROM acc_assets WHERE id = ?').run(id);
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] asset', err);
+    return res.status(500).json({ error: 'Acquisition impossible' });
+  }
+  res.json(comptaAssetRows().find((a) => a.id === id));
+});
+
+app.put('/api/admin/compta/assets/:id', ...COMPTA, (req, res) => {
+  const a = db.prepare('SELECT * FROM acc_assets WHERE id = ?').get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Actif introuvable' });
+  const b = { ...a, ...req.body };
+  const label = String(b.label || '').trim().slice(0, 120) || a.label;
+  const life = Math.max(1, Math.min(50, Number(b.useful_life) || a.useful_life));
+  const status = b.status === 'cede' ? 'cede' : 'en_service';
+  const cededAt = status === 'cede' ? (b.ceded_at || new Date().toISOString().slice(0, 10)) : '';
+  db.prepare('UPDATE acc_assets SET label = ?, useful_life = ?, status = ?, ceded_at = ? WHERE id = ?').run(label, life, status, cededAt, a.id);
+  res.json(comptaAssetRows().find((x) => x.id === a.id));
+});
+
+app.delete('/api/admin/compta/assets/:id', ...COMPTA, (req, res) => {
+  const a = db.prepare('SELECT * FROM acc_assets WHERE id = ?').get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Actif introuvable' });
+  runTx(() => {
+    deleteComptaSource('asset', a.id);
+    db.prepare('DELETE FROM acc_entry_lines WHERE entry_id IN (SELECT id FROM acc_entries WHERE source = ? AND source_id >= ? AND source_id < ?)')
+      .run('depreciation', a.id * 10000, a.id * 10000 + 10000);
+    db.prepare('DELETE FROM acc_entries WHERE source = ? AND source_id >= ? AND source_id < ?')
+      .run('depreciation', a.id * 10000, a.id * 10000 + 10000);
+    db.prepare('DELETE FROM acc_assets WHERE id = ?').run(a.id);
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/compta/assets/depreciate', ...COMPTA, (req, res) => {
+  const ex = comptaExerciseInfo();
+  const year = Number(String(req.query.year || '').slice(0, 4)) || 0;
+  if (year !== Number(ex.start_date.slice(0, 4)))
+    return res.status(400).json({ error: `Seul l\u2019exercice ouvert (${ex.start_date.slice(0, 4)}) peut \u00eatre dot\u00e9 en cours d\u2019ann\u00e9e` });
+  try {
+    const n = comptaGenerateDepreciations(year, req.user.email);
+    res.json({ ok: true, created: n, year });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] depreciate', err);
+    res.status(500).json({ error: 'G\u00e9n\u00e9ration des dotations impossible' });
+  }
+});
+
+// ---------- Contributions en nature (classe 9) ----------
+app.get('/api/admin/compta/in-kind', ...COMPTA, (req, res) => {
+  res.json(db.prepare('SELECT * FROM acc_in_kind ORDER BY date DESC, id DESC').all());
+});
+
+app.post('/api/admin/compta/in-kind', ...COMPTA, (req, res) => {
+  const date = String(req.body?.date || '').slice(0, 10);
+  const direction = req.body?.direction === 'donne' ? 'donne' : 'recu';
+  const partner = String(req.body?.partner || '').trim().slice(0, 120);
+  const description = String(req.body?.description || '').trim().slice(0, 300);
+  const amount = cmoney(req.body?.amount);
+  const code = String(req.body?.account_code || '').trim();
+  if (!partner) return res.status(400).json({ error: 'Partenaire requis (donateur ou b\u00e9n\u00e9ficiaire)' });
+  if (amount <= 0) return res.status(400).json({ error: 'Valorisation invalide' });
+  const acc = db.prepare('SELECT * FROM acc_accounts WHERE code = ?').get(code);
+  if (!acc) return res.status(400).json({ error: 'Compte inconnu dans le plan' });
+  if (direction === 'recu' && ![3, 6].includes(acc.class))
+    return res.status(400).json({ error: 'Contribution re\u00e7ue : compte concern\u00e9 de classe 3 (stocks) ou 6 (charges)' });
+  if (direction === 'donne' && acc.class !== 3)
+    return res.status(400).json({ error: 'Contribution donn\u00e9e : compte concern\u00e9 de classe 3 (stocks)' });
+  const id = db.prepare('INSERT INTO acc_in_kind (date, direction, partner, description, amount, account_code, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(date, direction, partner, description, amount, code, req.user.email).lastInsertRowid;
+  const lines = direction === 'recu'
+    ? [
+      { account_code: code, debit: amount, credit: 0, label: description || partner },
+      { account_code: '971', debit: 0, credit: amount, label: 'Contribution en nature re\u00e7ue' }
+    ]
+    : [
+      { account_code: '911', debit: amount, credit: 0, label: 'Contribution en nature donn\u00e9e' },
+      { account_code: code, debit: 0, credit: amount, label: description || partner }
+    ];
+  try {
+    createComptaEntry({
+      date, journal: 'OD',
+      label: `Contribution en nature ${direction === 'recu' ? 're\u00e7ue de ' : 'donn\u00e9e \u00e0 '}${partner}`,
+      lines, source: 'in_kind', sourceId: id, createdBy: req.user.email
+    });
+  } catch (err) {
+    db.prepare('DELETE FROM acc_in_kind WHERE id = ?').run(id);
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] in_kind', err);
+    return res.status(500).json({ error: 'Saisie impossible' });
+  }
+  res.json(db.prepare('SELECT * FROM acc_in_kind WHERE id = ?').get(id));
+});
+
+app.delete('/api/admin/compta/in-kind/:id', ...COMPTA, (req, res) => {
+  const r = db.prepare('SELECT * FROM acc_in_kind WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Contribution introuvable' });
+  runTx(() => {
+    deleteComptaSource('in_kind', r.id);
+    db.prepare('DELETE FROM acc_in_kind WHERE id = ?').run(r.id);
+  });
+  res.json({ ok: true });
 });
 
 

@@ -574,7 +574,20 @@ export const api = {
       }
     },
     exercises: () => req('/api/admin/compta/exercises', { auth: true }),
-    closeExercise: (id) => req(`/api/admin/compta/exercises/${id}/close`, { method: 'POST', body: {}, auth: true })
+    closeExercise: (id) => req(`/api/admin/compta/exercises/${id}/close`, { method: 'POST', body: {}, auth: true }),
+    trend: (months = 12) => req(`/api/admin/compta/trend?months=${months}`, { auth: true }),
+    assets: {
+      list: () => req('/api/admin/compta/assets', { auth: true }),
+      create: (b) => req('/api/admin/compta/assets', { method: 'POST', body: b, auth: true }),
+      update: (id, b) => req(`/api/admin/compta/assets/${id}`, { method: 'PUT', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/compta/assets/${id}`, { method: 'DELETE', auth: true }),
+      depreciate: (year) => req(`/api/admin/compta/assets/depreciate${year ? `?year=${year}` : ''}`, { method: 'POST', body: {}, auth: true })
+    },
+    inKind: {
+      list: () => req('/api/admin/compta/in-kind', { auth: true }),
+      create: (b) => req('/api/admin/compta/in-kind', { method: 'POST', body: b, auth: true }),
+      remove: (id) => req(`/api/admin/compta/in-kind/${id}`, { method: 'DELETE', auth: true })
+    }
   },
   chat: {
     upload: async (file) => {

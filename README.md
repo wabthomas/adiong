@@ -243,30 +243,46 @@ Module de comptabilité conforme au **Système Comptable des Entités à But Non
 (SYCEBNL)**, 11ᵉ Acte uniforme OHADA, en vigueur depuis le **1ᵉʳ janvier 2024** pour les ONG,
 associations et fondations des 17 États membres. Accès : **super admin** par défaut,
 attribuable à d'autres rôles via la matrice des droits (zone « Comptabilité (SYCEBNL) »).
-*Admin → Comptabilité (SYCEBNL)*, 6 onglets.
+*Admin → Comptabilité (SYCEBNL)*, 9 onglets.
 
 - **Tableau de bord** : trésorerie totale (classe 5), ressources et charges du mois,
-  résultat (surplus/déficit), dernières écritures.
+  résultat du mois (surplus/déficit), cumuls de l'exercice, **surplus reporté (171)**,
+  **graphique des 12 derniers mois** (ressources vs charges) et dernières écritures.
 - **Journal** : écritures en **partie double** (débits = contrôlés contre les crédits à la
   saisie), journaux Ouverture / Achats / Ventes / Caisse / Banque / Divers, références
-  `EC-AAAA-####`, filtres (période, journal, texte, compte), **annulation par contre-sens**
-  (l'origine est conservée) et suppression des saisies manuelles uniquement.
+  `EC-AAAA-####`, filtres (période, journal, texte, compte), **pagination**, **export CSV**,
+  **annulation par contre-sens** (l'origine est conservée) et suppression des saisies
+  manuelles uniquement.
 - **Plan de comptes** : **74 comptes SYCEBNL pré-remplis** sur les **9 classes** du
   référentiel (1 Ressources durables · 2 Actif immobilisé · 3 Stocks · 4 Tiers · 5
   Trésorerie — dont Airtel / M-Pesa / Orange Money · 6 Charges · 7 Ressources — dont dons et
-  legs · 8 Hors activités ordinaires · 9 Contributions en nature), extensible et renomable.
+  legs · 8 Hors activités ordinaires · 9 Contributions en nature), **filtre par classe**,
+  recherche, extensible et renomable.
 - **Balance** et **grand livre** : totaux débits/crédits et soldes courants par compte,
-  bornés par période.
+  bornés par période, **exportables en CSV**.
+- **Immobilisations** : registre de la classe 2 (valeur brute, amortissements cumulés,
+  valeur nette comptable). Chaque acquisition génère son écriture (compte 2xx / trésorerie
+  selon le règlement). **Dotations aux amortissements en lignes droites** (651 → 281, ou
+  283 pour les moyens de transport) calculées par actif et par année — générables en un
+  clic pendant l'année, puis **automatiquement à la clôture de l'exercice** — idempotentes
+  (une dotation par actif et par année). Cession et suppression (qui retire les écritures
+  liées).
+- **Contributions en nature** (nouveauté SYCEBNL, classe 9) : apports volontaires reçus
+  (compte concerné 3xx/6xx débiteur + **971** créditeur) et donnés (**911** débiteur +
+  compte 3xx créditeur), valorisés au prix courant, avec écriture automatique et suppression
+  en cascade.
 - **États financiers** : **bilan SYCEBNL** (actif/passif, avec surplus de l'exercice non
   reporté au passif) et **compte de résultat** (charges par nature, ressources,
   surplus/déficit de l'exercice), exportables en **CSV** (BOM + `;`) et **PDF**.
 - **Exercice** : ouverture à zéro au **1ᵉʳ janvier 2026** — toute écriture antérieure est
   refusée (bilan d'ouverture à zéro choisi pour ADI).
 - **Clôture d'exercice** (onglet *Exercices*) : en fin d'année, un clic génère les écritures
-  de clôture SYCEBNL — extinction des soldes des comptes de charges (6xx) et de ressources
-  (7xx), report du **surplus/déficit** au surplus reporté (compte 171) via les comptes de
-  transit 178/168 — puis **verrouille définitivement** l'exercice (plus aucune écriture
-  datée de la période, annulations comprises) et ouvre automatiquement l'exercice suivant.
+  de clôture SYCEBNL — **d'abord les dotations aux amortissements manquantes de
+  l'exercice**, puis extinction de tous les comptes de charges et de ressources (comptes de
+  nature charge/produit, classes 6, 7, 8 et 9), report du **surplus/déficit** au surplus
+  reporté (compte 171) via les comptes de transit 178/168 — puis **verrouille
+  définitivement** l'exercice (plus aucune écriture datée de la période, annulations
+  comprises) et ouvre automatiquement l'exercice suivant.
 
 **Intégrations automatiques** (écritures tracées par source, créées/détées à la vie des
 objets métier, aucune saisie manuelle nécessaire) :
@@ -286,8 +302,9 @@ d'exploitation sont confidentiels) — la matrice des droits peut l'attribuer au
 **suspend la génération des écritures automatiques** (les données déjà saisies sont
 conservées ; réactiver ne recrée pas les écritures des événements passés).
 
-Tables : `acc_accounts`, `acc_journals`, `acc_entries`, `acc_entry_lines`.
-Endpoints : `/api/admin/compta/*`.
+Tables : `acc_accounts`, `acc_journals`, `acc_entries`, `acc_entry_lines`,
+`acc_exercises`, `acc_assets` (immobilisations), `acc_in_kind` (contributions en nature).
+Endpoints : `/api/admin/compta/*` (dont `/assets`, `/assets/depreciate`, `/in-kind`, `/trend`).
 
 ## Sécurité
 
