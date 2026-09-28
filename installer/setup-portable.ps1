@@ -20,12 +20,38 @@ foreach ($item in @('client', 'server', 'launcher')) {
   Copy-Item -Recurse -Force (Join-Path $src $item) (Join-Path $dst $item)
 }
 
-# Node.js portable
+# Node.js portable (téléchargé à la première installation si absent)
 $nodeDir = Join-Path $dst 'node'
 New-Item -ItemType Directory -Force -Path $nodeDir | Out-Null
-tar -xf (Join-Path $src 'node-win-x64.zip') -C $nodeDir --strip-components=1
 if (-not (Test-Path (Join-Path $nodeDir 'node.exe'))) {
-  Write-Host "ERREUR : extraction de Node.js impossible."
+  $ver = 'v22.23.3'
+  $zipPath = Join-Path $env:TEMP "node-$ver-win-x64.zip"
+  $urls = @(
+    "https://nodejs.org/dist/$ver/node-$ver-win-x64.zip",
+    "https://cdn.npmmirror.com/binaries/node/$ver/node-$ver-win-x64.zip"
+  )
+  $ok = $false
+  foreach ($u in $urls) {
+    try {
+      Write-Host "Téléchargement de Node.js ($ver, ~30 Mo) depuis $u …"
+      Invoke-WebRequest -Uri $u -OutFile $zipPath -UseBasicParsing
+      $ok = $true
+      break
+    } catch {
+      Write-Host "  Source inaccessible : $u"
+    }
+  }
+  if (-not $ok) {
+    Write-Host "ERREUR : téléchargement de Node.js impossible."
+    Write-Host "Téléchargez manuellement node-$ver-win-x64.zip sur nodejs.org,"
+    Write-Host "décompressez son contenu dans $nodeDir, puis relancez le raccourci « ADI ONG »."
+    exit 1
+  }
+  tar -xf $zipPath -C $nodeDir --strip-components=1
+  Remove-Item $zipPath -ErrorAction SilentlyContinue
+}
+if (-not (Test-Path (Join-Path $nodeDir 'node.exe'))) {
+  Write-Host "ERREUR : Node.js est absent ou incomplet dans $nodeDir."
   exit 1
 }
 

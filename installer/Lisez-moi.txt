@@ -6,8 +6,8 @@ INSTALLATION (2 minutes)
 1. Dézippez l'archive dans un dossier (par exemple C:\).
 2. Double-cliquez sur « setup-portable.bat ».
 3. L'assistant copie l'application dans votre dossier utilisateur
-   (AppData\Local\ADI-ONG), installe Node.js, crée les raccourcis et
-   démarre le serveur.
+   (AppData\Local\ADI-ONG), installe Node.js portable (téléchargé une
+   seule fois, ~30 Mo), crée les raccourcis et démarre le serveur.
 4. Le navigateur s'ouvre sur http://localhost:4000
 
    Connexion admin : admin@adiong.org / AdiOng2026!

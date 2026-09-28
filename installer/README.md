@@ -7,7 +7,8 @@ sans rien installer d'autre : Node.js portable est inclus dans le paquet.
 
 ```
 %LOCALAPPDATA%\ADI-ONG\
-├─ node\            Node.js portable (x64, dernière 22.x)
+├─ node\            Node.js portable (x64) — téléchargé par
+│                    setup-portable.ps1 à la première installation
 ├─ client\dist\     le site (build de production)
 ├─ server\          l'API + la base de données
 │  ├─ data\         base SQLite, secret JWT, journaux (créée au 1er lancement)
