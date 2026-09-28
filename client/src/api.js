@@ -96,7 +96,7 @@ async function req(path, { method = 'GET', body, auth = false, form = false } = 
   // Let the browser set multipart/form-data + boundary for FormData.
   if (body && !isForm) headers['Content-Type'] = 'application/json';
   if (auth) {
-    const t = getToken();
+    const t = typeof auth === 'string' ? auth : getToken();
     if (t) headers['Authorization'] = `Bearer ${t}`;
   }
   let res;
@@ -174,6 +174,19 @@ export const api = {
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
   logout: () => req('/api/auth/logout', { method: 'POST', body: {}, auth: true }),
+  verify2fa: (body) => req('/api/auth/2fa/verify', { method: 'POST', body }),
+  send2faEmail: (pendingToken) => req('/api/auth/2fa/email', { method: 'POST', body: {}, auth: pendingToken || true }),
+  totp: {
+    setup: (pendingToken) => req('/api/auth/totp/setup', { method: 'POST', body: {}, auth: pendingToken || true }),
+    confirm: (body, pendingToken) => req('/api/auth/totp/confirm', { method: 'POST', body, auth: pendingToken || true }),
+    status: () => req('/api/auth/totp/status', { auth: true }),
+    disable: () => req('/api/auth/totp', { method: 'DELETE', auth: true }),
+    regenerateCodes: () => req('/api/auth/totp/backup-codes/regenerate', { method: 'POST', body: {}, auth: true })
+  },
+  adminTwoFa: {
+    get: () => req('/api/admin/security/two-fa', { auth: true }),
+    set: (b) => req('/api/admin/security/two-fa', { method: 'PUT', body: b, auth: true })
+  },
   member: (code) => req(`/api/public/member/${encodeURIComponent(code)}`),
   password: (body) => req('/api/auth/password', { method: 'POST', body, auth: true }),
   dashboard: () => req('/api/admin/dashboard', { auth: true }),

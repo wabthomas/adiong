@@ -368,18 +368,15 @@ export default function AdminLayout() {
 
     return (
     <div className="flex h-full flex-col bg-white">
-      <div className={`flex items-center gap-3 py-5 ${rail ? 'justify-center px-2' : 'px-5'}`}>
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-600 text-white">
-          <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <circle cx="12" cy="8" r="3" fill="#fc7a03" stroke="none" />
-            <path d="M5 18.5c1.4-4 4-5.5 7-5.5s5.6 1.5 7 5.5" strokeLinecap="round" />
-          </svg>
-        </span>
+      <div className={`py-5 ${rail ? 'px-2' : 'px-5'}`}>
+        <img
+          src="/uploads/seed/logo.png"
+          alt="ADI ONG"
+          title="ADI ONG"
+          className={`rounded-xl ${rail ? 'mx-auto h-10 w-auto' : 'w-full'}`}
+        />
         {!rail && (
-          <div className="min-w-0">
-            <p className="font-display font-bold text-ink-900">ADI ONG</p>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Admin</p>
-          </div>
+          <p className="mt-2 text-center text-[11px] font-semibold uppercase tracking-wider text-ink-400">Espace admin</p>
         )}
       </div>
       <nav className={`flex-1 space-y-1 overflow-y-auto pb-4 ${rail ? 'px-1.5' : 'px-3'}`}>
@@ -493,6 +490,7 @@ export default function AdminLayout() {
               >
                 <MiniIcon d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
               </button>
+              <img src="/uploads/seed/logo.png" alt="ADI ONG" className="h-8 w-auto rounded-lg bg-white lg:hidden" />
               <button
                 type="button"
                 onClick={toggleCollapsed}

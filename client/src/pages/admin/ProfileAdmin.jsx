@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, setSavedUser } from '../../api.js';
 import { PageTitle } from './AdminUI.jsx';
 import { UserProfileFields, MemberQrCard, ROLE_LABELS, ROLE_STYLES } from './UserProfileFields.jsx';
+import TotpSetup from './TotpSetup.jsx';
 
 function ProfilePreview({ user, onEdit }) {
   const role = user.role || 'editor';
@@ -71,6 +72,12 @@ export default function ProfileAdmin() {
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
   const [saving, setSaving] = useState(false);
+  const [twoFa, setTwoFa] = useState(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [regenCodes, setRegenCodes] = useState(null);
+  const [disabling, setDisabling] = useState(false);
+
+  const loadTwoFa = () => api.totp.status().then(setTwoFa).catch(() => {});
 
   useEffect(() => {
     api.me.get()
@@ -81,7 +88,35 @@ export default function ProfileAdmin() {
         setSavedUser(u);
       })
       .catch((e) => setError(e.message));
+    loadTwoFa();
   }, []);
+
+  const toggleTwoFa = async () => {
+    if (twoFa?.totp_enrolled) {
+      if (!window.confirm('Désactiver l’authentification à deux facteurs sur ce compte ?')) return;
+      setDisabling(true);
+      try {
+        await api.totp.disable();
+        loadTwoFa();
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setDisabling(false);
+      }
+    } else {
+      setSetupOpen(true);
+    }
+  };
+
+  const regenerateCodes = async () => {
+    try {
+      const r = await api.totp.regenerateCodes();
+      setRegenCodes(r.backup_codes);
+      loadTwoFa();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
 
   const startEdit = () => {
     setError('');
@@ -172,6 +207,53 @@ export default function ProfileAdmin() {
         )}
         <MemberQrCard user={snapshot || form} />
       </div>
+
+      <div className="card mt-6 p-6 sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="font-display text-base font-bold text-ink-900">Authentification à deux facteurs</h3>
+            <p className="mt-1 text-sm text-ink-500">
+              {twoFa?.two_fa_required && 'Exigée par l’administrateur pour tous les comptes. '}
+              {twoFa?.totp_enrolled
+                ? `Compte protégé — ${twoFa.backup_remaining} code(s) de secours restant(s).`
+                : 'Activez une application d’authentification pour une connexion plus sûre.'}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${twoFa?.totp_enrolled ? 'bg-emerald-100 text-emerald-700' : 'bg-ink-100 text-ink-500'}`}>
+              {twoFa?.totp_enrolled ? 'Active' : 'Inactive'}
+            </span>
+            <button type="button" className="btn-ghost !px-4 !py-2 text-sm" onClick={toggleTwoFa} disabled={disabling}>
+              {twoFa?.totp_enrolled ? 'Désactiver' : 'Activer'}
+            </button>
+          </div>
+        </div>
+        {twoFa?.totp_enrolled && (
+          <button type="button" className="btn-ghost mt-4 !px-4 !py-2 text-sm" onClick={regenerateCodes}>
+            Régénérer les codes de secours
+          </button>
+        )}
+      </div>
+
+      {setupOpen && (
+        <TotpSetup
+          onClose={() => { setSetupOpen(false); loadTwoFa(); }}
+          onEnrolled={loadTwoFa}
+        />
+      )}
+
+      {regenCodes && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/60 p-4 backdrop-blur-sm" onClick={() => setRegenCodes(null)}>
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-lift sm:p-8" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-display text-lg font-bold text-ink-900">Nouveaux codes de secours</h3>
+            <p className="mt-1 text-sm text-ink-500">Les anciens ne fonctionnent plus. Conservez ces 10 codes.</p>
+            <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-ink-50 p-4 font-mono text-sm font-semibold text-ink-800">
+              {regenCodes.map((c) => <span key={c}>{c}</span>)}
+            </div>
+            <button type="button" className="btn-primary mt-5 w-full !py-2.5" onClick={() => setRegenCodes(null)}>J’ai enregistré</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

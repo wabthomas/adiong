@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api } from '../../api.js';
+import { api, getSavedUser } from '../../api.js';
 import { PageTitle } from './AdminUI.jsx';
 
 const TABS = [
@@ -27,6 +27,14 @@ const statusBadge = (s) => {
 const EVENT_STYLES = {
   login_fail: 'bg-red-100 text-red-700',
   login_ok: 'bg-emerald-100 text-emerald-700',
+  login_2fa: 'bg-amber-100 text-amber-800',
+  '2fa_ok': 'bg-emerald-100 text-emerald-700',
+  '2fa_fail': 'bg-red-100 text-red-700',
+  '2fa_email_sent': 'bg-sky-100 text-sky-700',
+  totp_enrolled: 'bg-emerald-100 text-emerald-700',
+  totp_disabled: 'bg-amber-100 text-amber-800',
+  two_fa_required_on: 'bg-brand-100 text-brand-700',
+  two_fa_required_off: 'bg-ink-100 text-ink-600',
   logout: 'bg-ink-100 text-ink-600',
   backup_export: 'bg-brand-100 text-brand-700',
   backup_restore: 'bg-amber-100 text-amber-800'
@@ -197,13 +205,41 @@ function ProtectionTab() {
   const [reason, setReason] = useState('');
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
+  const [twoFa, setTwoFa] = useState(null);
+  const [twoFaMsg, setTwoFaMsg] = useState('');
+  const [toggling, setToggling] = useState(false);
+  const isSuper = getSavedUser()?.role === 'super_admin';
 
   const load = useCallback(() => {
     Promise.all([api.adminSecurity.alerts(), api.adminSecurity.blocklist()])
       .then(([a, b]) => { setAlerts(a); setBlocked(b); })
       .catch((e) => setError(e.message));
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    if (isSuper) api.adminTwoFa.get().then(setTwoFa).catch(() => {});
+  }, [load]);
+
+  const toggleTwoFa = async (on) => {
+    const warning = on && twoFa && twoFa.uncovered > 0
+      ? `Attention : ${twoFa.uncovered} compte(s) n’ont ni application d’authentification ni email configuré. ` +
+        'Ils devront armer leur application à leur prochaine connexion (ils peuvent le faire depuis l’écran de connexion). Continuer ?'
+      : null;
+    if (warning && !window.confirm(warning)) return;
+    setToggling(true);
+    setTwoFaMsg('');
+    try {
+      const r = await api.adminTwoFa.set({ required: on });
+      setTwoFa(r);
+      setTwoFaMsg(on
+        ? '✓ La 2FA est désormais exigée pour tous les comptes à leur prochaine connexion.'
+        : '✓ La 2FA n’est plus exigée (les comptes armés continuent d’utiliser leur code).');
+    } catch (e) {
+      setTwoFaMsg(`✗ ${e.message}`);
+    } finally {
+      setToggling(false);
+    }
+  };
 
   const doBlock = async (target, why) => {
     setMsg('');
@@ -230,6 +266,40 @@ function ProtectionTab() {
 
   return (
     <div className="space-y-6">
+      {isSuper && (
+        <div className="card space-y-4 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="font-display text-lg font-bold text-ink-900">Connexion sécurisée (2FA)</h3>
+              <p className="mt-1 max-w-xl text-sm text-ink-500">
+                Exiger le second facteur (application d’authentification ou code email) pour tous les comptes lors de la connexion.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={toggling || !twoFa}
+              className={`relative h-7 w-13 shrink-0 rounded-full transition-colors disabled:opacity-50 ${twoFa?.two_fa_required ? 'bg-emerald-500' : 'bg-ink-200'}`}
+              style={{ width: 52 }}
+              onClick={() => toggleTwoFa(!(twoFa?.two_fa_required))}
+              aria-label="Exiger la 2FA"
+            >
+              <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${twoFa?.two_fa_required ? 'left-[26px]' : 'left-0.5'}`} />
+            </button>
+          </div>
+          {twoFa && (
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className={`rounded-full px-3 py-1 font-bold ${twoFa.two_fa_required ? 'bg-emerald-100 text-emerald-700' : 'bg-ink-100 text-ink-500'}`}>
+                {twoFa.two_fa_required ? 'Exigée pour tous' : 'Optionnelle'}
+              </span>
+              <span className="rounded-full bg-ink-100 px-3 py-1 font-bold text-ink-600">{twoFa.enrolled} compte(s) armé(s)</span>
+              <span className={`rounded-full px-3 py-1 font-bold ${twoFa.email_2fa_available ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-800'}`}>
+                {twoFa.email_2fa_available ? 'Codes email : SMTP configuré' : 'Codes email : SMTP non configuré'}
+              </span>
+            </div>
+          )}
+          {twoFaMsg && <p className="rounded-xl bg-ink-50 px-4 py-3 text-sm font-semibold text-ink-700">{twoFaMsg}</p>}
+        </div>
+      )}
       <div className="card space-y-4 p-6">
         <div>
           <h3 className="font-display text-lg font-bold text-ink-900">Alertes de connexion</h3>

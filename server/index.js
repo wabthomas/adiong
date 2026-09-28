@@ -11,6 +11,7 @@ import nodemailer from 'nodemailer';
 import multer from 'multer';
 import Jimp from 'jimp';
 import QRCode from 'qrcode';
+import { newTotpSecret, verifyTotp, otpauthUrl, newBackupCodes } from './totp.js';
 import { fileURLToPath } from 'node:url';
 import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb, getSetting, setSetting } from './db.js';
 import AdmZip from 'adm-zip';
@@ -223,6 +224,19 @@ const notifyEmail = (subject, html) => {
     .catch((e) => console.error(`[mail] échec : ${e.message}`));
 };
 
+const sendMailTo = (to, subject, html) => {
+  if (!transporter || !to) {
+    console.log(`[mail] (non configuré) ${subject} -> ${to}`);
+    return Promise.reject(new Error('EMAIL_NON_CONFIGURE'));
+  }
+  return transporter.sendMail({
+    from: process.env.MAIL_FROM || process.env.SMTP_USER || 'notifications@adiong.org',
+    to,
+    subject,
+    html
+  });
+};
+
 const safeUnlink = (full) => {
   try {
     if (fs.existsSync(full)) fs.unlinkSync(full);
@@ -320,6 +334,10 @@ const authRequired = (req, res, next) => {
     req.user = jwt.verify(token, JWT_SECRET);
     const fresh = db.prepare('SELECT role FROM users WHERE id = ?').get(req.user.id);
     req.user.role = fresh?.role || 'viewer';
+    if (req.user.twoFa === 'pending') {
+      const PENDING_ROUTES = new Set(['/api/auth/totp/setup', '/api/auth/totp/confirm', '/api/auth/2fa/email', '/api/auth/me']);
+      if (!PENDING_ROUTES.has(req.path)) return res.status(401).json({ error: 'Vérification du 2ᵉ facteur requise' });
+    }
     next();
   } catch {
     res.status(401).json({ error: 'Session expirée, reconnectez-vous' });
@@ -555,9 +573,153 @@ app.post('/api/auth/login', loginLimiter, (req, res) => {
     logSecurity('login_fail', req.ip, em);
     return res.status(401).json({ error: 'Identifiants incorrects' });
   }
+  const need2fa = user.totp_enabled || getSetting('two_fa_required') === '1';
+  if (need2fa) {
+    logSecurity('login_2fa', req.ip, user.email);
+    const pending = jwt.sign({ id: user.id, email: user.email, role: user.role, twoFa: 'pending', jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '10m' });
+    return res.json({
+      requires_2fa: true,
+      pending_token: pending,
+      totp_enrolled: !!user.totp_enabled,
+      email_2fa_available: !!transporter
+    });
+  }
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role, jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '12h' });
   logSecurity('login_ok', req.ip, user.email);
   res.json({ token, user: publicUser(user) });
+});
+
+const twoFaLimiter = rateLimit({ windowMs: 15 * 60_000, max: 20, key: (req) => `2fa:${req.ip}`, message: 'Trop de tentatives de vérification. Réessayez dans 15 minutes.' });
+
+const issueToken = (user) => jwt.sign({ id: user.id, email: user.email, role: user.role, jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '12h' });
+
+// Armement 2FA : génération du secret + QR (le secret n'est persisté qu'au confirm)
+app.post('/api/auth/totp/setup', authRequired, async (req, res) => {
+  const secret = newTotpSecret();
+  const url = otpauthUrl({ secret, account: req.user.email });
+  let qr = '';
+  try { qr = await QRCode.toDataURL(url, { width: 240, margin: 1 }); } catch { /* QR indisponible : le secret manuel reste utilisable */ }
+  res.json({ secret, otpauth_url: url, qr, email_2fa_available: !!transporter });
+});
+
+// Confirmation : un code TOTP valide → activation + 10 codes de secours (affichés une fois)
+app.post('/api/auth/totp/confirm', authRequired, (req, res) => {
+  const { secret, code } = req.body || {};
+  if (!secret || !verifyTotp(String(secret), String(code || '')))
+    return res.status(400).json({ error: 'Code incorrect — vérifiez l’heure de votre téléphone' });
+  const codes = newBackupCodes(10);
+  const stored = codes.map((c) => crypto.createHash('sha256').update(c).digest('hex')).join(';');
+  db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_backup_codes = ? WHERE id = ?').run(String(secret), stored, req.user.id);
+  logSecurity('totp_enrolled', req.ip, req.user.email);
+  res.json({ ok: true, backup_codes: codes });
+});
+
+// Régénération des codes de secours (remplace l'ensemble)
+app.post('/api/auth/totp/backup-codes/regenerate', authRequired, (req, res) => {
+  const user = db.prepare('SELECT totp_enabled FROM users WHERE id = ?').get(req.user.id);
+  if (!user?.totp_enabled) return res.status(400).json({ error: 'La 2FA n’est pas active sur ce compte' });
+  const codes = newBackupCodes(10);
+  const stored = codes.map((c) => crypto.createHash('sha256').update(c).digest('hex')).join(';');
+  db.prepare('UPDATE users SET totp_backup_codes = ? WHERE id = ?').run(stored, req.user.id);
+  res.json({ ok: true, backup_codes: codes });
+});
+
+// Désactivation
+app.delete('/api/auth/totp', authRequired, (req, res) => {
+  db.prepare('UPDATE users SET totp_secret = \'\', totp_enabled = 0, totp_backup_codes = \'\' WHERE id = ?').run(req.user.id);
+  logSecurity('totp_disabled', req.ip, req.user.email);
+  res.json({ ok: true });
+});
+
+// État 2FA du compte courant
+app.get('/api/auth/totp/status', authRequired, (req, res) => {
+  const user = db.prepare('SELECT totp_enabled, totp_backup_codes FROM users WHERE id = ?').get(req.user.id);
+  res.json({
+    two_fa_required: getSetting('two_fa_required') === '1',
+    totp_enrolled: !!user?.totp_enabled,
+    backup_remaining: user?.totp_backup_codes ? user.totp_backup_codes.split(';').filter(Boolean).length : 0,
+    email_2fa_available: !!transporter
+  });
+});
+
+// Code par email (secours) — jeton en attente ou session normale
+app.post('/api/auth/2fa/email', authRequired, (req, res) => {
+  if (!transporter) return res.status(503).json({ error: 'L’envoi par email n’est pas configuré sur ce serveur' });
+  const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user.id);
+  if (!user?.email) return res.status(400).json({ error: 'Adresse email manquante' });
+  const recent = db.prepare('SELECT COUNT(*) AS n FROM email_2fa_codes WHERE user_id = ? AND used_at IS NULL AND expires_at > ?').get(req.user.id, Math.floor(Date.now() / 1000));
+  if (recent.n >= 3) return res.status(429).json({ error: 'Trop de codes demandés — réessayez plus tard' });
+  const code = String(crypto.randomInt(100000, 1000000));
+  const hash = crypto.createHash('sha256').update(code).digest('hex');
+  db.prepare('INSERT INTO email_2fa_codes (user_id, code_hash, expires_at) VALUES (?, ?, ?)').run(req.user.id, hash, Math.floor(Date.now() / 1000) + 600);
+  sendMailTo(user.email, 'Votre code ADI ONG', `<p>Bonjour,${req.user.twoFa === 'pending' ? ' pour finaliser votre connexion' : ''}</p><p> votre code de vérification est : <strong style="font-size:20px;letter-spacing:4px">${code}</strong></p><p>Il expire dans 10 minutes. Ne le partagez avec personne.</p>`).then(
+    () => { logSecurity('2fa_email_sent', req.ip, req.user.email); res.json({ sent: true }); },
+    () => res.status(503).json({ error: 'L’envoi de l’email a échoué — réessayez' })
+  );
+});
+
+// Vérification finale : code TOTP, code de secours ou code email
+app.post('/api/auth/2fa/verify', twoFaLimiter, (req, res) => {
+  const { pending_token: pendingToken, code } = req.body || {};
+  let payload;
+  try {
+    payload = jwt.verify(String(pendingToken || ''), JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Session de vérification expirée — reconnectez-vous' });
+  }
+  if (payload.twoFa !== 'pending') return res.status(401).json({ error: 'Identifiants incorrects' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  const input = String(code || '').trim().toUpperCase();
+  let method = null;
+  if (user.totp_enabled && user.totp_secret && verifyTotp(user.totp_secret, input)) method = 'totp';
+  else if (user.totp_backup_codes) {
+    const h = crypto.createHash('sha256').update(input).digest('hex');
+    const codes = user.totp_backup_codes.split(';').filter(Boolean);
+    if (codes.includes(h)) {
+      codes.splice(codes.indexOf(h), 1);
+      db.prepare('UPDATE users SET totp_backup_codes = ? WHERE id = ?').run(codes.join(';'), user.id);
+      method = 'backup';
+    }
+  }
+  if (!method) {
+    const h = crypto.createHash('sha256').update(String(code || '').trim()).digest('hex');
+    const row = db.prepare('SELECT id FROM email_2fa_codes WHERE user_id = ? AND code_hash = ? AND used_at IS NULL AND expires_at > ?').get(user.id, h, Math.floor(Date.now() / 1000));
+    if (row) {
+      db.prepare('UPDATE email_2fa_codes SET used_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), row.id);
+      method = 'email';
+    }
+  }
+  if (!method) {
+    logSecurity('2fa_fail', req.ip, user.email);
+    return res.status(400).json({ error: 'Code incorrect' });
+  }
+  logSecurity('2fa_ok', req.ip, user.email);
+  res.json({ token: issueToken(user), user: publicUser(user) });
+});
+
+// Bascule globale (super admin)
+app.put('/api/admin/security/two-fa', authRequired, (req, res) => {
+  if (!actorIsSuper(req)) return res.status(403).json({ error: 'Réservé au super admin' });
+  const { required } = req.body || {};
+  const on = required ? '1' : '0';
+  setSetting('two_fa_required', on);
+  const uncovered = !transporter
+    ? db.prepare('SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 0').get().n
+    : 0;
+  logSecurity('two_fa_required_' + (on === '1' ? 'on' : 'off'), req.ip, req.user.email);
+  res.json({ two_fa_required: on === '1', uncovered });
+});
+
+app.get('/api/admin/security/two-fa', authRequired, (req, res) => {
+  const on = getSetting('two_fa_required') === '1';
+  const enrolled = db.prepare('SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 1').get().n;
+  res.json({
+    two_fa_required: on,
+    enrolled,
+    uncovered: !transporter ? db.prepare('SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 0').get().n : 0,
+    email_2fa_available: !!transporter
+  });
 });
 
 app.post('/api/auth/logout', authRequired, (req, res) => {
@@ -4058,6 +4220,10 @@ const authChatFile = (req, res, next) => {
     req.user = jwt.verify(token, JWT_SECRET);
     const fresh = db.prepare('SELECT role FROM users WHERE id = ?').get(req.user.id);
     req.user.role = fresh?.role || 'viewer';
+    if (req.user.twoFa === 'pending') {
+      const PENDING_ROUTES = new Set(['/api/auth/totp/setup', '/api/auth/totp/confirm', '/api/auth/2fa/email', '/api/auth/me']);
+      if (!PENDING_ROUTES.has(req.path)) return res.status(401).json({ error: 'Vérification du 2ᵉ facteur requise' });
+    }
     next();
   } catch {
     res.status(401).json({ error: 'Session expirée, reconnectez-vous' });

@@ -230,6 +230,17 @@ migrate("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN unique_code TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''");
+migrate('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0');
+migrate("ALTER TABLE users ADD COLUMN totp_backup_codes TEXT NOT NULL DEFAULT ''");
+migrate(`CREATE TABLE IF NOT EXISTS email_2fa_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
 try { db.prepare("UPDATE users SET role = 'super_admin' WHERE email = 'admin@adiong.org' AND role = 'admin'").run(); } catch { /* déjà fait */ }
 
 export function newUniqueCode() {
