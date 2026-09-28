@@ -1,7 +1,8 @@
 # ADI ONG — installateur Windows (« serveur local »)
 
 Fait fonctionner tout le site (admin + API + base SQLite) sur un PC Windows,
-sans rien installer d'autre : Node.js portable est inclus dans le paquet.
+sans rien installer d'autre : Node.js portable est téléchargé à la
+première installation (~30 Mo, une seule fois).
 
 ## Contenu de l'installation
 
@@ -21,6 +22,9 @@ du site. **Compte super administrateur identique à la production :**
 `admin@adiong.org` / `AdiOng2026!`.
 
 ## Installation
+
+Deux voies : le `.exe` (voie 2 ci-dessous) ou, sans rien préparer,
+dézipper l'archive portable et double-cliquer `setup-portable.bat`.
 
 1. Lancer `ADI-ONG-Setup-<version>.exe` (généré par GitHub Actions, voir ci-dessous).
    Aucun compte administrateur n'est nécessaire (installation dans le dossier
@@ -64,10 +68,13 @@ conservées.
 
 ## Construire / distribuer l'installateur
 
-**Voie 1 — ZIP portable (immédiat).** Un ZIP est publié dans les
-*Releases* GitHub : il suffit de le télécharger, de le dézipper et de
-lancer `setup-portable.bat`. Contenu : Node.js portable, app buildée,
-scripts de lancement. Aucun prérequis sur le PC.
+**Voie 1 — ZIP portable (immédiat).** L'archive `dist/ADI-ONG-portable-<date>.zip`
+est dans le dépôt (lien direct dans la release *windows-portable-<date>* ;
+l'upload d'assets est bloqué depuis l'environnement de build, le ZIP est
+donc versionné dans `dist/` le temps de la livraison). Contenu : app
+buildée, dépendances, scripts de lancement. Aucun prérequis sur le PC :
+dézipper et lancer `setup-portable.bat`, le script télécharge Node.js
+portable puis démarre le serveur.
 
 **Voie 2 — `.exe` via GitHub Actions (une seule action manuelle).**
 Le token du bot Arena n'a pas le droit d'écrire dans `.github/workflows/`
