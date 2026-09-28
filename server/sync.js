@@ -57,8 +57,21 @@ export function nowSec() {
 
 const isoToSec = (expr) => `CAST(strftime('%s', REPLACE(REPLACE(COALESCE(${expr}, ''), 'T', ' '), 'Z', '')) AS INTEGER)`;
 
+// Les écritures de synchro posent updated_at/origin explicitement :
+// les triggers de « écriture locale » doivent être désactivés le temps de l'application.
+function withSyncFlag(fn) {
+  db.prepare('INSERT OR REPLACE INTO sync_flag (k, active) VALUES (1, 1)').run();
+  try { return fn(); } finally {
+    db.prepare('UPDATE sync_flag SET active = 0').run();
+  }
+}
+
 export function migrateSync() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS sync_flag (
+      k INTEGER PRIMARY KEY,
+      active INTEGER NOT NULL DEFAULT 0
+    );
     CREATE TABLE IF NOT EXISTS tombstones (
       table_name TEXT NOT NULL,
       row_id INTEGER NOT NULL,
@@ -101,20 +114,43 @@ export function migrateSync() {
     }
     db.exec(`UPDATE ${t} SET updated_at = ${nowSec()} WHERE updated_at = 0`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_sync ON ${t}(updated_at)`);
+    // sync_flag à 1 : les écritures de la synchro n'ont pas à passer par les
+    // triggers (updated_at/origin sont posés explicitement par applyRow/applyDelete).
     db.exec(`
-      CREATE TRIGGER IF NOT EXISTS trg_${t}_ins AFTER INSERT ON ${t} FOR EACH ROW WHEN NEW.updated_at = 0
+      CREATE TRIGGER IF NOT EXISTS trg_${t}_ins AFTER INSERT ON ${t} FOR EACH ROW
+      WHEN NEW.updated_at = 0 AND (SELECT COALESCE(MAX(active), 0) FROM sync_flag) = 0
       BEGIN UPDATE ${t} SET updated_at = CAST(strftime('%s','now') AS INTEGER), origin = 'local' WHERE rowid = NEW.rowid; END;
-      CREATE TRIGGER IF NOT EXISTS trg_${t}_upd AFTER UPDATE ON ${t} FOR EACH ROW WHEN NEW.updated_at = OLD.updated_at
+      CREATE TRIGGER IF NOT EXISTS trg_${t}_upd AFTER UPDATE ON ${t} FOR EACH ROW
+      WHEN NEW.updated_at = OLD.updated_at AND (SELECT COALESCE(MAX(active), 0) FROM sync_flag) = 0
       BEGIN UPDATE ${t} SET updated_at = CAST(strftime('%s','now') AS INTEGER), origin = 'local' WHERE rowid = NEW.rowid; END;
       CREATE TRIGGER IF NOT EXISTS trg_${t}_del AFTER DELETE ON ${t} FOR EACH ROW
       BEGIN INSERT OR REPLACE INTO tombstones(table_name, row_id, deleted_at, origin) VALUES ('${t}', OLD.id, CAST(strftime('%s','now') AS INTEGER), 'local'); END;
     `);
   }
 
-  if (process.env.LOCAL_COPY === '1') {
-    for (const t of Object.keys(SYNC_TABLES)) {
-      try { db.prepare('UPDATE sqlite_sequence SET seq = MAX(seq, 1000000000000) WHERE name = ?').run(t); } catch { /* pas autoincrement */ }
+  // Nettoyage des triggers créés par une version antérieure pour des tables
+  // qui ne sont plus synchronisées (ex. tables de jointure sans id).
+  const trigs = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'trg\\_%' ESCAPE '\\'").all();
+  for (const tr of trigs) {
+    const t = tr.name.slice(4, tr.name.length - 4);
+    if (!SYNC_TABLES[t]) {
+      try { db.exec(`DROP TRIGGER IF EXISTS ${tr.name}`); } catch { /* déjà parti */ }
     }
+  }
+
+  if (process.env.LOCAL_COPY === '1') bumpIdSpaces();
+}
+
+// Espace d'ids local : les nouvelles lignes locales reçoivent un id ≥ 1e12,
+// jamais utilisé par la prod (petits ids autoincrémentés).
+export function bumpIdSpaces() {
+  if (process.env.LOCAL_COPY !== '1') return;
+  for (const [t, c] of Object.entries(SYNC_TABLES)) {
+    if (!c.push) continue;
+    try {
+      db.prepare('INSERT OR IGNORE INTO sqlite_sequence (name, seq) VALUES (?, 1000000000000)').run(t);
+      db.prepare('UPDATE sqlite_sequence SET seq = MAX(seq, 1000000000000) WHERE name = ?').run(t);
+    } catch { /* table sans autoincrement */ }
   }
 }
 
@@ -125,6 +161,13 @@ export function applyRow(table, id, data, serverTs, origin) {
   if (!Number.isInteger(id) || id <= 0) return { status: 'rejected', reason: 'id invalide' };
   serverTs = Number(serverTs) || 0;
   if (serverTs <= 0) return { status: 'rejected', reason: 'horodatage invalide' };
+  return withSyncFlag(() => applyRowInner(table, id, data, serverTs, origin));
+}
+
+function applyRowInner(table, id, data, serverTs, origin) {
+  // Les médias sont identifiés par leur filename (UNIQUE) : les ids peuvent
+  // différer d'une instance à l'autre, la fusion se fait donc par filename.
+  if (table === 'media') return applyMediaRow(data, serverTs, origin);
 
   const tomb = db.prepare('SELECT deleted_at FROM tombstones WHERE table_name = ? AND row_id = ?').get(table, id);
   const row = db.prepare(`SELECT id, updated_at FROM ${table} WHERE id = ?`).get(id);
@@ -150,26 +193,52 @@ export function applyRow(table, id, data, serverTs, origin) {
     return { status: 'applied' };
   }
   if (Number(row.updated_at) === serverTs) {
-    const cols = Object.keys(data);
-    db.prepare(`UPDATE ${table} SET ${cols.map((c) => `${c} = ?`).join(', ')}, origin = ? WHERE id = ?`)
-      .run(...cols.map((c) => data[c]), origin, id);
+    // même version des deux côtés : rien à faire (et surtout pas
+    // réécrire origin, qui tient la comptabilité des écritures locales)
     return { status: 'applied' };
   }
   const current = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
   return { status: 'conflict', reason: 'version serveur plus récente', row: current };
 }
 
+function applyMediaRow(data, serverTs, origin) {
+  const filename = String(data.filename || '').trim();
+  if (!filename) return { status: 'rejected', reason: 'media sans filename' };
+  const { id: sentId, updated_at, ...rest } = data;
+  const cols = Object.keys(rest);
+  const existing = db.prepare('SELECT * FROM media WHERE filename = ?').get(filename);
+  if (existing) {
+    if (Number(existing.updated_at) <= serverTs) {
+      db.prepare(`UPDATE media SET ${cols.map((c) => `${c} = ?`).join(', ')}, updated_at = ?, origin = ? WHERE id = ?`)
+        .run(...cols.map((c) => rest[c]), serverTs, origin, existing.id);
+      return { status: 'applied' };
+    }
+    return { status: 'conflict', reason: 'version locale plus récente', row: existing };
+  }
+  const idTaken = Number.isInteger(sentId) && db.prepare('SELECT id FROM media WHERE id = ?').get(sentId);
+  if (idTaken) {
+    db.prepare(`INSERT INTO media (${cols.join(', ')}, updated_at, origin) VALUES (${cols.map(() => '?').join(', ')}, ?, ?)`)
+      .run(...cols.map((c) => rest[c]), serverTs, origin);
+  } else {
+    db.prepare(`INSERT INTO media (id, ${cols.join(', ')}, updated_at, origin) VALUES (?, ${cols.map(() => '?').join(', ')}, ?, ?)`)
+      .run(sentId, ...cols.map((c) => rest[c]), serverTs, origin);
+  }
+  return { status: 'applied' };
+}
+
 // Applique une suppression reçue (tombstone) avec LWW.
 export function applyDelete(table, id, deletedTs, origin) {
   deletedTs = Number(deletedTs) || 0;
-  const row = db.prepare(`SELECT id, updated_at FROM ${table} WHERE id = ?`).get(id);
-  if (!row) return { status: 'applied' };
-  if (deletedTs >= Number(row.updated_at)) {
-    db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
-    db.prepare('UPDATE tombstones SET deleted_at = MAX(deleted_at, ?), origin = ? WHERE table_name = ? AND row_id = ?').run(deletedTs, origin, table, id);
-    return { status: 'applied' };
-  }
-  return { status: 'conflict', reason: 'ligne locale plus récente' };
+  return withSyncFlag(() => {
+    const row = db.prepare(`SELECT id, updated_at FROM ${table} WHERE id = ?`).get(id);
+    if (!row) return { status: 'applied' };
+    if (deletedTs >= Number(row.updated_at)) {
+      db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+      db.prepare('UPDATE tombstones SET deleted_at = MAX(deleted_at, ?), origin = ? WHERE table_name = ? AND row_id = ?').run(deletedTs, origin, table, id);
+      return { status: 'applied' };
+    }
+    return { status: 'conflict', reason: 'ligne locale plus récente' };
+  });
 }
 
 export function syncStateGet(collection) {

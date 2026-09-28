@@ -12,18 +12,20 @@ import multer from 'multer';
 import Jimp from 'jimp';
 import QRCode from 'qrcode';
 import { fileURLToPath } from 'node:url';
-import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb } from './db.js';
+import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb, getSetting, setSetting } from './db.js';
 import AdmZip from 'adm-zip';
 import { DatabaseSync } from 'node:sqlite';
 import { seedIfEmpty, ensureSettings, syncMediaLibrary } from './seed.js';
 import { migrateSync, SYNC_TABLES, nowSec, applyRow, applyDelete, logSync, syncStateGet } from './sync.js';
+import { syncWorkerStatus, syncWorkerConfig, syncWorkerRun, syncWorkerStart } from './sync-worker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
+const dataBaseDir = process.env.ADI_DATA_DIR || path.join(__dirname, 'data');
 
 function loadSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  const file = path.join(__dirname, 'data', '.jwt-secret');
+  const file = path.join(dataBaseDir, '.jwt-secret');
   try {
     if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim();
     const secret = crypto.randomBytes(32).toString('hex');
@@ -220,10 +222,6 @@ const notifyEmail = (subject, html) => {
     .then(() => console.log(`[mail] envoyé : ${subject}`))
     .catch((e) => console.error(`[mail] échec : ${e.message}`));
 };
-
-const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
-const setSetting = (key, value) =>
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
 const safeUnlink = (full) => {
   try {
@@ -528,7 +526,7 @@ const isAllowedImage = (file) => {
 
 const isAllowedUpload = (file) => isAllowedImage(file) || isPdfFile(file);
 
-const uploadDir = path.join(__dirname, 'uploads');
+const uploadDir = process.env.ADI_UPLOADS_DIR || path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -914,7 +912,7 @@ app.get('/api/public/donations/qr', async (req, res) => {
 });
 
 // Preuves de paiement (captures d'écran) — stockées hors du site public
-const proofDir = path.join(__dirname, 'data', 'donation-proofs');
+const proofDir = path.join(dataBaseDir, 'donation-proofs');
 fs.mkdirSync(proofDir, { recursive: true });
 const proofLimiter = rateLimit({ windowMs: 60 * 60_000, max: 30, key: (req) => `proof:${req.ip}`, message: 'Trop d’envois de preuve. Réessayez dans une heure.' });
 const proofUpload = multer({
@@ -1738,7 +1736,7 @@ app.get('/api/admin/backup', authRequired, requirePerm('modules.manage'), (req, 
     if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
     checkpointDb();
     const zip = new AdmZip();
-    zip.addLocalFile(path.join(__dirname, 'data', 'adiong.db'), 'db', 'adiong.db');
+    zip.addLocalFile(path.join(dataBaseDir, 'adiong.db'), 'db', 'adiong.db');
     for (const rel of collectUploads(uploadDir, 'uploads')) {
       zip.addLocalFile(path.join(uploadDir, rel.slice('uploads/'.length)), 'uploads', rel.slice('uploads/'.length));
     }
@@ -1809,7 +1807,7 @@ app.post('/api/admin/backup/restore', authRequired, requirePerm('modules.manage'
   }
   try {
     checkpointDb();
-    const dbFile = path.join(__dirname, 'data', 'adiong.db');
+    const dbFile = path.join(dataBaseDir, 'adiong.db');
     fs.renameSync(candidate, dbFile);
     for (const suffix of ['-wal', '-shm']) {
       try { fs.unlinkSync(dbFile + suffix); } catch { /* absent */ }
@@ -1932,6 +1930,29 @@ const scheduleDailyMaintenance = () => {
   }, nextDailyMaintenanceDelay());
 };
 scheduleDailyMaintenance();
+syncWorkerStart();
+
+app.get('/api/admin/sync/config', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  if (process.env.LOCAL_COPY !== '1') return res.status(404).json({ error: 'Indisponible sur cette instance' });
+  const st = syncWorkerStatus();
+  res.json({ ...st, token: st.configured ? '••••' : '' });
+});
+
+app.put('/api/admin/sync/config', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const r = syncWorkerConfig(req.body || {});
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  logSecurity('sync_config', clientIp(req), req.user.email, `${r.url || ''} intervalle=${r.intervalMs}`);
+  res.json(r);
+});
+
+app.post('/api/admin/sync/run', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  if (process.env.LOCAL_COPY !== '1') return res.status(404).json({ error: 'Indisponible sur cette instance' });
+  res.json({ ok: true, started: true });
+  void syncWorkerRun();
+});
 
 // ---------- Synchronisation (Phase 2) ----------
 const SYNC_VIEW_PERM = {
@@ -2050,7 +2071,7 @@ app.get('/api/sync/status', authRequired, (req, res) => {
   }
   res.json({
     enabled: true,
-    last_sync: db.prepare("SELECT at FROM sync_log WHERE direction IN ('push', 'pull') ORDER BY at DESC LIMIT 1").get()?.at || 0,
+    last_sync: db.prepare("SELECT at FROM sync_log WHERE direction IN ('push', 'pull', 'cycle') ORDER BY at DESC LIMIT 1").get()?.at || 0,
     pending_local: pending
   });
 });
@@ -2449,7 +2470,7 @@ app.get('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
 });
 
 // Documents du dossier (privés : accès HR uniquement, jamais servis publiquement)
-const empDocsDir = path.join(__dirname, 'data', 'employee-docs');
+const empDocsDir = path.join(dataBaseDir, 'employee-docs');
 if (!fs.existsSync(empDocsDir)) fs.mkdirSync(empDocsDir, { recursive: true });
 
 const docsUpload = multer({
@@ -2845,7 +2866,7 @@ app.get('/api/admin/grh/payroll/:id/pdf', ...PAY, async (req, res) => {
 });
 
 // ---------- Recrutement : offres + candidats ----------
-const cvDir = path.join(__dirname, 'data', 'cvs');
+const cvDir = path.join(dataBaseDir, 'cvs');
 if (!fs.existsSync(cvDir)) fs.mkdirSync(cvDir, { recursive: true });
 const cvUpload = multer({
   storage: multer.diskStorage({
@@ -3648,7 +3669,7 @@ app.post('/api/admin/grh/chat/:employeeId', ...GRH, (req, res) => {
 });
 
 // ---------- Documents administratifs ----------
-const adminDocsDir = path.join(__dirname, 'data', 'admin-docs');
+const adminDocsDir = path.join(dataBaseDir, 'admin-docs');
 fs.mkdirSync(adminDocsDir, { recursive: true });
 const adminDocsUpload = multer({
   storage: multer.diskStorage({

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, 'data');
+const dataDir = process.env.ADI_DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const DB_FILE = path.join(dataDir, 'adiong.db');
@@ -926,5 +926,9 @@ function ensureComptaSeed() {
   for (const [code, name, nature, cls] of ACCOUNTS) insA.run(code, name, nature, cls);
 }
 ensureComptaSeed();
+
+export const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+export const setSetting = (key, value) =>
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
 export default db;
