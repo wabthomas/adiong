@@ -6428,5 +6428,6 @@ app.use((err, req, res, next) => {
 if (process.env.PORT === 'passenger' || process.env.PASSENGER_APP_ENV) {
   app.listen('passenger', () => console.log('🚀 API ADI ONG (Passenger)'));
 } else {
-  app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API ADI ONG sur http://0.0.0.0:${PORT}`));
+  const host = process.env.HOST || '0.0.0.0';
+  app.listen(PORT, host, () => console.log(`🚀 API ADI ONG sur http://${host}:${PORT}`));
 }

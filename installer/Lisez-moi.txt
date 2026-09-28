@@ -1,0 +1,42 @@
+ADI ONG — copie locale Windows (portable)
+===========================================
+
+INSTALLATION (2 minutes)
+------------------------
+1. Dézippez l'archive dans un dossier (par exemple C:\).
+2. Double-cliquez sur « setup-portable.bat ».
+3. L'assistant copie l'application dans votre dossier utilisateur
+   (AppData\Local\ADI-ONG), installe Node.js, crée les raccourcis et
+   démarre le serveur.
+4. Le navigateur s'ouvre sur http://localhost:4000
+
+   Connexion admin : admin@adiong.org / AdiOng2026!
+
+AU QUOTIDIEN
+------------
+- Démarrer : raccourci « ADI ONG » (Bureau ou menu Démarrer).
+- Arrêter  : raccourci « Arrêter ADI ONG ».
+- Le serveur démarre aussi automatiquement à l'ouverture de session.
+- Journaux : AppData\Local\ADI-ONG\server\data\server.log
+
+MIGRATION DEPUIS LE SITE DE PRODUCTION
+--------------------------------------
+1. Sur adiong.org : Réglages → Sauvegarde → « Télécharger le ZIP ».
+2. Sur la copie locale : Réglages → Sauvegarde → « Restaurer cette
+   sauvegarde » avec le ZIP téléchargé.
+(Identifiants, contenus, comptabilité, POS, GRH : tout est restauré.)
+
+MISE À JOUR
+-----------
+Dézipper la nouvelle archive et relancer setup-portable.bat :
+le code est remplacé, la base de données est conservée.
+
+DÉINSTALLATION
+--------------
+1. Télécharger d'abord une sauvegarde ZIP (Réglages → Sauvegarde) si
+   les données locales doivent être conservées.
+2. Arrêter le serveur (raccourci « Arrêter ADI ONG »).
+3. Supprimer le raccourci de démarrage automatique :
+   - clic droit sur le début de session → « Démarrage des applications »
+     → désactiver « ADI ONG ».
+4. Supprimer le dossier AppData\Local\ADI-ONG.

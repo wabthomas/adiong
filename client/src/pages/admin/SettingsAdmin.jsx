@@ -371,8 +371,7 @@ export default function SettingsAdmin() {
   }, [isSuper, tab]);
 
   const runMaintenance = async () => {
-    if (!confirm('Lancer la maintenance ?
-La base sera optimisée (VACUUM), les journaux de plus d’un an purgés et les fichiers orphelins supprimés.')) return;
+    if (!confirm('Lancer la maintenance ?\nLa base sera optimisée (VACUUM), les journaux de plus d’un an purgés et les fichiers orphelins supprimés.')) return;
     setMaintBusy(true);
     setMaintResult(null);
     try {
