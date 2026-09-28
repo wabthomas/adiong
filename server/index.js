@@ -12,17 +12,20 @@ import multer from 'multer';
 import Jimp from 'jimp';
 import QRCode from 'qrcode';
 import { fileURLToPath } from 'node:url';
-import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb } from './db.js';
+import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb, getSetting, setSetting } from './db.js';
 import AdmZip from 'adm-zip';
 import { DatabaseSync } from 'node:sqlite';
 import { seedIfEmpty, ensureSettings, syncMediaLibrary } from './seed.js';
+import { migrateSync, SYNC_TABLES, nowSec, applyRow, applyDelete, logSync, syncStateGet } from './sync.js';
+import { syncWorkerStatus, syncWorkerConfig, syncWorkerRun, syncWorkerStart } from './sync-worker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
+const dataBaseDir = process.env.ADI_DATA_DIR || path.join(__dirname, 'data');
 
 function loadSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  const file = path.join(__dirname, 'data', '.jwt-secret');
+  const file = path.join(dataBaseDir, '.jwt-secret');
   try {
     if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim();
     const secret = crypto.randomBytes(32).toString('hex');
@@ -52,6 +55,7 @@ loadDotEnv();
 
 ensureSettings();
 seedIfEmpty();
+migrateSync();
 ensureUserCodes();
 // Pas de top-level await : Passenger N0C exige un listen() pendant le chargement sync du startup file.
 void syncMediaLibrary().catch((e) => console.error('[media sync]', e));
@@ -218,10 +222,6 @@ const notifyEmail = (subject, html) => {
     .then(() => console.log(`[mail] envoyé : ${subject}`))
     .catch((e) => console.error(`[mail] échec : ${e.message}`));
 };
-
-const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
-const setSetting = (key, value) =>
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
 const safeUnlink = (full) => {
   try {
@@ -526,7 +526,7 @@ const isAllowedImage = (file) => {
 
 const isAllowedUpload = (file) => isAllowedImage(file) || isPdfFile(file);
 
-const uploadDir = path.join(__dirname, 'uploads');
+const uploadDir = process.env.ADI_UPLOADS_DIR || path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -912,7 +912,7 @@ app.get('/api/public/donations/qr', async (req, res) => {
 });
 
 // Preuves de paiement (captures d'écran) — stockées hors du site public
-const proofDir = path.join(__dirname, 'data', 'donation-proofs');
+const proofDir = path.join(dataBaseDir, 'donation-proofs');
 fs.mkdirSync(proofDir, { recursive: true });
 const proofLimiter = rateLimit({ windowMs: 60 * 60_000, max: 30, key: (req) => `proof:${req.ip}`, message: 'Trop d’envois de preuve. Réessayez dans une heure.' });
 const proofUpload = multer({
@@ -1736,7 +1736,7 @@ app.get('/api/admin/backup', authRequired, requirePerm('modules.manage'), (req, 
     if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
     checkpointDb();
     const zip = new AdmZip();
-    zip.addLocalFile(path.join(__dirname, 'data', 'adiong.db'), 'db', 'adiong.db');
+    zip.addLocalFile(path.join(dataBaseDir, 'adiong.db'), 'db', 'adiong.db');
     for (const rel of collectUploads(uploadDir, 'uploads')) {
       zip.addLocalFile(path.join(uploadDir, rel.slice('uploads/'.length)), 'uploads', rel.slice('uploads/'.length));
     }
@@ -1807,7 +1807,7 @@ app.post('/api/admin/backup/restore', authRequired, requirePerm('modules.manage'
   }
   try {
     checkpointDb();
-    const dbFile = path.join(__dirname, 'data', 'adiong.db');
+    const dbFile = path.join(dataBaseDir, 'adiong.db');
     fs.renameSync(candidate, dbFile);
     for (const suffix of ['-wal', '-shm']) {
       try { fs.unlinkSync(dbFile + suffix); } catch { /* absent */ }
@@ -1930,6 +1930,202 @@ const scheduleDailyMaintenance = () => {
   }, nextDailyMaintenanceDelay());
 };
 scheduleDailyMaintenance();
+syncWorkerStart();
+
+app.get('/api/admin/sync/config', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  if (process.env.LOCAL_COPY !== '1') return res.status(404).json({ error: 'Indisponible sur cette instance' });
+  const st = syncWorkerStatus();
+  res.json({ ...st, token: st.configured ? '••••' : '' });
+});
+
+app.put('/api/admin/sync/config', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const r = syncWorkerConfig(req.body || {});
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  logSecurity('sync_config', clientIp(req), req.user.email, `${r.url || ''} intervalle=${r.intervalMs}`);
+  res.json(r);
+});
+
+app.post('/api/admin/sync/run', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  if (process.env.LOCAL_COPY !== '1') return res.status(404).json({ error: 'Indisponible sur cette instance' });
+  res.json({ ok: true, started: true });
+  void syncWorkerRun();
+});
+
+// ---------- Synchronisation (Phase 2) ----------
+const SYNC_VIEW_PERM = {
+  articles: 'content.view', article_categories: 'content.view', causes: 'content.view',
+  campaigns: 'content.view', partners: 'content.view', media: 'media.view',
+  donations: 'donations.view',
+  stock_products: 'pos.view', stock_categories: 'pos.view', stock_movements: 'pos.view',
+  pos_sales: 'pos.view', pos_sale_items: 'pos.view', pos_returns: 'pos.view',
+  pos_return_items: 'pos.view', shop_orders: 'pos.view',
+  acc_entries: 'compta.view', acc_entry_lines: 'compta.view', acc_exercises: 'compta.view',
+  acc_in_kind: 'compta.view', acc_accounts: 'compta.view', acc_journals: 'compta.view',
+  grh_departments: 'grh.view', grh_employees: 'grh.view', grh_jobs: 'grh.view',
+  grh_candidates: 'grh.view', grh_leaves: 'grh.view', grh_attendance: 'grh.view',
+  grh_payroll: 'grh.view', grh_salary_history: 'grh.view', grh_projects: 'grh.view',
+  grh_tasks: 'grh.view', grh_task_notes: 'grh.view', grh_evaluations: 'grh.view',
+  grh_trainings: 'grh.view', grh_training_attendees: 'grh.view', grh_announcements: 'grh.view',
+  grh_documents: 'grh.view', grh_admin_docs: 'grh.view', grh_project_members: 'grh.view',
+  users: 'users.view'
+};
+const SYNC_EDIT_PERM = {
+  articles: 'content.edit', article_categories: 'content.edit', causes: 'content.edit',
+  campaigns: 'content.edit', partners: 'content.edit', media: 'media.upload',
+  donations: 'donations.edit',
+  stock_products: 'pos.manage', stock_categories: 'pos.manage', stock_movements: 'pos.manage',
+  pos_sales: 'pos.sell', pos_sale_items: 'pos.sell', pos_returns: 'pos.manage',
+  pos_return_items: 'pos.manage', shop_orders: 'pos.manage',
+  acc_entries: 'compta.manage', acc_entry_lines: 'compta.manage', acc_exercises: 'compta.manage',
+  acc_in_kind: 'compta.manage',
+  grh_departments: 'grh.manage', grh_employees: 'grh.manage', grh_jobs: 'grh.manage',
+  grh_candidates: 'grh.manage', grh_leaves: 'grh.manage', grh_attendance: 'grh.attendance',
+  grh_payroll: 'grh.payroll', grh_salary_history: 'grh.payroll', grh_projects: 'grh.manage',
+  grh_tasks: 'grh.manage', grh_task_notes: 'grh.manage', grh_evaluations: 'grh.manage',
+  grh_trainings: 'grh.manage', grh_training_attendees: 'grh.manage', grh_announcements: 'grh.manage',
+  grh_documents: 'grh.manage', grh_admin_docs: 'grh.manage', grh_project_members: 'grh.manage'
+};
+const syncCanRead = (req, table) => actorIsSuper(req) || permEnabled(req.user?.role, SYNC_VIEW_PERM[table]);
+const syncCanWrite = (req, table) => actorIsSuper(req) || permEnabled(req.user?.role, SYNC_EDIT_PERM[table]);
+
+app.get('/api/sync/pull', authRequired, (req, res) => {
+  try {
+    const since = Math.max(0, parseInt(req.query.since || '0', 10) || 0);
+    const out = { serverTime: nowSec(), tables: {}, tombstones: [] };
+    let count = 0;
+    for (const [table, conf] of Object.entries(SYNC_TABLES)) {
+      if (!conf.pull || !syncCanRead(req, table)) continue;
+      const rows = db.prepare(`SELECT * FROM ${table} WHERE updated_at > ? ORDER BY updated_at ASC, id ASC LIMIT 10000`).all(since);
+      out.tables[table] = rows.map(({ origin, ...r }) => r);
+      count += rows.length;
+    }
+    for (const [table, conf] of Object.entries(SYNC_TABLES)) {
+      if (!conf.pull || !syncCanRead(req, table)) continue;
+      for (const t of db.prepare('SELECT row_id AS id, deleted_at FROM tombstones WHERE table_name = ? AND deleted_at > ? ORDER BY deleted_at ASC').all(table, since)) {
+        out.tombstones.push({ table, ...t });
+      }
+    }
+    out.truncated = count >= 10000;
+    res.json(out);
+  } catch (e) {
+    console.error('[sync pull]', e);
+    res.status(500).json({ error: 'Synchronisation impossible' });
+  }
+});
+
+app.post('/api/sync/push', authRequired, (req, res) => {
+  try {
+    const clientId = String(req.body?.clientId || 'inconnu');
+    const items = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 1000) : [];
+    const results = [];
+    let applied = 0, conflicts = 0, rejected = 0;
+    const touched = new Set();
+    for (const item of items) {
+      const table = String(item?.table || '');
+      const conf = SYNC_TABLES[table];
+      const id = Number(item?.id);
+      if (!conf?.push) { rejected++; results.push({ table, id, status: 'rejected', reason: 'table non synchronisée' }); continue; }
+      if (!syncCanWrite(req, table)) { rejected++; results.push({ table, id, status: 'rejected', reason: 'permission insuffisante' }); continue; }
+      if (!Number.isInteger(id) || id <= 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'id invalide' }); continue; }
+      const ts = Number(item?.updated_at) || 0;
+      if (ts <= 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'horodatage invalide' }); continue; }
+      touched.add(table);
+      try {
+        if (item?.deleted) {
+          const r = applyDelete(table, id, ts, 'prod');
+          if (r.status === 'applied') applied++;
+          else { conflicts++; results.push({ table, id, status: 'conflict', reason: r.reason }); }
+        } else {
+          const data = { ...(item.data || {}) };
+          delete data.updated_at;
+          delete data.origin;
+          if (Object.keys(data).length === 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'vide' }); continue; }
+          const r = applyRow(table, id, data, ts, 'prod');
+          if (r.status === 'applied') applied++;
+          else if (r.status === 'conflict') { conflicts++; results.push({ table, id, status: 'conflict', reason: r.reason, row: r.row }); }
+          else { rejected++; results.push({ table, id, status: 'rejected', reason: r.reason }); }
+        }
+      } catch (e) {
+        rejected++;
+        results.push({ table, id, status: 'rejected', reason: e.message || 'erreur' });
+      }
+    }
+    logSync(clientId, 'push', [...touched].join(','), items.length, applied, conflicts, rejected);
+    res.json({ ok: true, results, applied, conflicts, rejected, serverTime: nowSec() });
+  } catch (e) {
+    console.error('[sync push]', e);
+    res.status(500).json({ error: 'Synchronisation impossible' });
+  }
+});
+
+app.get('/api/sync/status', authRequired, (req, res) => {
+  const gs = syncStateGet('_global');
+  let pending = 0;
+  for (const [t, c] of Object.entries(SYNC_TABLES)) {
+    if (!c.push) continue;
+    pending += db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE origin = 'local' AND updated_at > ?`).get(gs.last_pushed_at).n;
+    pending += db.prepare("SELECT COUNT(*) n FROM tombstones WHERE table_name = ? AND origin = 'local' AND deleted_at > ?").get(t, gs.last_pushed_at).n;
+  }
+  res.json({
+    enabled: true,
+    last_sync: db.prepare("SELECT at FROM sync_log WHERE direction IN ('push', 'pull', 'cycle') ORDER BY at DESC LIMIT 1").get()?.at || 0,
+    pending_local: pending
+  });
+});
+
+const SYNC_MEDIA_MAX = 20 * 1024 * 1024;
+const safeUploadPath = (url) => {
+  const rel = String(url || '').replace(/^\/+/, '').replace(/^uploads\//, '');
+  if (!rel || rel.includes('..') || rel.includes('\\')) return null;
+  const full = path.resolve(uploadDir, rel);
+  if (full !== uploadDir && !full.startsWith(uploadDir + path.sep)) return null;
+  return { rel, full };
+};
+
+app.post('/api/sync/media/manifest', authRequired, (req, res) => {
+  if (!syncCanWrite(req, 'media')) return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle' });
+  const items = (Array.isArray(req.body?.files) ? req.body.files : []).slice(0, 200);
+  const out = [];
+  for (const it of items) {
+    const p = safeUploadPath(it?.url);
+    if (!p) { out.push({ url: it?.url, needs: 'invalid' }); continue; }
+    let needs = true;
+    try {
+      const st = fs.statSync(p.full);
+      needs = st.size !== Number(it.size);
+    } catch { needs = true; }
+    out.push({ url: it?.url, needs });
+  }
+  res.json({ ok: true, files: out });
+});
+
+app.put('/api/sync/media/upload', authRequired, express.raw({ type: () => true, limit: SYNC_MEDIA_MAX }), (req, res) => {
+  if (!syncCanWrite(req, 'media')) return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle' });
+  const p = safeUploadPath(req.query.url);
+  if (!p) return res.status(400).json({ error: 'Chemin de média invalide' });
+  const sha = String(req.query.sha256 || '').toLowerCase();
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!body.length) return res.status(400).json({ error: 'Fichier vide' });
+  const shaActual = crypto.createHash('sha256').update(body).digest('hex');
+  if (sha && sha !== shaActual) return res.status(409).json({ error: 'Empreinte du fichier incorrecte' });
+  try {
+    fs.mkdirSync(path.dirname(p.full), { recursive: true });
+    const tmp = p.full + '.tmp-' + crypto.randomBytes(4).toString('hex');
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, p.full);
+    const row = db.prepare('SELECT id FROM media WHERE url = ?').get('/' + p.rel);
+    if (row) db.prepare('UPDATE media SET sha256 = ?, size = ? WHERE id = ?').run(shaActual, body.length, row.id);
+    logSync(String(req.body?.clientId || req.user?.email || 'media'), 'media', p.rel, 1, 1, 0, 0);
+    res.json({ ok: true, size: body.length, sha256: shaActual });
+  } catch (e) {
+    console.error('[sync media upload]', e);
+    res.status(500).json({ error: 'Échec de l’enregistrement du média' });
+  }
+});
+
 
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
@@ -2274,7 +2470,7 @@ app.get('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
 });
 
 // Documents du dossier (privés : accès HR uniquement, jamais servis publiquement)
-const empDocsDir = path.join(__dirname, 'data', 'employee-docs');
+const empDocsDir = path.join(dataBaseDir, 'employee-docs');
 if (!fs.existsSync(empDocsDir)) fs.mkdirSync(empDocsDir, { recursive: true });
 
 const docsUpload = multer({
@@ -2670,7 +2866,7 @@ app.get('/api/admin/grh/payroll/:id/pdf', ...PAY, async (req, res) => {
 });
 
 // ---------- Recrutement : offres + candidats ----------
-const cvDir = path.join(__dirname, 'data', 'cvs');
+const cvDir = path.join(dataBaseDir, 'cvs');
 if (!fs.existsSync(cvDir)) fs.mkdirSync(cvDir, { recursive: true });
 const cvUpload = multer({
   storage: multer.diskStorage({
@@ -3122,7 +3318,7 @@ app.put('/api/admin/grh/projects/:id', ...GRH, (req, res) => {
   const status = PROJECT_STATUSES[b.status] ? b.status : 'planifie';
   const memberIds = [...new Set((Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter((n) => n > 0))];
   runTx(() => {
-    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?, updated_at = datetime('now')
+    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?
       WHERE id = ?`).run(
       String(b.name).trim().slice(0, 150),
       String(b.description || '').slice(0, 2000),
@@ -3247,7 +3443,7 @@ app.put('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
   const nextStatus = o.status ?? ex.status;
   const completedAt = nextStatus === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
   db.prepare(`UPDATE grh_tasks SET
-      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?, updated_at = datetime('now')
+      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?
     WHERE id = ?`).run(
     o.title ?? ex.title,
     o.description ?? ex.description,
@@ -3268,7 +3464,7 @@ const applyTaskStatus = (id, status, { authorId, authorName, note }) => {
   if (!TASK_STATUSES[status]) return { fail: 400, msg: 'Statut invalide' };
   if (status === ex.status && !note) return { ok: ex };
   const completedAt = status === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
-  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`).run(status, completedAt, ex.id);
+  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ? WHERE id = ?`).run(status, completedAt, ex.id);
   if (note) {
     db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
       .run(ex.id, authorId, authorName, String(note).slice(0, 1000));
@@ -3473,7 +3669,7 @@ app.post('/api/admin/grh/chat/:employeeId', ...GRH, (req, res) => {
 });
 
 // ---------- Documents administratifs ----------
-const adminDocsDir = path.join(__dirname, 'data', 'admin-docs');
+const adminDocsDir = path.join(dataBaseDir, 'admin-docs');
 fs.mkdirSync(adminDocsDir, { recursive: true });
 const adminDocsUpload = multer({
   storage: multer.diskStorage({
@@ -6405,7 +6601,7 @@ app.patch('/api/admin/pos/orders/:id', ...POS, (req, res) => {
           .run(p.id, 'entree', qty, nextStock, `Commande en ligne annulée ${o.reference}`, req.user.id);
       }
     }
-    db.prepare(`UPDATE shop_orders SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, o.id);
+    db.prepare(`UPDATE shop_orders SET status = ? WHERE id = ?`).run(status, o.id);
   });
   const up = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(o.id);
   res.json({ ...up, items: lines });

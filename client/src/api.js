@@ -1,3 +1,5 @@
+import { queueWrite, mirrorRows, cacheList, localIdGen, start as startSync } from './sync/engine.js';
+
 const TOKEN_KEY = 'adiong_admin_token';
 const USER_KEY = 'adiong_admin_user';
 
@@ -18,6 +20,76 @@ export const setSavedUser = (u) => {
   window.dispatchEvent(new Event('adiong-user'));
 };
 
+// Collections synchronisables (miroir local) et repli de lecture hors ligne.
+const SYNC_READ_FALLBACK = {
+  '/api/admin/articles': 'articles',
+  '/api/public/articles': 'articles',
+  '/api/admin/article-categories': 'article_categories',
+  '/api/admin/causes': 'causes',
+  '/api/public/causes': 'causes',
+  '/api/admin/campaigns': 'campaigns',
+  '/api/public/campaigns': 'campaigns',
+  '/api/admin/partners': 'partners',
+  '/api/public/partners': 'partners',
+  '/api/public/shop': 'stock_products',
+  '/api/admin/donations': 'donations',
+  '/api/admin/pos/products': 'stock_products',
+  '/api/admin/pos/sales': 'pos_sales',
+  '/api/admin/compta/entries': 'acc_entries',
+  '/api/admin/compta/exercises': 'acc_exercises',
+  '/api/admin/grh/employees': 'grh_employees',
+  '/api/admin/grh/leaves': 'grh_leaves',
+  '/api/admin/grh/departments': 'grh_departments',
+  '/api/admin/grh/jobs': 'grh_jobs',
+  '/api/admin/media': 'media'
+};
+const SYNC_PUBLIC_CACHE = {
+  '/api/public/articles': 'articles',
+  '/api/public/causes': 'causes',
+  '/api/public/campaigns': 'campaigns',
+  '/api/public/partners': 'partners',
+  '/api/public/shop': 'stock_products'
+};
+const OFFLINE_META = [
+  { re: /^\/api\/admin\/articles(\/\d+)?$/, table: 'articles', row: (b) => ({ title: b?.title || 'Nouvel article', slug: '', published: b?.published ? 1 : 0 }) },
+  { re: /^\/api\/admin\/article-categories(\/\d+)?$/, table: 'article_categories', row: (b) => ({ title: b?.title || '' }) },
+  { re: /^\/api\/admin\/causes(\/\d+)?$/, table: 'causes', row: (b) => ({ title: b?.title || '' }) },
+  { re: /^\/api\/admin\/campaigns(\/\d+)?$/, table: 'campaigns', row: (b) => ({ title: b?.title || '' }) },
+  { re: /^\/api\/admin\/partners(\/\d+)?$/, table: 'partners', row: (b) => ({ name: b?.name || '' }) },
+  { re: /^\/api\/donate$/, table: 'donations', row: (b) => ({ donor_name: b?.name || 'Donateur', amount: Number(b?.amount) || 0, method: b?.method || '', status: 'nouvelle' }) },
+  { re: /^\/api\/admin\/donations\/\d+$/, table: 'donations' },
+  { re: /^\/api\/admin\/pos\/sales$/, table: 'pos_sales', row: (b) => ({ total: Number(b?.total) || 0, customer_name: b?.customer_name || '', status: 'attente' }) },
+  { re: /^\/api\/admin\/pos\/products(\/\d+)?$/, table: 'stock_products', row: (b) => ({ name: b?.name || '', price: Number(b?.price) || 0 }) },
+  { re: /^\/api\/admin\/compta\/entries(\/\d+)?$/, table: 'acc_entries', row: (b) => ({ label: b?.label || '', date: b?.date || '', journal_code: b?.journal || '' }) },
+  { re: /^\/api\/admin\/compta\/exercises\/\d+\/close$/, table: null },
+  { re: /^\/api\/admin\/grh\/employees(\/\d+)?$/, table: 'grh_employees', row: (b) => ({ full_name: b?.full_name || '', job_title: b?.job_title || '' }) },
+  { re: /^\/api\/admin\/grh\/leaves(\/\d+)?$/, table: 'grh_leaves', row: (b) => ({ start_date: b?.start_date || '', end_date: b?.end_date || '', type: b?.type || '' }) },
+  { re: /^\/api\/admin\/grh\/departments(\/\d+)?$/, table: 'grh_departments', row: (b) => ({ name: b?.name || '' }) },
+  { re: /^\/api\/admin\/grh\/jobs(\/\d+)?$/, table: 'grh_jobs', row: (b) => ({ title: b?.title || '' }) },
+  { re: /^\/api\/admin\/upload$/, table: 'media' }
+];
+
+async function queueOffline(method, path, body) {
+  const base = path.split('?')[0];
+  const meta = OFFLINE_META.find((m) => m.re.test(base));
+  const m = { table: meta?.table || '' };
+  const idMatch = base.match(/\/(\d+)$/);
+  if (method === 'POST' && meta?.row) {
+    m.localRow = { id: localIdGen(), updated_at: Math.floor(Date.now() / 1000), ...meta.row(body || {}) };
+  } else if (idMatch && m.table && (method === 'PUT' || method === 'DELETE')) {
+    m.localId = Number(idMatch[1]);
+    if (method === 'PUT' && body) {
+      const existing = (await mirrorRows(m.table)).find((r) => r.__id === m.localId);
+      m.localRow = { id: m.localId, updated_at: Math.floor(Date.now() / 1000), ...(existing?.data || existing || {}), ...(typeof body === 'object' ? body : {}) };
+      delete m.localRow.__id;
+      delete m.localRow.__local;
+      delete m.localRow.localPending;
+      delete m.localRow.data;
+    }
+  }
+  await queueWrite(method, base, body, m);
+}
+
 async function req(path, { method = 'GET', body, auth = false, form = false } = {}) {
   const headers = {};
   const isForm = form || (typeof FormData !== 'undefined' && body instanceof FormData);
@@ -27,11 +99,35 @@ async function req(path, { method = 'GET', body, auth = false, form = false } = 
     const t = getToken();
     if (t) headers['Authorization'] = `Bearer ${t}`;
   }
-  const res = await fetch(path, {
-    method,
-    headers,
-    body: body ? (isForm ? body : JSON.stringify(body)) : undefined
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      body: body ? (isForm ? body : JSON.stringify(body)) : undefined
+    });
+  } catch (netErr) {
+    const base = path.split('?')[0];
+    const isMutating = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+    if (isMutating && !/^\/api\/chat\//.test(base)) {
+      await queueOffline(method, path, body);
+      const err = new Error('Hors ligne — modification enregistrée, elle sera transmise au retour de la connexion.');
+      err.offlineQueued = true;
+      throw err;
+    }
+    const fallback = SYNC_READ_FALLBACK[base];
+    if (method === 'GET' && fallback) {
+      const rows = await mirrorRows(fallback);
+      if (rows.length) {
+        if (base === '/api/public/articles') return rows.filter((r) => r.published);
+        if (base === '/api/public/shop') return rows.filter((r) => r.active != 0);
+        return rows;
+      }
+    }
+    const err = new Error('Hors ligne — connexion indisponible.');
+    err.offline = true;
+    throw err;
+  }
   const raw = await res.text();
   let data = {};
   const trimmed = raw.trim();
@@ -44,6 +140,10 @@ async function req(path, { method = 'GET', body, auth = false, form = false } = 
     }
   }
   if (!res.ok) throw new Error(httpErrorMessage(res, data, raw));
+  const base = path.split('?')[0];
+  if (method === 'GET' && SYNC_PUBLIC_CACHE[base] && Array.isArray(data)) {
+    void cacheList(SYNC_PUBLIC_CACHE[base], data);
+  }
   return data;
 }
 
@@ -617,6 +717,12 @@ export const api = {
       remove: (id) => req(`/api/admin/compta/in-kind/${id}`, { method: 'DELETE', auth: true })
     }
   },
+  adminSync: {
+    get: () => req('/api/admin/sync/config', { auth: true }),
+    update: (b) => req('/api/admin/sync/config', { method: 'PUT', body: b, auth: true }),
+    run: () => req('/api/admin/sync/run', { method: 'POST', body: {}, auth: true }),
+    status: () => req('/api/sync/status', { auth: true })
+  },
   chat: {
     upload: async (file) => {
       const fd = new FormData();
@@ -699,6 +805,8 @@ export const api = {
     return req('/api/admin/upload', { method: 'POST', body: fd, auth: true });
   }
 };
+
+export { startSync };
 
 const MONEY_CODES = new Set(['USD', 'EUR', 'CDF']);
 let defaultCurrency = 'USD';

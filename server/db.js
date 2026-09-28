@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, 'data');
+const dataDir = process.env.ADI_DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const DB_FILE = path.join(dataDir, 'adiong.db');
@@ -224,6 +224,7 @@ migrate("ALTER TABLE articles ADD COLUMN seo_description TEXT NOT NULL DEFAULT '
 migrate("ALTER TABLE articles ADD COLUMN seo_image TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE articles ADD COLUMN seo_noindex INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE media ADD COLUMN alt TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE media ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN photo TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT ''");
@@ -370,7 +371,7 @@ CREATE TABLE IF NOT EXISTS grh_projects (
   status TEXT NOT NULL DEFAULT 'planifie',
   created_by INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS grh_project_members (
@@ -391,7 +392,7 @@ CREATE TABLE IF NOT EXISTS grh_tasks (
   created_by INTEGER,
   completed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS grh_task_notes (
@@ -512,7 +513,7 @@ CREATE TABLE IF NOT EXISTS shop_orders (
   payment_method TEXT NOT NULL DEFAULT 'mobile',
   status TEXT NOT NULL DEFAULT 'attente',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
@@ -925,5 +926,9 @@ function ensureComptaSeed() {
   for (const [code, name, nature, cls] of ACCOUNTS) insA.run(code, name, nature, cls);
 }
 ensureComptaSeed();
+
+export const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+export const setSetting = (key, value) =>
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
 export default db;

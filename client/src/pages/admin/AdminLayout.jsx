@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, getToken, setToken, getSavedUser, setSavedUser } from '../../api.js';
+import SyncBadge from '../../sync/SyncBadge.jsx';
 
 const ALL_ROLES = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
 const HR_ROLES = ['super_admin', 'admin'];
@@ -508,6 +509,8 @@ export default function AdminLayout() {
                   {page?.label || 'Administration'}
                 </h1>
               </div>
+
+              <SyncBadge />
 
               <a
                 href="/"

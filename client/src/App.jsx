@@ -21,6 +21,7 @@ import MemberPrintCard from './pages/MemberPrintCard.jsx';
 import NotFound from './pages/NotFound.jsx';
 import Maintenance from './pages/Maintenance.jsx';
 import { useSite } from './hooks/useSite.jsx';
+import { start as startSync } from './sync/engine.js';
 const AdminLogin = lazy(() => import('./pages/admin/AdminLogin.jsx'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
 const Dashboard = lazy(() => import('./pages/admin/Dashboard.jsx'));
@@ -69,6 +70,8 @@ function AdminPage({ children }) {
     </Suspense>
   );
 }
+
+startSync();
 
 function ScrollToTop() {
   const { pathname } = useLocation();
