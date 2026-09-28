@@ -370,7 +370,7 @@ CREATE TABLE IF NOT EXISTS grh_projects (
   status TEXT NOT NULL DEFAULT 'planifie',
   created_by INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS grh_project_members (
@@ -391,7 +391,7 @@ CREATE TABLE IF NOT EXISTS grh_tasks (
   created_by INTEGER,
   completed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS grh_task_notes (
@@ -512,7 +512,7 @@ CREATE TABLE IF NOT EXISTS shop_orders (
   payment_method TEXT NOT NULL DEFAULT 'mobile',
   status TEXT NOT NULL DEFAULT 'attente',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');

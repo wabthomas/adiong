@@ -16,6 +16,7 @@ import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb } from './db
 import AdmZip from 'adm-zip';
 import { DatabaseSync } from 'node:sqlite';
 import { seedIfEmpty, ensureSettings, syncMediaLibrary } from './seed.js';
+import { migrateSync, SYNC_TABLES, nowSec, applyRow, applyDelete, logSync, syncStateGet } from './sync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
@@ -52,6 +53,7 @@ loadDotEnv();
 
 ensureSettings();
 seedIfEmpty();
+migrateSync();
 ensureUserCodes();
 // Pas de top-level await : Passenger N0C exige un listen() pendant le chargement sync du startup file.
 void syncMediaLibrary().catch((e) => console.error('[media sync]', e));
@@ -1931,6 +1933,129 @@ const scheduleDailyMaintenance = () => {
 };
 scheduleDailyMaintenance();
 
+// ---------- Synchronisation (Phase 2) ----------
+const SYNC_VIEW_PERM = {
+  articles: 'content.view', article_categories: 'content.view', causes: 'content.view',
+  campaigns: 'content.view', partners: 'content.view', media: 'media.view',
+  donations: 'donations.view',
+  stock_products: 'pos.view', stock_categories: 'pos.view', stock_movements: 'pos.view',
+  pos_sales: 'pos.view', pos_sale_items: 'pos.view', pos_returns: 'pos.view',
+  pos_return_items: 'pos.view', shop_orders: 'pos.view',
+  acc_entries: 'compta.view', acc_entry_lines: 'compta.view', acc_exercises: 'compta.view',
+  acc_in_kind: 'compta.view', acc_accounts: 'compta.view', acc_journals: 'compta.view',
+  grh_departments: 'grh.view', grh_employees: 'grh.view', grh_jobs: 'grh.view',
+  grh_candidates: 'grh.view', grh_leaves: 'grh.view', grh_attendance: 'grh.view',
+  grh_payroll: 'grh.view', grh_salary_history: 'grh.view', grh_projects: 'grh.view',
+  grh_tasks: 'grh.view', grh_task_notes: 'grh.view', grh_evaluations: 'grh.view',
+  grh_trainings: 'grh.view', grh_training_attendees: 'grh.view', grh_announcements: 'grh.view',
+  grh_documents: 'grh.view', grh_admin_docs: 'grh.view', grh_project_members: 'grh.view',
+  users: 'users.view'
+};
+const SYNC_EDIT_PERM = {
+  articles: 'content.edit', article_categories: 'content.edit', causes: 'content.edit',
+  campaigns: 'content.edit', partners: 'content.edit', media: 'media.upload',
+  donations: 'donations.edit',
+  stock_products: 'pos.manage', stock_categories: 'pos.manage', stock_movements: 'pos.manage',
+  pos_sales: 'pos.sell', pos_sale_items: 'pos.sell', pos_returns: 'pos.manage',
+  pos_return_items: 'pos.manage', shop_orders: 'pos.manage',
+  acc_entries: 'compta.manage', acc_entry_lines: 'compta.manage', acc_exercises: 'compta.manage',
+  acc_in_kind: 'compta.manage',
+  grh_departments: 'grh.manage', grh_employees: 'grh.manage', grh_jobs: 'grh.manage',
+  grh_candidates: 'grh.manage', grh_leaves: 'grh.manage', grh_attendance: 'grh.attendance',
+  grh_payroll: 'grh.payroll', grh_salary_history: 'grh.payroll', grh_projects: 'grh.manage',
+  grh_tasks: 'grh.manage', grh_task_notes: 'grh.manage', grh_evaluations: 'grh.manage',
+  grh_trainings: 'grh.manage', grh_training_attendees: 'grh.manage', grh_announcements: 'grh.manage',
+  grh_documents: 'grh.manage', grh_admin_docs: 'grh.manage', grh_project_members: 'grh.manage'
+};
+const syncCanRead = (req, table) => actorIsSuper(req) || permEnabled(req.user?.role, SYNC_VIEW_PERM[table]);
+const syncCanWrite = (req, table) => actorIsSuper(req) || permEnabled(req.user?.role, SYNC_EDIT_PERM[table]);
+
+app.get('/api/sync/pull', authRequired, (req, res) => {
+  try {
+    const since = Math.max(0, parseInt(req.query.since || '0', 10) || 0);
+    const out = { serverTime: nowSec(), tables: {}, tombstones: [] };
+    let count = 0;
+    for (const [table, conf] of Object.entries(SYNC_TABLES)) {
+      if (!conf.pull || !syncCanRead(req, table)) continue;
+      const rows = db.prepare(`SELECT * FROM ${table} WHERE updated_at > ? ORDER BY updated_at ASC, id ASC LIMIT 10000`).all(since);
+      out.tables[table] = rows.map(({ origin, ...r }) => r);
+      count += rows.length;
+    }
+    for (const [table, conf] of Object.entries(SYNC_TABLES)) {
+      if (!conf.pull || !syncCanRead(req, table)) continue;
+      for (const t of db.prepare('SELECT row_id AS id, deleted_at FROM tombstones WHERE table_name = ? AND deleted_at > ? ORDER BY deleted_at ASC').all(table, since)) {
+        out.tombstones.push({ table, ...t });
+      }
+    }
+    out.truncated = count >= 10000;
+    res.json(out);
+  } catch (e) {
+    console.error('[sync pull]', e);
+    res.status(500).json({ error: 'Synchronisation impossible' });
+  }
+});
+
+app.post('/api/sync/push', authRequired, (req, res) => {
+  try {
+    const clientId = String(req.body?.clientId || 'inconnu');
+    const items = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 1000) : [];
+    const results = [];
+    let applied = 0, conflicts = 0, rejected = 0;
+    const touched = new Set();
+    for (const item of items) {
+      const table = String(item?.table || '');
+      const conf = SYNC_TABLES[table];
+      const id = Number(item?.id);
+      if (!conf?.push) { rejected++; results.push({ table, id, status: 'rejected', reason: 'table non synchronisée' }); continue; }
+      if (!syncCanWrite(req, table)) { rejected++; results.push({ table, id, status: 'rejected', reason: 'permission insuffisante' }); continue; }
+      if (!Number.isInteger(id) || id <= 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'id invalide' }); continue; }
+      const ts = Number(item?.updated_at) || 0;
+      if (ts <= 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'horodatage invalide' }); continue; }
+      touched.add(table);
+      try {
+        if (item?.deleted) {
+          const r = applyDelete(table, id, ts, 'prod');
+          if (r.status === 'applied') applied++;
+          else { conflicts++; results.push({ table, id, status: 'conflict', reason: r.reason }); }
+        } else {
+          const data = { ...(item.data || {}) };
+          delete data.updated_at;
+          delete data.origin;
+          if (Object.keys(data).length === 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'vide' }); continue; }
+          const r = applyRow(table, id, data, ts, 'prod');
+          if (r.status === 'applied') applied++;
+          else if (r.status === 'conflict') { conflicts++; results.push({ table, id, status: 'conflict', reason: r.reason, row: r.row }); }
+          else { rejected++; results.push({ table, id, status: 'rejected', reason: r.reason }); }
+        }
+      } catch (e) {
+        rejected++;
+        results.push({ table, id, status: 'rejected', reason: e.message || 'erreur' });
+      }
+    }
+    logSync(clientId, 'push', [...touched].join(','), items.length, applied, conflicts, rejected);
+    res.json({ ok: true, results, applied, conflicts, rejected, serverTime: nowSec() });
+  } catch (e) {
+    console.error('[sync push]', e);
+    res.status(500).json({ error: 'Synchronisation impossible' });
+  }
+});
+
+app.get('/api/sync/status', authRequired, (req, res) => {
+  const gs = syncStateGet('_global');
+  let pending = 0;
+  for (const [t, c] of Object.entries(SYNC_TABLES)) {
+    if (!c.push) continue;
+    pending += db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE origin = 'local' AND updated_at > ?`).get(gs.last_pushed_at).n;
+    pending += db.prepare("SELECT COUNT(*) n FROM tombstones WHERE table_name = ? AND origin = 'local' AND deleted_at > ?").get(t, gs.last_pushed_at).n;
+  }
+  res.json({
+    enabled: true,
+    last_sync: db.prepare("SELECT at FROM sync_log WHERE direction IN ('push', 'pull') ORDER BY at DESC LIMIT 1").get()?.at || 0,
+    pending_local: pending
+  });
+});
+
+
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
@@ -3122,7 +3247,7 @@ app.put('/api/admin/grh/projects/:id', ...GRH, (req, res) => {
   const status = PROJECT_STATUSES[b.status] ? b.status : 'planifie';
   const memberIds = [...new Set((Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter((n) => n > 0))];
   runTx(() => {
-    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?, updated_at = datetime('now')
+    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?
       WHERE id = ?`).run(
       String(b.name).trim().slice(0, 150),
       String(b.description || '').slice(0, 2000),
@@ -3247,7 +3372,7 @@ app.put('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
   const nextStatus = o.status ?? ex.status;
   const completedAt = nextStatus === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
   db.prepare(`UPDATE grh_tasks SET
-      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?, updated_at = datetime('now')
+      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?
     WHERE id = ?`).run(
     o.title ?? ex.title,
     o.description ?? ex.description,
@@ -3268,7 +3393,7 @@ const applyTaskStatus = (id, status, { authorId, authorName, note }) => {
   if (!TASK_STATUSES[status]) return { fail: 400, msg: 'Statut invalide' };
   if (status === ex.status && !note) return { ok: ex };
   const completedAt = status === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
-  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`).run(status, completedAt, ex.id);
+  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ? WHERE id = ?`).run(status, completedAt, ex.id);
   if (note) {
     db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
       .run(ex.id, authorId, authorName, String(note).slice(0, 1000));
@@ -6405,7 +6530,7 @@ app.patch('/api/admin/pos/orders/:id', ...POS, (req, res) => {
           .run(p.id, 'entree', qty, nextStock, `Commande en ligne annulée ${o.reference}`, req.user.id);
       }
     }
-    db.prepare(`UPDATE shop_orders SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, o.id);
+    db.prepare(`UPDATE shop_orders SET status = ? WHERE id = ?`).run(status, o.id);
   });
   const up = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(o.id);
   res.json({ ...up, items: lines });
