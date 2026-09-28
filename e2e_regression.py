@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Test E2E de régression générale : site public, auth, contenu, dons,
 # boutique en ligne / POS, mode maintenance, modules et réglages.
+import io
 import json
 import os
 import sqlite3
@@ -188,9 +189,129 @@ def main():
         check("statut invalide → 400", s == 400, f"status={s}")
         s, bc = call("GET", "/api/admin/pos/products/by-barcode/999001", token=T)
         check("recherche par code-barres", s == 200 and bc.get("id") == pid, f"status={s}")
+
+        print("== Fiche de stock ==")
+        s, fc = call("GET", f"/api/admin/pos/products/{pid}/stock-card", token=T)
+        fc_rows = fc.get("movements") if isinstance(fc, dict) else []
+        check("fiche complète (solde 3, 2 lignes)", s == 200 and fc.get("opening") == 0 and fc.get("closing") == 3 and len(fc_rows) == 2, f"status={s} n={len(fc_rows)} closing={fc.get('closing') if isinstance(fc, dict) else '-'}")
+        check("fiche : parcours 5 → 3", [r.get("balance") for r in fc_rows] == [5, 3], f"{[r.get('balance') for r in fc_rows]}")
+        s, _ = call("POST", f"/api/admin/pos/products/{pid}/movements", {"type": "entree", "qty": 4, "reason": f"Réappro E2E {stamp}"}, token=T)
+        check("entrée de réappro (200)", s == 200, f"status={s}")
+        s, fc2 = call("GET", f"/api/admin/pos/products/{pid}/stock-card", token=T)
+        fc2_rows = fc2.get("movements") if isinstance(fc2, dict) else []
+        check("fiche après réappro (solde 7, 3 lignes)", s == 200 and fc2.get("closing") == 7 and len(fc2_rows) == 3 and fc2_rows[-1].get("balance") == 7, f"closing={fc2.get('closing') if isinstance(fc2, dict) else '-'}")
+        s, csv = call("GET", f"/api/admin/pos/products/{pid}/stock-card?format=csv", token=T, raw=True)
+        check("export CSV fiche de stock", s == 200 and isinstance(csv, bytes) and b"Date;Type;Motif" in csv, f"status={s}")
+        s, pdf = call("GET", f"/api/admin/pos/products/{pid}/stock-card?format=pdf", token=T, raw=True)
+        check("export PDF fiche de stock", s == 200 and isinstance(pdf, bytes) and pdf[:4] == b"%PDF", f"status={s}")
+        s, _ = call("GET", "/api/admin/pos/products/999999/stock-card", token=T)
+        check("fiche produit inconnu (404)", s == 404, f"status={s}")
+
         call("PUT", "/api/admin/modules", {"pos_enabled": False}, token=T)
         s, shop = call("GET", "/api/public/shop")
         check("boutique fermée → 403", s == 403, f"status={s} {shop}")
+
+        print("== Sauvegarde / restauration ==")
+        s, _ = call("POST", "/api/admin/articles", {"title": f"E2E BACKUP MARKER {stamp}", "content": "test", "published": 0}, token=T)
+        check("article marqueur créé", s == 200 and _.get("id"), f"status={s}")
+        mk_id = _.get("id")
+        s, zbuf = call("GET", "/api/admin/backup", token=T, raw=True)
+        check("sauvegarde ZIP téléchargée", s == 200 and isinstance(zbuf, bytes) and zbuf[:2] == b"PK", f"status={s}")
+        s, _ = call("POST", "/api/admin/articles", {"title": f"E2E BACKUP LATER {stamp}", "content": "test", "published": 0}, token=T)
+        check("article post-sauvegarde créé", s == 200, f"status={s}")
+
+        def multipart_post(path, field, filename, content, ctype, tok):
+            boundary = "----E2EBoundary" + stamp
+            body = io.BytesIO()
+            body.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{filename}"\r\nContent-Type: {ctype}\r\n\r\n'.encode())
+            body.write(content)
+            body.write(f'\r\n--{boundary}--\r\n'.encode())
+            r = urllib.request.Request(BASE + path, data=body.getvalue(), method="POST")
+            r.add_header("Authorization", "Bearer " + tok)
+            r.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+            try:
+                with urllib.request.urlopen(r) as resp:
+                    return resp.status, json.loads(resp.read().decode())
+            except urllib.error.HTTPError as e:
+                try:
+                    return e.code, json.loads(e.read().decode())
+                except Exception:
+                    return e.code, {}
+
+        s, rd = multipart_post("/api/admin/backup/restore", "file", "bk.zip", zbuf, "application/zip", T)
+        check("restauration 200", s == 200 and rd.get("ok"), f"status={s} {rd}")
+        check("compteurs restaurés", rd.get("restored", {}).get("users", 0) >= 1, f"{rd.get('restored')}")
+        s, arts = call("GET", "/api/admin/articles?limit=200", token=T)
+        titles = [a.get("title") for a in arts] if isinstance(arts, list) else []
+        check("état restauré (marqueur oui / post-sauvegarde non)",
+              f"E2E BACKUP MARKER {stamp}" in titles and f"E2E BACKUP LATER {stamp}" not in titles, f"n={len(titles)}")
+        s, rd = multipart_post("/api/admin/backup/restore", "file", "x.txt", b"pas un zip", "text/plain", T)
+        check("fichier non .zip rejeté (400)", s == 400, f"status={s} {rd}")
+        s, _ = call("POST", "/api/admin/users", {"email": f"e2e-nonsup-{stamp}@exemple.org", "password": "E2E-backup-2026!", "full_name": "Non Sup", "role": "admin"}, token=T)
+        nonsup_id = _.get("id") if isinstance(_, dict) else None
+        if nonsup_id:
+            t2 = call("POST", "/api/auth/login", {"email": f"e2e-nonsup-{stamp}@exemple.org", "password": "E2E-backup-2026!"})[1].get("token")
+            s, _ = call("GET", "/api/admin/backup", token=t2, raw=True)
+            check("backup refusé au non-super (403)", s == 403, f"status={s}")
+            call("DELETE", f"/api/admin/users/{nonsup_id}", token=T)
+        else:
+            check("user non-super créé pour le test 403", s == 200, f"status={s}")
+        call("DELETE", f"/api/admin/articles/{mk_id}", token=T)
+
+        print("== Audit des actions (IP réelle) ==")
+        s, au = call("GET", "/api/admin/audit", token=T)
+        au_rows = au.get("rows") if isinstance(au, dict) else []
+        check("journal d'audit lisible (super)", s == 200 and len(au_rows) >= 1, f"status={s} n={len(au_rows)}")
+        check("IP enregistrée sur chaque ligne", all(r.get("ip") for r in au_rows), f"{[r.get('ip') for r in au_rows][:3]}")
+        check("écriture admin tracée (PUT modules)", any(r.get("method") == "PUT" and r.get("path") == "/api/admin/modules" and r.get("email") for r in au_rows))
+        check("login public tracé", any(r.get("path") == "/api/auth/login" for r in au_rows))
+        check("top_ips et by_status fournis", isinstance(au.get("top_ips"), list) and isinstance(au.get("by_status"), list))
+        s, au2 = call("GET", "/api/admin/audit?method=PUT", token=T)
+        check("filtre méthode (PUT)", s == 200 and all(r.get("method") == "PUT" for r in au2.get("rows", [])) and len(au2.get("rows", [])) >= 1, f"n={len(au2.get('rows', []))}")
+
+        print("== Protection : alertes & IP bloquées ==")
+        s, _ = call("POST", "/api/admin/security/blocklist", {"ip": "203.0.113.77", "reason": f"Test E2E {stamp}"}, token=T)
+        check("blocage d'IP (200)", s == 200 and _.get("ok"), f"status={s} {_}")
+        s, _ = call("POST", "/api/admin/security/blocklist", {"ip": "203.0.113.77"}, token=T)
+        check("doublon (409)", s == 409, f"status={s}")
+        s, _ = call("POST", "/api/admin/security/blocklist", {"ip": "999.1.1.1"}, token=T)
+        check("IP invalide (400)", s == 400, f"status={s}")
+        s, bl = call("GET", "/api/admin/security/blocklist", token=T)
+        check("IP listée comme bloquée", s == 200 and any(b.get("ip") == "203.0.113.77" for b in bl), f"n={len(bl) if isinstance(bl, list) else bl}")
+        for i in range(5):
+            s, _ = call("POST", "/api/auth/login", {"email": "e2e-bad@example.org", "password": f"Mauvais-{stamp}-{i}"})
+            if s == 429:
+                break
+        time.sleep(1)
+        s, al = call("GET", "/api/admin/security/alerts", token=T)
+        check("alerte échecs de connexion (≥5/15 min)", s == 200 and any(a.get("n", 0) >= 5 for a in al), f"status={s} {al}")
+        s, _ = call("DELETE", "/api/admin/security/blocklist/203.0.113.77", token=T)
+        check("déblocage (200)", s == 200, f"status={s}")
+        s, _ = call("DELETE", "/api/admin/security/blocklist/203.0.113.77", token=T)
+        check("déblocage inconnu (404)", s == 404, f"status={s}")
+
+        print("== Maintenance ==")
+        os.makedirs("server/data/donation-proofs", exist_ok=True)
+        os.makedirs("server/data/cvs", exist_ok=True)
+        open("server/data/donation-proofs/e2e-orpheline-" + stamp + ".pdf", "w").write("x")
+        open("server/data/cvs/e2e-orpheline-" + stamp + ".pdf", "w").write("x")
+        con2 = sqlite3.connect(DB_FILE, timeout=10)
+        con2.execute("INSERT INTO security_events (type, ip, email, detail, created_at) VALUES ('login_fail', '1.2.3.4', 'vieux@ex.org', 'purge e2e', datetime('now', '-400 days'))")
+        con2.commit()
+        con2.close()
+        s, mt = call("POST", "/api/admin/maintenance", token=T)
+        check("maintenance 200", s == 200 and mt.get("ok"), f"status={s} {mt}")
+        check("VACUUM/ANALYZE effectués", mt.get("vacuum") is True)
+        check("journal vieux purgé", mt.get("logs_purged", 0) >= 1, f"purged={mt.get('logs_purged')}")
+        mfiles = {o.get("file") for o in mt.get("orphan_files", [])}
+        check("orphelins supprimés",
+              f"data/donation-proofs/e2e-orpheline-{stamp}.pdf" in mfiles and f"data/cvs/e2e-orpheline-{stamp}.pdf" in mfiles, str(mfiles))
+        check("fichiers orphelins absents",
+              not os.path.exists(f"server/data/donation-proofs/e2e-orpheline-{stamp}.pdf")
+              and not os.path.exists(f"server/data/cvs/e2e-orpheline-{stamp}.pdf"))
+        check("images du site préservées", os.path.exists("server/uploads/seed/about.jpg"))
+        s, mt2 = call("GET", "/api/admin/maintenance", token=T)
+        check("horodatage de la dernière maintenance", s == 200 and bool(mt2.get("last")), f"{mt2}")
 
         print("== Mode maintenance ==")
         call("PUT", "/api/admin/modules", {"maintenance_enabled": True, "maintenance_message": "E2E maintenance"}, token=T)
@@ -237,6 +358,7 @@ def main():
                         (f"Donateur E2E {stamp}", f"don{stamp}@exemple.org"))
             order_ref = (order or {}).get("reference", "x")
             cur.execute("DELETE FROM stock_movements WHERE reason LIKE ?", (f"Commande en ligne {order_ref}%",))
+            cur.execute("DELETE FROM stock_movements WHERE reason LIKE ?", (f"Réappro E2E {stamp}%",))
             cur.execute("DELETE FROM shop_orders WHERE customer_name LIKE ?", (f"Client E2E {stamp}",))
             cur.execute("DELETE FROM stock_products WHERE name LIKE ?", (f"Produit E2E {stamp}",))
             cur.execute("DELETE FROM stock_categories WHERE name LIKE ?", (f"Catégorie E2E {stamp}",))

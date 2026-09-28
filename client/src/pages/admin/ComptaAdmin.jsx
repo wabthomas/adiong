@@ -98,6 +98,8 @@ const TABS = [
   { id: 'in_kind', group: 'Saisie', label: 'Contributions en nature', hint: 'Apports reçus (971) et donnés (911)', icon: 'gift' },
   { id: 'balance', group: 'Analyse', label: 'Balance', hint: 'Totaux débits / crédits par compte', icon: 'balance' },
   { id: 'ledger', group: 'Analyse', label: 'Grand livre', hint: "Mouvements d'un compte", icon: 'ledger' },
+  { id: 'cashbook', group: 'Analyse', label: 'Livre de caisse', hint: 'Encaissements et décaissements (compte 531)', icon: 'cashbook' },
+  { id: 'bankbook', group: 'Analyse', label: 'Livre de banque', hint: 'Comptes bancaires, Mobile Money et suspense (51x, 581)', icon: 'bankbook' },
   { id: 'states', group: 'Analyse', label: 'États financiers', hint: 'Bilan et compte de résultat', icon: 'states' }
 ];
 
@@ -111,6 +113,8 @@ const ICONS = {
   gift: 'M21 11.25v8.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 1 0 9.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1 1 14.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z',
   balance: 'M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z',
   ledger: 'M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25',
+  cashbook: 'M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.151A60.075 60.075 0 0 1 18.75 19.5M6 3h12m-6 9h.008v.008H12V12Zm0 3h.008v.008H12V15Z',
+  bankbook: 'M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z',
   states: 'M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z',
   chart: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z',
   bank: 'M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.151A60.075 60.075 0 0 1 18.75 19.5M6 3h12m-6 9h.008v.008H12V12Zm0 3h.008v.008H12V15Z',
@@ -215,6 +219,8 @@ export default function ComptaAdmin() {
       {tab === 'in_kind' && <InKindTab refresh={refresh} />}
       {tab === 'balance' && <BalanceTab />}
       {tab === 'ledger' && <LedgerTab />}
+      {tab === 'cashbook' && <CashBookTab book="caisse" />}
+      {tab === 'bankbook' && <CashBookTab book="banque" />}
       {tab === 'states' && <StatesTab />}
     </div>
   );
@@ -1342,6 +1348,95 @@ function LedgerTab() {
             {acc && <p className="mt-3 text-xs text-ink-400">{acc.code} — {acc.name} · nature : {NATURES[acc.nature] || acc.nature}</p>}
           </div>
         )}
+      </Section>
+    </div>
+  );
+}
+
+function CashBookTab({ book }) {
+  const [from, setFrom] = useState(month1());
+  const [to, setTo] = useState(today());
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const isCaisse = book === 'caisse';
+  const title = isCaisse ? 'Livre de caisse' : 'Livre de banque';
+  const desc = isCaisse
+    ? 'Encaissements et décaissements de la caisse (compte 531), en ordre chronologique avec solde courant.'
+    : 'Mouvements des comptes bancaires, Mobile Money et suspense (511, 512, 516, 5161-63, 581), avec solde courant.';
+
+  useEffect(() => {
+    api.compta.cashBook({ book, from, to }).then((r) => { setData(r); setError(''); }).catch((e) => setError(e.message || 'Erreur'));
+  }, [book, from, to]);
+
+  const rows = data?.rows || [];
+  const exportCsv = () => {
+    if (!rows.length) return;
+    downloadCsv(`livre-${book}-${from}_${to}.csv`,
+      ['Date', 'Réf.', 'Journal', 'Libellé', 'Compte', 'Encaissements (USD)', 'Décaissements (USD)', 'Solde (USD)'],
+      rows.map((r) => [r.date, r.ref, r.journal_code, r.line_label || r.label || '', r.account_code, (r.debit || 0).toFixed(2), (r.credit || 0).toFixed(2), r.cum.toFixed(2)]));
+  };
+  const exportPdf = () => {
+    if (!rows.length) return;
+    api.compta.statements.download(`/api/admin/compta/cash-book?book=${book}&from=${from}&to=${to}&format=pdf`, `livre-${book}-${from}_${to}.pdf`).catch((e) => setError(e.message || 'Export impossible'));
+  };
+
+  return (
+    <div className="space-y-6">
+      {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
+      <Section title={title} desc={desc}
+        action={
+          <div className="flex gap-2">
+            <button onClick={exportCsv} disabled={!rows.length} className="rounded-xl px-3 py-2 text-sm font-bold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-40">Export CSV</button>
+            <button onClick={exportPdf} disabled={!rows.length} className="rounded-xl bg-brand-600 px-3 py-2 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-40">Export PDF</button>
+          </div>
+        }>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" />
+          <span className="text-xs text-ink-400">au</span>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-xl border-0 bg-ink-50 px-3 py-2 text-sm ring-1 ring-ink-200" />
+          {data && (
+            <span className="ml-auto text-sm text-ink-500">
+              Solde initial : <b className="tabular-nums text-ink-900">{fmt(data.opening)}</b>
+              <span className="mx-2 text-ink-300">·</span>
+              Solde de fin : <b className={`tabular-nums ${data.closing >= 0 ? 'text-ink-900' : 'text-red-600'}`}>{fmt(data.closing)}</b>
+            </span>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-100 text-left text-xs font-bold uppercase tracking-wider text-ink-400">
+                <th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Réf.</th><th className="py-2 pr-3">Journal</th>
+                <th className="py-2 pr-3">Libellé</th><th className="py-2 pr-3">Compte</th>
+                <th className="py-2 pr-3 text-right">Encaissements</th><th className="py-2 pr-3 text-right">Décaissements</th>
+                <th className="py-2 text-right">Solde</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data?.opening !== 0 && data && (
+                <tr className="border-b border-ink-50 bg-ink-50/50">
+                  <td className="py-2 pr-3 text-xs text-ink-400">—</td>
+                  <td className="py-2 pr-3" colSpan={4}><span className="text-xs font-bold text-ink-500">Solde au {from ? `1er jour avant le ${from}` : '1/01'}</span></td>
+                  <td className="py-2 pr-3 text-right tabular-nums" colSpan={2}></td>
+                  <td className="py-2 text-right font-semibold tabular-nums text-ink-700">{fmt(data.opening)}</td>
+                </tr>
+              )}
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-ink-50 last:border-0">
+                  <td className="py-2 pr-3 whitespace-nowrap">{r.date}</td>
+                  <td className="py-2 pr-3 font-mono text-xs text-ink-500">{r.ref}</td>
+                  <td className="py-2 pr-3"><span className="rounded-md bg-ink-50 px-1.5 py-0.5 text-xs font-bold text-ink-500">{r.journal_code}</span></td>
+                  <td className="py-2 pr-3 text-ink-900">{r.line_label || r.label}</td>
+                  <td className="py-2 pr-3 font-mono text-xs">{r.account_code}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{r.debit ? fmt(r.debit) : '—'}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{r.credit ? fmt(r.credit) : '—'}</td>
+                  <td className={`py-2 text-right font-semibold tabular-nums ${r.cum >= 0 ? 'text-ink-900' : 'text-red-600'}`}>{fmt(r.cum)}</td>
+                </tr>
+              ))}
+              {data && rows.length === 0 && <tr><td colSpan={8} className="py-8 text-center text-sm text-ink-400">Aucun mouvement sur la période.</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </Section>
     </div>
   );

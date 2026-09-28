@@ -1,0 +1,81 @@
+name: Installateur Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - 'client/**'
+      - 'server/**'
+      - '.github/workflows/windows-installer.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+
+      - name: Build du client
+        shell: pwsh
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+          if (-not (Test-Path dist\index.html)) { throw "Build client manquant" }
+
+      - name: Dépendances du serveur
+        shell: pwsh
+        working-directory: server
+        run: npm ci
+
+      - name: Node.js portable (Windows x64, dernière 22.x)
+        shell: pwsh
+        run: |
+          $index = Invoke-RestMethod "https://nodejs.org/dist/index.json"
+          $latest = $index | Where-Object { $_.version -like 'v22.*' } | Select-Object -First 1
+          $ver = $latest.version
+          $url = "https://nodejs.org/dist/$ver/node-$ver-win-x64.zip"
+          Write-Host "Téléchargement $url"
+          Invoke-WebRequest -Uri $url -OutFile "node-win-x64.zip" -UseBasicParsing
+          New-Item -ItemType Directory -Force -Path "stage\node" | Out-Null
+          tar -xf "node-win-x64.zip" -C "stage\node" --strip-components=1
+          if (-not (Test-Path "stage\node\node.exe")) { throw "node.exe manquant" }
+          Set-Content -Path "stage\node\VERSION" -Value $ver
+
+      - name: Assemblage du dossier d'installation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "stage\client\dist", "stage\server", "stage\launcher" | Out-Null
+          Copy-Item -Recurse "client\dist\*" "stage\client\dist\"
+          Copy-Item "server\index.js", "server\db.js", "server\seed.js", "server\package.json", "server\package-lock.json" "stage\server\"
+          New-Item -ItemType Directory -Force -Path "stage\server\uploads\seed" | Out-Null
+          Copy-Item -Recurse "server\uploads\seed\*" "stage\server\uploads\seed\"
+          New-Item -ItemType Directory -Force -Path "stage\server\node_modules" | Out-Null
+          Copy-Item -Recurse "server\node_modules\*" "stage\server\node_modules\"
+          Copy-Item "installer\launcher\*" "stage\launcher\"
+          Copy-Item "installer\setup.iss" "stage\setup.iss"
+          if (Test-Path "stage\server\data") { Remove-Item -Recurse -Force "stage\server\data" }
+
+      - name: Compilation de l'installateur (Inno Setup)
+        shell: pwsh
+        working-directory: stage
+        run: |
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          iscc /DMyAppVersion="1.0.0-$sha" setup.iss
+          Get-ChildItem Output
+
+      - name: Envoi de l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ADI-ONG-Installateur
+          path: stage/Output/*.exe
+          if-no-files-found: error

@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -11,7 +12,9 @@ import multer from 'multer';
 import Jimp from 'jimp';
 import QRCode from 'qrcode';
 import { fileURLToPath } from 'node:url';
-import db, { newUniqueCode, ensureUserCodes } from './db.js';
+import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb } from './db.js';
+import AdmZip from 'adm-zip';
+import { DatabaseSync } from 'node:sqlite';
 import { seedIfEmpty, ensureSettings, syncMediaLibrary } from './seed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -96,6 +99,51 @@ app.use(cors({
   credentials: false
 }));
 app.use(express.json({ limit: '2mb' }));
+
+// IP réelle : derrière un reverse proxy, X-Forwarded-For fait foi (TRUST_PROXY=1 ou NODE_ENV=production)
+const TRUST_PROXY = process.env.TRUST_PROXY === '1' || process.env.NODE_ENV === 'production';
+if (TRUST_PROXY) app.set('trust proxy', true);
+const clientIp = (req) => {
+  if (TRUST_PROXY) {
+    const h = req.headers['x-forwarded-for'];
+    if (h) {
+      const first = String(h).split(',')[0].trim();
+      if (first && first !== '::1') return first;
+    }
+  }
+  return req.ip || '';
+};
+
+// Journal d'audit : écritures admin + actions publiques sensibles (avec IP réelle)
+const AUDIT_PUBLIC = [
+  { method: 'POST', re: /^\/api\/donate$/ },
+  { method: 'POST', re: /^\/api\/public\/shop\/orders$/ },
+  { method: 'POST', re: /^\/api\/register$/ },
+  { method: 'POST', re: /^\/api\/auth\/login$/ }
+];
+const auditMiddleware = (req, res, next) => {
+  const isPublic = AUDIT_PUBLIC.some((a) => a.method === req.method && a.re.test(req.path));
+  const isAdminWrite = req.path.startsWith('/api/admin/') && req.method !== 'GET' && req.method !== 'HEAD';
+  if (!isPublic && !isAdminWrite) return next();
+  res.on('finish', () => {
+    try {
+      db.prepare('INSERT INTO audit_log (user_id, email, role, method, path, ip, ua, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(req.user?.id || null, req.user?.email || '', req.user?.role || 'public', req.method, String(req.path).slice(0, 300), clientIp(req), String(req.headers['user-agent'] || '').slice(0, 200), res.statusCode);
+    } catch { /* non bloquant */ }
+  });
+  next();
+};
+app.use(auditMiddleware);
+
+const ipBlocked = (ip) => {
+  try { return !!db.prepare('SELECT 1 FROM ip_blocklist WHERE ip = ?').get(ip); } catch { return false; }
+};
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return next();
+  const ip = clientIp(req);
+  if (ip && ipBlocked(ip)) return res.status(403).json({ blocked: true, error: 'Accès refusé' });
+  next();
+});
 
 // Chemins typiques des scanners WordPress (l'ancien site en était victime) → 404 uniforme
 const SUSPICIOUS_PATHS = [
@@ -1500,6 +1548,70 @@ app.get('/api/admin/security', authRequired, requirePerm('security.view'), (req,
   res.json(rows);
 });
 
+app.get('/api/admin/audit', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const { from, to, method, q } = req.query;
+  const where = [];
+  const params = [];
+  if (from) { where.push('date(created_at) >= ?'); params.push(String(from).slice(0, 10)); }
+  if (to) { where.push('date(created_at) <= ?'); params.push(String(to).slice(0, 10)); }
+  if (method) { where.push('method = ?'); params.push(String(method).toUpperCase().slice(0, 10)); }
+  if (q) {
+    where.push('(path LIKE ? OR email LIKE ? OR ip LIKE ?)');
+    const like = `%${String(q).slice(0, 100)}%`;
+    params.push(like, like, like);
+  }
+  const sql = `SELECT * FROM audit_log ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 1000`;
+  const rows = db.prepare(sql).all(...params);
+  const top = db.prepare('SELECT ip, COUNT(*) n FROM audit_log GROUP BY ip ORDER BY n DESC, ip LIMIT 10').all();
+  const byStatus = db.prepare('SELECT status, COUNT(*) n FROM audit_log GROUP BY status').all();
+  res.json({ rows, top_ips: top, by_status: byStatus });
+});
+
+const isValidIp = (v) => {
+  const t = String(v || '').trim();
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(t) && t.split('.').every((o) => Number(o) <= 255);
+};
+
+app.get('/api/admin/security/blocklist', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  res.json(db.prepare('SELECT * FROM ip_blocklist ORDER BY created_at DESC').all());
+});
+
+app.post('/api/admin/security/blocklist', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const ip = String(req.body?.ip || '').trim();
+  const reason = String(req.body?.reason || '').slice(0, 300);
+  if (!isValidIp(ip)) return res.status(400).json({ error: 'Adresse IPv4 invalide' });
+  try {
+    db.prepare('INSERT INTO ip_blocklist (ip, reason, created_by) VALUES (?, ?, ?)').run(ip, reason, req.user.id);
+  } catch {
+    return res.status(409).json({ error: 'Cette adresse est déjà bloquée' });
+  }
+  logSecurity('ip_block', clientIp(req), req.user.email, ip);
+  res.json({ ok: true, ip });
+});
+
+app.delete('/api/admin/security/blocklist/:ip', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const info = db.prepare('DELETE FROM ip_blocklist WHERE ip = ?').run(String(req.params.ip || ''));
+  if (!info.changes) return res.status(404).json({ error: 'Adresse inconnue' });
+  logSecurity('ip_unblock', clientIp(req), req.user.email, String(req.params.ip));
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/security/alerts', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const alerts = db.prepare(`
+    SELECT ip, COUNT(*) AS n, MAX(created_at) AS last_at
+    FROM security_events
+    WHERE type = 'login_fail' AND created_at > datetime('now', '-15 minutes')
+    GROUP BY ip HAVING n >= 5 ORDER BY n DESC LIMIT 50
+  `).all();
+  const blocked = new Set(db.prepare('SELECT ip FROM ip_blocklist').all().map((r) => r.ip));
+  res.json(alerts.map((a) => ({ ...a, blocked: blocked.has(a.ip) })));
+});
+
 app.get('/api/admin/users', authRequired, requirePerm('users.view'), (req, res) => {
   const users = db.prepare('SELECT * FROM users ORDER BY created_at').all()
     .filter((u) => !hiddenSuper(u.role, req.user.role));
@@ -1592,7 +1704,235 @@ app.put('/api/admin/modules', authRequired, requirePerm('modules.manage'), (req,
     is_super: true
   });
 });
+// ---------- Sauvegarde / restauration de la base de données (super admin) ----------
+const BACKUP_DIR = path.join(os.tmpdir(), 'adiong-backup-' + process.pid);
+const backupUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      try { fs.mkdirSync(BACKUP_DIR, { recursive: true }); } catch { /* existant */ }
+      cb(null, BACKUP_DIR);
+    },
+    filename: (req, file, cb) => cb(null, `restore-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`)
+  }),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (String(file.originalname || '').toLowerCase().endsWith('.zip')) cb(null, true);
+    else cb(new Error('Fichier .zip requis'));
+  }
+});
 
+const collectUploads = (dir, prefix, out = []) => {
+  if (!fs.existsSync(dir)) return out;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) collectUploads(full, `${prefix}/${e.name}`, out);
+    else out.push(`${prefix}/${e.name}`);
+  }
+  return out;
+};
+
+app.get('/api/admin/backup', authRequired, requirePerm('modules.manage'), (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+    checkpointDb();
+    const zip = new AdmZip();
+    zip.addLocalFile(path.join(__dirname, 'data', 'adiong.db'), 'db', 'adiong.db');
+    for (const rel of collectUploads(uploadDir, 'uploads')) {
+      zip.addLocalFile(path.join(uploadDir, rel.slice('uploads/'.length)), 'uploads', rel.slice('uploads/'.length));
+    }
+    const counts = {};
+    for (const r of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
+      try { counts[r.name] = db.prepare(`SELECT COUNT(*) n FROM "${r.name}"`).get().n; } catch { counts[r.name] = -1; }
+    }
+    zip.addFile('manifest.json', Buffer.from(JSON.stringify({
+      app: 'ADI ONG',
+      created_at: new Date().toISOString(),
+      node: process.version,
+      tables: counts
+    }, null, 2)));
+    const buf = zip.toBuffer();
+    logSecurity('backup_export', req.ip, req.user.email);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="adiong-sauvegarde-${new Date().toISOString().slice(0, 10)}.zip"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[backup]', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Sauvegarde impossible' });
+  }
+});
+
+const backupUploadSafe = (req, res, next) => {
+  backupUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Fichier invalide' });
+    next();
+  });
+};
+
+app.post('/api/admin/backup/restore', authRequired, requirePerm('modules.manage'), backupUploadSafe, (req, res) => {
+  const tmpFile = req.file?.path;
+  const fail = (code, msg) => {
+    try { if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    res.status(code).json({ error: msg });
+  };
+  if (req.user.role !== 'super_admin') return fail(403, 'Réservé au super administrateur');
+  if (!req.file) return fail(400, 'Fichier de sauvegarde manquant');
+  let zip;
+  try { zip = new AdmZip(tmpFile); } catch { return fail(400, 'Archive ZIP invalide'); }
+  const dbEntry = zip.getEntries().find((e) => e.entryName === 'db/adiong.db' || e.entryName.endsWith('adiong.db'));
+  if (!dbEntry) return fail(400, 'Base de données absente de l’archive');
+  const candidate = path.join(BACKUP_DIR, `candidate-${Date.now()}.db`);
+  try {
+    fs.writeFileSync(candidate, dbEntry.getData());
+  } catch { return fail(500, 'Lecture de l’archive impossible'); }
+  let check;
+  try {
+    check = new DatabaseSync(candidate);
+    const tables = new Set(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
+    if (!tables.has('users') || !tables.has('settings')) {
+      check.close();
+      fs.unlinkSync(candidate);
+      return fail(400, 'Archive non reconnue comme une sauvegarde ADI ONG');
+    }
+  } catch {
+    try { fs.unlinkSync(candidate); } catch { /* ignore */ }
+    return fail(400, 'Base de données corrompue dans l’archive');
+  }
+  const restoredCounts = {};
+  try {
+    for (const t of ['users', 'articles', 'campaigns', 'causes', 'donations']) {
+      try { restoredCounts[t] = check.prepare(`SELECT COUNT(*) n FROM "${t}"`).get().n; } catch { restoredCounts[t] = 0; }
+    }
+  } finally {
+    check.close();
+  }
+  try {
+    checkpointDb();
+    const dbFile = path.join(__dirname, 'data', 'adiong.db');
+    fs.renameSync(candidate, dbFile);
+    for (const suffix of ['-wal', '-shm']) {
+      try { fs.unlinkSync(dbFile + suffix); } catch { /* absent */ }
+    }
+    const uploadsEntries = zip.getEntries().filter((e) => e.entryName.startsWith('uploads/') && !e.isDirectory);
+    for (const e of uploadsEntries) {
+      const target = path.join(uploadDir, e.entryName.slice('uploads/'.length));
+      try {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, e.getData());
+      } catch { /* fichier non critique */ }
+    }
+    reopenDb();
+    logSecurity('backup_restore', req.ip, req.user.email, JSON.stringify(restoredCounts).slice(0, 200));
+    res.json({ ok: true, restored: restoredCounts, files: uploadsEntries.length });
+  } catch (err) {
+    console.error('[backup] restore', err);
+    fail(500, 'Restauration impossible — l’application a été rouverte avec la base trouvée');
+  }
+});
+// ---------- Maintenance : optimisation BDD, purge des journaux, orphelins (super admin) ----------
+const runMaintenanceCore = (deep) => {
+  const report = { vacuum: false, logs_purged: 0, orphan_files: [] };
+  try { db.exec('ANALYZE'); } catch { /* non bloquant */ }
+  try { db.exec('VACUUM'); report.vacuum = true; } catch { /* non bloquant */ }
+  try {
+    const info1 = db.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-365 days')").run();
+    const info2 = db.prepare("DELETE FROM security_events WHERE created_at < datetime('now', '-365 days')").run();
+    report.logs_purged = (info1.changes || 0) + (info2.changes || 0);
+  } catch { /* non bloquant */ }
+  if (deep) {
+    const referenced = new Set();
+    const add = (v) => {
+      if (!v) return;
+      const t = String(v);
+      const m = t.match(/\/uploads\/[^?\s"']+/);
+      if (m) referenced.add(m[0].replace(/^\//, ''));
+    };
+    const addBasename = (dirRel, v) => {
+      if (!v) return;
+      const b = String(v).split('/').pop();
+      if (b) referenced.add(`${dirRel}/${b}`);
+    };
+    for (const r of db.prepare('SELECT url, filename FROM media').all()) { add(r.url); if (r.filename) addBasename('uploads/media', r.filename); }
+    for (const t of ['articles', 'campaigns', 'causes']) {
+      const cols = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+      const imgCols = ['image', 'seo_image'].filter((c) => cols.includes(c));
+      if (imgCols.length) {
+        for (const r of db.prepare(`SELECT ${imgCols.join(', ')} FROM ${t}`).all())
+          for (const c of imgCols) add(r[c]);
+      }
+    }
+    for (const r of db.prepare('SELECT photo FROM users').all()) add(r.photo);
+    for (const r of db.prepare('SELECT value FROM settings').all()) add(r.value);
+    for (const r of db.prepare('SELECT proof FROM donations').all()) addBasename('data/donation-proofs', r.proof);
+    for (const r of db.prepare('SELECT file FROM grh_documents').all()) addBasename('data/employee-docs', r.file);
+    for (const r of db.prepare('SELECT cv_file FROM grh_candidates').all()) addBasename('data/cvs', r.cv_file);
+    for (const r of db.prepare('SELECT file FROM grh_admin_docs').all()) addBasename('data/admin-docs', r.file);
+    for (const r of db.prepare('SELECT attachment FROM chat_messages').all()) addBasename('uploads/chat', r.attachment);
+
+    const orphans = (dirRel) => {
+      const dir = path.join(__dirname, dirRel);
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!e.isFile()) continue;
+        if (referenced.has(`${dirRel}/${e.name}`)) continue;
+        const full = path.join(dir, e.name);
+        try {
+          const st = fs.statSync(full);
+          fs.unlinkSync(full);
+          report.orphan_files.push({ file: `${dirRel}/${e.name}`, size: st.size });
+        } catch { /* concurrent ou protégé */ }
+      }
+    };
+    orphans('data/donation-proofs');
+    orphans('data/employee-docs');
+    orphans('data/cvs');
+    orphans('data/admin-docs');
+    orphans('uploads/media');
+    orphans('uploads/docs');
+    orphans('uploads/chat');
+  }
+  return report;
+};
+
+app.get('/api/admin/maintenance', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  res.json({ last: getSetting('last_maintenance') || '' });
+});
+
+app.post('/api/admin/maintenance', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  try {
+    const report = runMaintenanceCore(true);
+    setSetting('last_maintenance', new Date().toISOString());
+    logSecurity('maintenance', clientIp(req), req.user.email, `purge=${report.logs_purged} fichiers=${report.orphan_files.length}`);
+    res.json({ ok: true, ...report, at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[maintenance]', err);
+    res.status(500).json({ error: 'Maintenance impossible' });
+  }
+});
+
+const nextDailyMaintenanceDelay = () => {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(3, 0, 5, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  return target - now;
+};
+const scheduleDailyMaintenance = () => {
+  setTimeout(() => {
+    try {
+      const r = runMaintenanceCore(false);
+      console.log(`[maintenance] quotidienne terminée : purge=${r.logs_purged}, vacuum=${r.vacuum}`);
+    } catch (e) {
+      console.error('[maintenance] quotidienne', e);
+    }
+    scheduleDailyMaintenance();
+  }, nextDailyMaintenanceDelay());
+};
+scheduleDailyMaintenance();
+
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 app.get('/api/admin/permissions', authRequired, (req, res) => {
   const canManage = req.user.role === 'super_admin' || permEnabled(req.user.role, 'roles.manage');
@@ -4365,6 +4705,104 @@ app.post('/api/admin/pos/products/:id/movements', ...POS, (req, res) => {
   res.json({ ok: true, stock: nextStock });
 });
 
+// Fiche de stock
+app.get('/api/admin/pos/products/:id/stock-card', ...POS, (req, res) => {
+  try {
+    const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Produit introuvable' });
+    const { from, to, format } = req.query;
+    const all = db.prepare('SELECT m.*, u.email AS by_name FROM stock_movements m LEFT JOIN users u ON u.id = m.created_by WHERE m.product_id = ? ORDER BY m.id ASC').all(p.id);
+    let bal = 0;
+    let opening = 0;
+    const movements = [];
+    let totalIn = 0;
+    let totalOut = 0;
+    for (const m of all) {
+      const day = String(m.created_at || '').slice(0, 10);
+      const balBefore = bal;
+      if (m.type === 'entree') bal += m.qty;
+      else if (m.type === 'sortie') bal -= m.qty;
+      else bal = m.new_stock || 0;
+      let inQ = 0;
+      let outQ = 0;
+      if (m.type === 'entree') inQ = m.qty;
+      else if (m.type === 'sortie') outQ = m.qty;
+      else {
+        const delta = bal - balBefore;
+        if (delta >= 0) inQ = delta;
+        else outQ = -delta;
+      }
+      const inPeriod = (!from || day >= from) && (!to || day <= to);
+      if (inPeriod) {
+        movements.push({
+          id: m.id,
+          date: day,
+          type: m.type,
+          reason: m.reason || '',
+          by: m.by_name || '',
+          in: inQ,
+          out: outQ,
+          balance: bal
+        });
+        totalIn += inQ;
+        totalOut += outQ;
+      } else if (from && day < from) {
+        opening = bal;
+      }
+    }
+    const closing = p.stock;
+    const period = [from, to].filter(Boolean).join(' → ') || 'Toute la période';
+    const TYPE_LABEL = { entree: 'Entrée', sortie: 'Sortie', ajustement: 'Ajustement' };
+    if (format === 'csv') {
+      const esc = (v) => { const t = String(v ?? ''); return /[;\"\n]/.test(t) ? `\"${t.replace(/\"/g, '\"\"')}\"` : t; };
+      const lines = [
+        `Produit;${esc(p.name)}`,
+        `Période;${esc(period)}`,
+        `Solde initial;${opening}`,
+        '',
+        'Date;Type;Motif;Par;Entrées;Sorties;Solde',
+        ...movements.map((m) => [m.date, TYPE_LABEL[m.type] || m.type, esc(m.reason), esc(m.by), m.in, m.out, m.balance].join(';')),
+        '',
+        `Totaux;;${totalIn};${totalOut};`,
+        `Solde final;${closing}`
+      ];
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="fiche-stock-' + p.id + '.csv"');
+      return res.send('\uFEFF' + lines.join('\r\n'));
+    }
+    if (format === 'pdf') {
+      return comptaTablePdf(res, {
+        title: `Fiche de stock — ${p.name}`,
+        subtitle: `Période : ${period} · Solde initial : ${opening} · Solde final : ${closing}`,
+        pdfName: `fiche-stock-${p.id}.pdf`,
+        columns: [
+          { label: 'Date', width: 62, align: 'left' },
+          { label: 'Type', width: 82, align: 'left' },
+          { label: 'Motif', width: 240, align: 'left' },
+          { label: 'Par', width: 105, align: 'left' },
+          { label: 'Entrées', width: 52, align: 'right' },
+          { label: 'Sorties', width: 52, align: 'right' },
+          { label: 'Solde', width: 52, align: 'right' }
+        ],
+        rows: movements.map((m) => [
+          m.date,
+          TYPE_LABEL[m.type] || m.type,
+          pdfSafeText(m.reason),
+          pdfSafeText(m.by),
+          String(m.in),
+          String(m.out),
+          String(m.balance)
+        ]),
+        totals: ['', '', 'Totaux', '', String(totalIn), String(totalOut), String(closing)]
+      });
+    }
+    res.json({ product: { id: p.id, name: p.name, barcode: p.barcode, reference: p.reference, stock: p.stock }, opening, closing, total_in: totalIn, total_out: totalOut, movements });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// Ventes
 // Ventes
 app.post('/api/admin/pos/sales', ...POS, requirePerm('pos.sell'), (req, res) => {
   const b = req.body || {};
@@ -5282,6 +5720,68 @@ app.get('/api/admin/compta/ledger', ...COMPTA, async (req, res) => {
   res.json(rows);
 });
 
+const CASHBOOKS = {
+  caisse: { label: 'Livre de caisse', codes: ['531'] },
+  banque: { label: 'Livre de banque', codes: ['511', '512', '516', '5161', '5162', '5163', '581'] }
+};
+app.get('/api/admin/compta/cash-book', ...COMPTA, async (req, res) => {
+  const book = CASHBOOKS[String(req.query.book || '')];
+  if (!book) return res.status(400).json({ error: 'Livre inconnu (paramètre book : caisse ou banque)' });
+  const ph = book.codes.map(() => '?').join(', ');
+  const where = `FROM acc_entry_lines l JOIN acc_entries e ON e.id = l.entry_id WHERE l.account_code IN (${ph})`;
+  let opening = 0;
+  if (req.query.from) {
+    const r = db.prepare(`SELECT COALESCE(SUM(l.debit), 0) - COALESCE(SUM(l.credit), 0) AS t ${where} AND e.date < ?`).get(...book.codes, req.query.from);
+    opening = cmoney(Number(r?.t) || 0);
+  }
+  const params = [...book.codes];
+  let sql = `SELECT e.id AS entry_id, e.ref, e.date, e.journal_code, e.label, l.account_code, l.label AS line_label, l.debit, l.credit ${where}`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  sql += ' ORDER BY e.date, e.id, l.id';
+  let cum = opening;
+  const rows = db.prepare(sql).all(...params).map((r) => {
+    cum = cmoney(cum + r.debit - r.credit);
+    return { ...r, cum };
+  });
+  const period = `du ${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'}`;
+  if (String(req.query.format || '') === 'csv') {
+    const esc = (v) => { const s = String(v ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = ['Date;Réf.;Journal;Libellé;Compte;Encaissements;Décaissements;Solde'];
+    rows.forEach((r) => lines.push([r.date, r.ref, r.journal_code, r.line_label || r.label || '', r.account_code, r.debit, r.credit, r.cum].map(esc).join(';')));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="livre-${req.query.book}.csv"`);
+    res.send('\uFEFF' + lines.join('\n'));
+    return;
+  }
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      return await comptaTablePdf(res, {
+        title: book.label,
+        subtitle: `${period} · solde initial : ${fmtMoney(opening)}`,
+        pdfName: `livre-${req.query.book}-${req.query.from || 'debut'}-${req.query.to || 'aujourdhui'}`,
+        columns: [
+          { label: 'Date', width: 56, align: 'left' },
+          { label: 'Réf.', width: 78, align: 'left' },
+          { label: 'Journal', width: 40, align: 'left' },
+          { label: 'Libellé', width: 168, align: 'left' },
+          { label: 'Compte', width: 34, align: 'left' },
+          { label: 'Encaiss.', width: 48, align: 'right' },
+          { label: 'Décaiss.', width: 48, align: 'right' },
+          { label: 'Solde', width: 47, align: 'right' }
+        ],
+        rows: rows.map((r) => [r.date, r.ref, r.journal_code, pdfSafeText(r.line_label || r.label || ''), r.account_code, fmtMoney(r.debit), fmtMoney(r.credit), fmtMoney(r.cum)]),
+        totals: rows.length ? ['', 'Soldes', '', '', '', fmtMoney(rows.reduce((a, r) => a + r.debit, 0)), fmtMoney(rows.reduce((a, r) => a + r.credit, 0)), fmtMoney(cum)] : null
+      });
+    } catch (err) {
+      console.error('[compta] pdf cash-book', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json({ book: req.query.book, opening, closing: cum, rows });
+});
+
 // ---------- États financiers SYCEBNL ----------
 const pdfSafeText = (t) => String(t ?? '').replace(/[\u2190-\u21FF\u2200-\u22FF\u2600-\u27BF]/g, '-');
 
@@ -5928,5 +6428,6 @@ app.use((err, req, res, next) => {
 if (process.env.PORT === 'passenger' || process.env.PASSENGER_APP_ENV) {
   app.listen('passenger', () => console.log('🚀 API ADI ONG (Passenger)'));
 } else {
-  app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API ADI ONG sur http://0.0.0.0:${PORT}`));
+  const host = process.env.HOST || '0.0.0.0';
+  app.listen(PORT, host, () => console.log(`🚀 API ADI ONG sur http://${host}:${PORT}`));
 }

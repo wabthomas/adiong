@@ -1172,6 +1172,11 @@ function StockTab({ canManage = false }) {
   const [prodModal, setProdModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
   const [catsModal, setCatsModal] = useState(false);
+  const [card, setCard] = useState(null);
+  const [cardData, setCardData] = useState(null);
+  const [cardFrom, setCardFrom] = useState('');
+  const [cardTo, setCardTo] = useState('');
+  const [cardBusy, setCardBusy] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
@@ -1195,6 +1200,25 @@ function StockTab({ canManage = false }) {
       load();
     } catch (e) {
       alert(e.message);
+    }
+  };
+
+  const openCard = (p) => {
+    setCard(p);
+    setCardData(null);
+    setCardFrom('');
+    setCardTo('');
+    loadCard(p.id, '', '');
+  };
+  const loadCard = async (id, from = '', to = '') => {
+    setCardBusy(true);
+    try {
+      const d = await api.pos.products.stockCard(id, { from, to });
+      setCardData(d);
+    } catch (e) {
+      alert(e.message || 'Fiche de stock indisponible');
+    } finally {
+      setCardBusy(false);
     }
   };
 
@@ -1288,6 +1312,9 @@ function StockTab({ canManage = false }) {
                       <button type="button" onClick={() => setMoveModal(p)} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100">
                         Mouvement
                       </button>
+                      <button type="button" onClick={() => openCard(p)} className="rounded-lg bg-accent-50 px-2.5 py-1.5 text-xs font-bold text-accent-800 hover:bg-accent-100">
+                        Fiche
+                      </button>
                       {canManage && (
                         <>
                           <button type="button" onClick={() => setProdModal({ ...p })} className="rounded-lg bg-ink-50 px-2.5 py-1.5 text-xs font-bold text-ink-600 hover:bg-ink-100">
@@ -1326,6 +1353,100 @@ function StockTab({ canManage = false }) {
             onDone={() => { setMoveModal(null); load(); }}
             onClose={() => setMoveModal(null)}
           />
+        )}
+      </Modal>
+
+      <Modal open={!!card} onClose={() => setCard(null)} title={card ? `Fiche de stock — ${card.name}` : ''} wide>
+        {card && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="text-xs font-bold text-ink-500">
+                Du
+                <input type="date" className="input mt-1 !w-40 !py-2 text-sm" value={cardFrom} onChange={(e) => setCardFrom(e.target.value)} />
+              </label>
+              <label className="text-xs font-bold text-ink-500">
+                Au
+                <input type="date" className="input mt-1 !w-40 !py-2 text-sm" value={cardTo} onChange={(e) => setCardTo(e.target.value)} />
+              </label>
+              <button type="button" className="btn-primary !py-2 text-sm" disabled={cardBusy} onClick={() => loadCard(card.id, cardFrom, cardTo)}>
+                {cardBusy ? 'Chargement…' : 'Afficher'}
+              </button>
+              {cardData && (
+                <>
+                  <button
+                    type="button"
+                    className="btn-ghost !py-2 text-sm"
+                    onClick={() => api.compta.statements.download(`/api/admin/pos/products/${card.id}/stock-card?from=${encodeURIComponent(cardFrom)}&to=${encodeURIComponent(cardTo)}&format=csv`, `fiche-stock-${card.id}.csv`)}
+                  >
+                    Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost !py-2 text-sm"
+                    onClick={() => api.compta.statements.download(`/api/admin/pos/products/${card.id}/stock-card?from=${encodeURIComponent(cardFrom)}&to=${encodeURIComponent(cardTo)}&format=pdf`, `fiche-stock-${card.id}.pdf`)}
+                  >
+                    Export PDF
+                  </button>
+                </>
+              )}
+            </div>
+            {cardData && (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-xl border border-ink-100 bg-cream/50 px-4 py-3">
+                    <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">Solde initial</p>
+                    <p className="mt-1 text-xl font-extrabold text-ink-900">{cardData.opening}</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-100 bg-cream/50 px-4 py-3">
+                    <p className="text-[11px] font-bold tracking-wide text-ink-400 uppercase">Entrées / Sorties</p>
+                    <p className="mt-1 text-xl font-extrabold text-ink-900">
+                      <span className="text-emerald-600">+{cardData.total_in}</span>
+                      <span className="text-ink-300"> / </span>
+                      <span className="text-red-600">-{cardData.total_out}</span>
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
+                    <p className="text-[11px] font-bold tracking-wide text-brand-500 uppercase">Solde final</p>
+                    <p className="mt-1 text-xl font-extrabold text-brand-700">{cardData.closing}</p>
+                  </div>
+                </div>
+                <div className="max-h-96 overflow-y-auto rounded-xl border border-ink-100">
+                  <table className="w-full min-w-[640px] text-left text-sm">
+                    <thead className="sticky top-0 border-b border-ink-100 bg-cream/80 text-xs font-bold tracking-wide text-ink-400 uppercase backdrop-blur">
+                      <tr>
+                        <th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Type</th>
+                        <th className="px-4 py-3">Motif</th>
+                        <th className="px-4 py-3 text-right">Entrées</th>
+                        <th className="px-4 py-3 text-right">Sorties</th>
+                        <th className="px-4 py-3 text-right">Solde</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cardData.movements.map((m) => (
+                        <tr key={m.id} className="border-b border-ink-50 last:border-0">
+                          <td className="px-4 py-2.5 text-ink-600">{m.date}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${m.type === 'entree' ? 'bg-emerald-50 text-emerald-700' : m.type === 'sortie' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
+                              {m.type === 'entree' ? 'Entrée' : m.type === 'sortie' ? 'Sortie' : 'Ajustement'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-ink-700">
+                            {m.reason}
+                            {m.by && <span className="text-xs text-ink-400"> — {m.by}</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-emerald-700">{m.in ? `+${m.in}` : ''}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-red-600">{m.out ? `-${m.out}` : ''}</td>
+                          <td className="px-4 py-2.5 text-right font-extrabold text-ink-900">{m.balance}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {cardData.movements.length === 0 && <p className="py-8 text-center text-sm text-ink-400">Aucun mouvement sur la période.</p>}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </Modal>
 

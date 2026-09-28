@@ -8,8 +8,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-export const db = new DatabaseSync(path.join(dataDir, 'adiong.db'));
-db.exec('PRAGMA journal_mode = WAL;');
+const DB_FILE = path.join(dataDir, 'adiong.db');
+const _dbRef = { db: new DatabaseSync(DB_FILE) };
+_dbRef.db.exec('PRAGMA journal_mode = WAL;');
+
+export const db = new Proxy({}, {
+  get(_, prop) {
+    const v = _dbRef.db[prop];
+    return typeof v === 'function' ? v.bind(_dbRef.db) : v;
+  }
+});
+
+export function checkpointDb() {
+  try { _dbRef.db.exec('PRAGMA wal_checkpoint(TRUNCATE);'); } catch { /* déjà fermé */ }
+}
+
+export function reopenDb() {
+  try { _dbRef.db.close(); } catch { /* déjà fermé */ }
+  _dbRef.db = new DatabaseSync(DB_FILE);
+  _dbRef.db.exec('PRAGMA journal_mode = WAL;');
+  return _dbRef.db;
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -171,6 +190,29 @@ CREATE TABLE IF NOT EXISTS security_events (
   ip TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  email TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  ua TEXT NOT NULL DEFAULT '',
+  status INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_ip ON audit_log(ip);
+
+CREATE TABLE IF NOT EXISTS ip_blocklist (
+  ip TEXT PRIMARY KEY,
+  reason TEXT NOT NULL DEFAULT '',
+  created_by INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);

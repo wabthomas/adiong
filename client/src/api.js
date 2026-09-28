@@ -127,7 +127,9 @@ export const api = {
   },
   adminSettings: {
     get: () => req('/api/admin/settings', { auth: true }),
-    update: (b) => req('/api/admin/settings', { method: 'PUT', body: b, auth: true })
+    update: (b) => req('/api/admin/settings', { method: 'PUT', body: b, auth: true }),
+    maintenance: () => req('/api/admin/maintenance', { method: 'POST', body: {}, auth: true }),
+    maintenanceLast: () => req('/api/admin/maintenance', { auth: true })
   },
   media: {
     list: (q = '', type = '') => {
@@ -165,7 +167,20 @@ export const api = {
     removeRole: (key) => req(`/api/admin/roles/${encodeURIComponent(key)}`, { method: 'DELETE', auth: true })
   },
   adminSecurity: {
-    events: () => req('/api/admin/security', { auth: true })
+    events: () => req('/api/admin/security', { auth: true }),
+    audit: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.from) q.set('from', params.from);
+      if (params.to) q.set('to', params.to);
+      if (params.method) q.set('method', params.method);
+      if (params.q) q.set('q', params.q);
+      const s = q.toString();
+      return req(`/api/admin/audit${s ? `?${s}` : ''}`, { auth: true });
+    },
+    blocklist: () => req('/api/admin/security/blocklist', { auth: true }),
+    blockIp: (ip, reason) => req('/api/admin/security/blocklist', { method: 'POST', body: { ip, reason }, auth: true }),
+    unblockIp: (ip) => req(`/api/admin/security/blocklist/${encodeURIComponent(ip)}`, { method: 'DELETE', auth: true }),
+    alerts: () => req('/api/admin/security/alerts', { auth: true })
   },
   invites: {
     list: () => req('/api/admin/invites', { auth: true }),
@@ -457,6 +472,13 @@ export const api = {
       update: (id, b) => req(`/api/admin/pos/products/${id}`, { method: 'PUT', body: b, auth: true }),
       get: (id) => req(`/api/admin/pos/products/${id}`, { auth: true }),
       remove: (id) => req(`/api/admin/pos/products/${id}`, { method: 'DELETE', auth: true }),
+      stockCard: (id, params = {}) => {
+        const q = new URLSearchParams();
+        if (params.from) q.set('from', params.from);
+        if (params.to) q.set('to', params.to);
+        const s = q.toString();
+        return req(`/api/admin/pos/products/${id}/stock-card${s ? `?${s}` : ''}`, { auth: true });
+      },
       movement: (id, b) => req(`/api/admin/pos/products/${id}/movements`, { method: 'POST', body: b, auth: true }),
       byBarcode: (code) => req(`/api/admin/pos/products/by-barcode/${encodeURIComponent(code)}`, { auth: true })
     },
@@ -554,6 +576,12 @@ export const api = {
       for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) q.set(k, v);
       const s = q.toString();
       return req(`/api/admin/compta/ledger${s ? `?${s}` : ''}`, { auth: true });
+    },
+    cashBook: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) if (v !== '' && v != null) q.set(k, v);
+      const s = q.toString();
+      return req(`/api/admin/compta/cash-book${s ? `?${s}` : ''}`, { auth: true });
     },
     statements: {
       balanceSheet: (at) => req(`/api/admin/compta/statements/balance-sheet${at ? `?at=${encodeURIComponent(at)}` : ''}`, { auth: true }),
