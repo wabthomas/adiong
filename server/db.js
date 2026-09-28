@@ -224,6 +224,7 @@ migrate("ALTER TABLE articles ADD COLUMN seo_description TEXT NOT NULL DEFAULT '
 migrate("ALTER TABLE articles ADD COLUMN seo_image TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE articles ADD COLUMN seo_noindex INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE media ADD COLUMN alt TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE media ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN photo TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT ''");

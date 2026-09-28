@@ -2055,6 +2055,56 @@ app.get('/api/sync/status', authRequired, (req, res) => {
   });
 });
 
+const SYNC_MEDIA_MAX = 20 * 1024 * 1024;
+const safeUploadPath = (url) => {
+  const rel = String(url || '').replace(/^\/+/, '').replace(/^uploads\//, '');
+  if (!rel || rel.includes('..') || rel.includes('\\')) return null;
+  const full = path.resolve(uploadDir, rel);
+  if (full !== uploadDir && !full.startsWith(uploadDir + path.sep)) return null;
+  return { rel, full };
+};
+
+app.post('/api/sync/media/manifest', authRequired, (req, res) => {
+  if (!syncCanWrite(req, 'media')) return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle' });
+  const items = (Array.isArray(req.body?.files) ? req.body.files : []).slice(0, 200);
+  const out = [];
+  for (const it of items) {
+    const p = safeUploadPath(it?.url);
+    if (!p) { out.push({ url: it?.url, needs: 'invalid' }); continue; }
+    let needs = true;
+    try {
+      const st = fs.statSync(p.full);
+      needs = st.size !== Number(it.size);
+    } catch { needs = true; }
+    out.push({ url: it?.url, needs });
+  }
+  res.json({ ok: true, files: out });
+});
+
+app.put('/api/sync/media/upload', authRequired, express.raw({ type: () => true, limit: SYNC_MEDIA_MAX }), (req, res) => {
+  if (!syncCanWrite(req, 'media')) return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle' });
+  const p = safeUploadPath(req.query.url);
+  if (!p) return res.status(400).json({ error: 'Chemin de média invalide' });
+  const sha = String(req.query.sha256 || '').toLowerCase();
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!body.length) return res.status(400).json({ error: 'Fichier vide' });
+  const shaActual = crypto.createHash('sha256').update(body).digest('hex');
+  if (sha && sha !== shaActual) return res.status(409).json({ error: 'Empreinte du fichier incorrecte' });
+  try {
+    fs.mkdirSync(path.dirname(p.full), { recursive: true });
+    const tmp = p.full + '.tmp-' + crypto.randomBytes(4).toString('hex');
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, p.full);
+    const row = db.prepare('SELECT id FROM media WHERE url = ?').get('/' + p.rel);
+    if (row) db.prepare('UPDATE media SET sha256 = ?, size = ? WHERE id = ?').run(shaActual, body.length, row.id);
+    logSync(String(req.body?.clientId || req.user?.email || 'media'), 'media', p.rel, 1, 1, 0, 0);
+    res.json({ ok: true, size: body.length, sha256: shaActual });
+  } catch (e) {
+    console.error('[sync media upload]', e);
+    res.status(500).json({ error: 'Échec de l’enregistrement du média' });
+  }
+});
+
 
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
