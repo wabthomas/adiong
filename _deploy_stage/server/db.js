@@ -5,11 +5,30 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, 'data');
+const dataDir = process.env.ADI_DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-export const db = new DatabaseSync(path.join(dataDir, 'adiong.db'));
-db.exec('PRAGMA journal_mode = WAL;');
+const DB_FILE = path.join(dataDir, 'adiong.db');
+const _dbRef = { db: new DatabaseSync(DB_FILE) };
+_dbRef.db.exec('PRAGMA journal_mode = WAL;');
+
+export const db = new Proxy({}, {
+  get(_, prop) {
+    const v = _dbRef.db[prop];
+    return typeof v === 'function' ? v.bind(_dbRef.db) : v;
+  }
+});
+
+export function checkpointDb() {
+  try { _dbRef.db.exec('PRAGMA wal_checkpoint(TRUNCATE);'); } catch { /* déjà fermé */ }
+}
+
+export function reopenDb() {
+  try { _dbRef.db.close(); } catch { /* déjà fermé */ }
+  _dbRef.db = new DatabaseSync(DB_FILE);
+  _dbRef.db.exec('PRAGMA journal_mode = WAL;');
+  return _dbRef.db;
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -173,6 +192,29 @@ CREATE TABLE IF NOT EXISTS security_events (
   detail TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  email TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  ua TEXT NOT NULL DEFAULT '',
+  status INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_ip ON audit_log(ip);
+
+CREATE TABLE IF NOT EXISTS ip_blocklist (
+  ip TEXT PRIMARY KEY,
+  reason TEXT NOT NULL DEFAULT '',
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 const migrate = (sql) => { try { db.exec(sql); } catch {  } };
@@ -182,11 +224,33 @@ migrate("ALTER TABLE articles ADD COLUMN seo_description TEXT NOT NULL DEFAULT '
 migrate("ALTER TABLE articles ADD COLUMN seo_image TEXT NOT NULL DEFAULT ''");
 migrate('ALTER TABLE articles ADD COLUMN seo_noindex INTEGER NOT NULL DEFAULT 0');
 migrate("ALTER TABLE media ADD COLUMN alt TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE media ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN photo TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN unique_code TEXT NOT NULL DEFAULT ''");
 migrate("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''");
+migrate('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0');
+migrate("ALTER TABLE users ADD COLUMN totp_backup_codes TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN login_gate_hash TEXT NOT NULL DEFAULT ''");
+migrate("ALTER TABLE users ADD COLUMN login_gate_seal TEXT NOT NULL DEFAULT ''");
+migrate(`CREATE TABLE IF NOT EXISTS email_2fa_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS password_resets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  token_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
 try { db.prepare("UPDATE users SET role = 'super_admin' WHERE email = 'admin@adiong.org' AND role = 'admin'").run(); } catch { /* déjà fait */ }
 
 export function newUniqueCode() {
@@ -328,7 +392,7 @@ CREATE TABLE IF NOT EXISTS grh_projects (
   status TEXT NOT NULL DEFAULT 'planifie',
   created_by INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS grh_project_members (
@@ -349,7 +413,7 @@ CREATE TABLE IF NOT EXISTS grh_tasks (
   created_by INTEGER,
   completed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS grh_task_notes (
@@ -470,7 +534,7 @@ CREATE TABLE IF NOT EXISTS shop_orders (
   payment_method TEXT NOT NULL DEFAULT 'mobile',
   status TEXT NOT NULL DEFAULT 'attente',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 `);
 migrate('ALTER TABLE grh_employees ADD COLUMN manager_id INTEGER');
@@ -505,29 +569,45 @@ migrate(`CREATE TABLE IF NOT EXISTS role_permissions (
   enabled INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (role, area)
 )`);
+migrate(`CREATE TABLE IF NOT EXISTS access_roles (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  is_system INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 100,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+const roleSeed = db.prepare('INSERT OR IGNORE INTO access_roles (key, label, description, is_system, sort_order) VALUES (?, ?, ?, 1, ?)');
+for (const row of [
+  ['super_admin', 'Super admin', 'Accès total', 0],
+  ['admin', 'Administrateur', 'Site, GRH et caisse', 1],
+  ['editor', 'Éditeur', 'Contenu et médiathèque', 2],
+  ['cashier', 'Caissier', 'Encaissement et stock', 3],
+  ['viewer', 'Consultation', 'Lecture seule', 4]
+]) roleSeed.run(...row);
 // Droits par défaut : seed une seule fois (INSERT OR IGNORE) — nouvelles zones ajoutées sans écraser les réglages existants
 const permSeed = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
 for (const [role, area, on] of [
   // super_admin : tout (même si le code force déjà true)
   ['super_admin', 'dashboard', 1], ['super_admin', 'chat', 1], ['super_admin', 'inbox', 1], ['super_admin', 'donations', 1],
   ['super_admin', 'content', 1], ['super_admin', 'media', 1], ['super_admin', 'grh', 1], ['super_admin', 'leave', 1],
-  ['super_admin', 'pos', 1], ['super_admin', 'users', 1], ['super_admin', 'settings', 1],
+  ['super_admin', 'pos', 1], ['super_admin', 'compta', 1], ['super_admin', 'users', 1], ['super_admin', 'settings', 1],
   // admin
   ['admin', 'dashboard', 1], ['admin', 'chat', 1], ['admin', 'inbox', 1], ['admin', 'donations', 1],
   ['admin', 'content', 1], ['admin', 'media', 1], ['admin', 'grh', 1], ['admin', 'leave', 1],
-  ['admin', 'pos', 1], ['admin', 'users', 1], ['admin', 'settings', 1],
+  ['admin', 'pos', 1], ['admin', 'compta', 0], ['admin', 'users', 1], ['admin', 'settings', 1],
   // editor
   ['editor', 'dashboard', 1], ['editor', 'chat', 1], ['editor', 'inbox', 1], ['editor', 'donations', 1],
   ['editor', 'content', 1], ['editor', 'media', 1], ['editor', 'grh', 0], ['editor', 'leave', 1],
-  ['editor', 'pos', 0], ['editor', 'users', 0], ['editor', 'settings', 0],
+  ['editor', 'pos', 0], ['editor', 'compta', 0], ['editor', 'users', 0], ['editor', 'settings', 0],
   // viewer
   ['viewer', 'dashboard', 1], ['viewer', 'chat', 1], ['viewer', 'inbox', 1], ['viewer', 'donations', 1],
   ['viewer', 'content', 0], ['viewer', 'media', 0], ['viewer', 'grh', 0], ['viewer', 'leave', 1],
-  ['viewer', 'pos', 0], ['viewer', 'users', 0], ['viewer', 'settings', 0],
+  ['viewer', 'pos', 0], ['viewer', 'compta', 0], ['viewer', 'users', 0], ['viewer', 'settings', 0],
   // cashier
   ['cashier', 'dashboard', 1], ['cashier', 'chat', 1], ['cashier', 'inbox', 0], ['cashier', 'donations', 0],
   ['cashier', 'content', 0], ['cashier', 'media', 0], ['cashier', 'grh', 0], ['cashier', 'leave', 0],
-  ['cashier', 'pos', 1], ['cashier', 'users', 0], ['cashier', 'settings', 0],
+  ['cashier', 'pos', 1], ['cashier', 'compta', 0], ['cashier', 'users', 0], ['cashier', 'settings', 0],
   // compat anciennes clés (backoffice → ignorées si la UI ne les affiche plus)
   ['super_admin', 'backoffice', 1], ['admin', 'backoffice', 1], ['editor', 'backoffice', 1], ['viewer', 'backoffice', 1], ['cashier', 'backoffice', 1]
 ]) permSeed.run(role, area, on);
@@ -570,7 +650,6 @@ migrate('CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages(conv
 migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_at TEXT NOT NULL DEFAULT \'\'');
 migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_name TEXT NOT NULL DEFAULT \'\'');
 migrate('ALTER TABLE chat_conversations ADD COLUMN last_typing_by INTEGER NOT NULL DEFAULT 0');
-migrate('ALTER TABLE chat_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0');
 migrate(`CREATE TABLE IF NOT EXISTS chat_reactions (
   message_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL,
@@ -649,6 +728,7 @@ migrate(`CREATE TABLE IF NOT EXISTS chat_reads (
     console.error('[chat migrate user_id]', e.message);
   }
 })();
+migrate('ALTER TABLE chat_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0');
 
 /** Réactions : employee_id → user_id */
 (() => {
@@ -708,6 +788,168 @@ function ensureArticleCategories() {
     ins.run(row.slug, name, extra);
   }
 }
-ensureArticleCategories();
+migrate(`CREATE TABLE IF NOT EXISTS acc_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  nature TEXT NOT NULL DEFAULT 'expense',
+  class INTEGER NOT NULL DEFAULT 0,
+  is_system INTEGER NOT NULL DEFAULT 1,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS acc_journals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS acc_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  journal_code TEXT NOT NULL,
+  ref TEXT UNIQUE NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'manual',
+  source_id INTEGER NOT NULL DEFAULT 0,
+  is_reversal_of INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate('CREATE INDEX IF NOT EXISTS idx_acc_entries_date ON acc_entries(date)');
+migrate('CREATE UNIQUE INDEX IF NOT EXISTS idx_acc_entries_source ON acc_entries(source, source_id) WHERE source != \'manual\'');
+migrate(`CREATE TABLE IF NOT EXISTS acc_entry_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entry_id INTEGER NOT NULL,
+  account_code TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  debit REAL NOT NULL DEFAULT 0,
+  credit REAL NOT NULL DEFAULT 0
+)`);
+migrate('CREATE INDEX IF NOT EXISTS idx_acc_lines_entry ON acc_entry_lines(entry_id)');
+migrate('CREATE INDEX IF NOT EXISTS idx_acc_lines_account ON acc_entry_lines(account_code, entry_id)');
+migrate(`CREATE TABLE IF NOT EXISTS acc_exercises (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  start_date TEXT NOT NULL UNIQUE,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ouvert',
+  result REAL NOT NULL DEFAULT 0,
+  closed_at TEXT NOT NULL DEFAULT '',
+  closed_by TEXT NOT NULL DEFAULT ''
+)`);
+db.prepare("INSERT OR IGNORE INTO acc_exercises (start_date, end_date) VALUES ('2026-01-01', '2026-12-31')").run();
+migrate(`CREATE TABLE IF NOT EXISTS acc_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL,
+  account_code TEXT NOT NULL,
+  amount REAL NOT NULL,
+  acquired_at TEXT NOT NULL,
+  useful_life INTEGER NOT NULL DEFAULT 5,
+  status TEXT NOT NULL DEFAULT 'en_service',
+  ceded_at TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+migrate(`CREATE TABLE IF NOT EXISTS acc_in_kind (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  partner TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  amount REAL NOT NULL,
+  account_code TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+
+function ensureComptaSeed() {
+  const journals = [['O', 'Ouverture'], ['ACH', 'Achats'], ['VEN', 'Ventes & ressources'], ['CAI', 'Caisse'], ['BQ', 'Banque'], ['OD', 'Opérations diverses']];
+  const insJ = db.prepare('INSERT OR IGNORE INTO acc_journals (code, name) VALUES (?, ?)');
+  for (const [code, name] of journals) insJ.run(code, name);
+
+  if (db.prepare('SELECT COUNT(*) AS n FROM acc_accounts').get().n > 0) return;
+  const ACCOUNTS = [
+    ['101', 'Dotation fondatrice', 'equity', 1],
+    ['102', 'Autres versements des fondateurs', 'equity', 1],
+    ['151', 'Réserves statutaires', 'equity', 1],
+    ['152', 'Réserves libres', 'equity', 1],
+    ['165', 'Subventions d\'investissement perçues', 'equity', 1],
+    ['168', 'Déficit de l\'exercice (transit)', 'equity', 1],
+    ['171', 'Surplus reporté (exercice précédent)', 'equity', 1],
+    ['178', 'Surplus de l\'exercice (transit)', 'equity', 1],
+    ['211', 'Logiciels et brevets', 'asset', 2],
+    ['221', 'Terrains', 'asset', 2],
+    ['231', 'Bâtiments', 'asset', 2],
+    ['232', 'Travaux et agencements', 'asset', 2],
+    ['241', 'Matériel et mobilier de bureau', 'asset', 2],
+    ['243', 'Moyens de transport', 'asset', 2],
+    ['281', 'Amortissements — matériel', 'asset', 2],
+    ['283', 'Amortissements — transport', 'asset', 2],
+    ['291', 'Dépréciations — immobilisations', 'asset', 2],
+    ['311', 'Fournitures et consommables', 'asset', 3],
+    ['371', 'Produits destinés aux bénéficiaires', 'asset', 3],
+    ['391', 'Dépréciations — stocks', 'asset', 3],
+    ['411', 'Membres', 'liability', 4],
+    ['418', 'Divers créanciers / débiteurs', 'liability', 4],
+    ['419', 'Membres en attente (suspens)', 'liability', 4],
+    ['421', 'Personnel (à payer)', 'liability', 4],
+    ['441', 'État', 'liability', 4],
+    ['445', 'TVA déductible', 'liability', 4],
+    ['446', 'Autres impôts et taxes', 'liability', 4],
+    ['447', 'Sécurité sociale', 'liability', 4],
+    ['451', 'Fondateurs et contributeurs', 'liability', 4],
+    ['456', 'Comptes courants', 'liability', 4],
+    ['461', 'Donateurs (différés)', 'liability', 4],
+    ['465', 'Fonds affectés et fonds de gestion', 'liability', 4],
+    ['468', 'Divers débiteurs / créditeurs', 'liability', 4],
+    ['485', 'Charges sociales à payer', 'liability', 4],
+    ['488', 'Divers à payer', 'liability', 4],
+    ['511', 'Banque — compte principal', 'asset', 5],
+    ['512', 'Banque — comptes projets', 'asset', 5],
+    ['516', 'Mobile Money', 'asset', 5],
+    ['5161', 'Mobile Money — Airtel', 'asset', 5],
+    ['5162', 'Mobile Money — M-Pesa', 'asset', 5],
+    ['5163', 'Mobile Money — Orange', 'asset', 5],
+    ['531', 'Caisse', 'asset', 5],
+    ['581', 'Banque en attente (suspens)', 'asset', 5],
+    ['601', 'Achats de matières et fournitures', 'expense', 6],
+    ['611', 'Services extérieurs', 'expense', 6],
+    ['613', 'Locations', 'expense', 6],
+    ['615', 'Primes d\'assurance', 'expense', 6],
+    ['616', 'Honoraires, audits et expertises', 'expense', 6],
+    ['618', 'Autres services extérieurs', 'expense', 6],
+    ['621', 'Déplacements et représentation', 'expense', 6],
+    ['622', 'Transports', 'expense', 6],
+    ['623', 'Postes et télécommunications', 'expense', 6],
+    ['626', 'Publicité et communication', 'expense', 6],
+    ['631', 'Impôts et taxes', 'expense', 6],
+    ['641', 'Salaires et traitements', 'expense', 6],
+    ['642', 'Charges sociales sur salaires', 'expense', 6],
+    ['648', 'Autres charges de personnel', 'expense', 6],
+    ['651', 'Dotations aux amortissements', 'expense', 6],
+    ['653', 'Dotations aux provisions', 'expense', 6],
+    ['661', 'Charges financières', 'expense', 6],
+    ['665', 'Frais bancaires et de transaction', 'expense', 6],
+    ['701', 'Cotisations des membres', 'income', 7],
+    ['703', 'Ressources des activités et prestations', 'income', 7],
+    ['704', 'Ressources de formations et événements', 'income', 7],
+    ['741', 'Subventions d\'exploitation', 'income', 7],
+    ['749', 'Dons et legs — fonds général', 'income', 7],
+    ['7491', 'Dons affectés à un projet', 'income', 7],
+    ['761', 'Produits financiers', 'income', 7],
+    ['811', 'Charges exceptionnelles', 'expense', 8],
+    ['813', 'Insuffisances sur cessions', 'expense', 8],
+    ['821', 'Gains sur cessions d\'actifs', 'income', 8],
+    ['827', 'Produits exceptionnels', 'income', 8],
+    ['911', 'Contributions en nature — charges', 'expense', 9],
+    ['971', 'Contributions en nature — ressources', 'income', 9]
+  ];
+  const insA = db.prepare('INSERT OR IGNORE INTO acc_accounts (code, name, nature, class, is_system) VALUES (?, ?, ?, ?, 1)');
+  for (const [code, name, nature, cls] of ACCOUNTS) insA.run(code, name, nature, cls);
+}
+ensureComptaSeed();
+
+export const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+export const setSetting = (key, value) =>
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
 export default db;

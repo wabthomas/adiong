@@ -173,6 +173,9 @@ export const api = {
   contact: (body) => req('/api/contact', { method: 'POST', body }),
   donate: (body) => req('/api/donate', { method: 'POST', body }),
   login: (body) => req('/api/auth/login', { method: 'POST', body }),
+  authGate: (token) => req(`/api/auth/gate/${encodeURIComponent(token)}`),
+  forgotPassword: (email) => req('/api/auth/forgot', { method: 'POST', body: { email } }),
+  resetPassword: (body) => req('/api/auth/reset', { method: 'POST', body }),
   logout: () => req('/api/auth/logout', { method: 'POST', body: {}, auth: true }),
   verify2fa: (body) => req('/api/auth/2fa/verify', { method: 'POST', body }),
   send2faEmail: (pendingToken) => req('/api/auth/2fa/email', { method: 'POST', body: {}, auth: pendingToken || true }),
@@ -266,6 +269,7 @@ export const api = {
     create: (b) => req('/api/admin/users', { method: 'POST', body: b, auth: true }),
     update: (id, b) => req(`/api/admin/users/${id}`, { method: 'PUT', body: b, auth: true }),
     regenerateCode: (id) => req(`/api/admin/users/${id}/code`, { method: 'POST', body: {}, auth: true }),
+    loginLink: (id, body) => req(`/api/admin/users/${id}/login-link`, { method: 'POST', body: body || {}, auth: true }),
     remove: (id) => req(`/api/admin/users/${id}`, { method: 'DELETE', auth: true })
   },
   modules: {

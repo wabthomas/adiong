@@ -124,7 +124,9 @@ const AUDIT_PUBLIC = [
   { method: 'POST', re: /^\/api\/donate$/ },
   { method: 'POST', re: /^\/api\/public\/shop\/orders$/ },
   { method: 'POST', re: /^\/api\/register$/ },
-  { method: 'POST', re: /^\/api\/auth\/login$/ }
+  { method: 'POST', re: /^\/api\/auth\/login$/ },
+  { method: 'POST', re: /^\/api\/auth\/forgot$/ },
+  { method: 'POST', re: /^\/api\/auth\/reset$/ }
 ];
 const auditMiddleware = (req, res, next) => {
   const isPublic = AUDIT_PUBLIC.some((a) => a.method === req.method && a.re.test(req.path));
@@ -564,13 +566,72 @@ const upload = multer({
 // NB: le montage statique /uploads est fait plus bas, APRÈS la route protégée
 // /uploads/chat/:file (les fichiers de messagerie ne sont jamais publics).
 
+const gateKey = () => crypto.createHash('sha256').update(String(JWT_SECRET)).digest();
+
+function sealGate(token) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', gateKey(), iv);
+  const enc = Buffer.concat([cipher.update(String(token), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), enc]).toString('base64url');
+}
+
+function openGate(packed) {
+  const buf = Buffer.from(String(packed || ''), 'base64url');
+  if (buf.length < 29) return '';
+  const decipher = crypto.createDecipheriv('aes-256-gcm', gateKey(), buf.subarray(0, 12));
+  decipher.setAuthTag(buf.subarray(12, 28));
+  return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString('utf8');
+}
+
+function hashGate(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function userByGate(token) {
+  if (!/^[A-Za-z0-9_-]{40,90}$/.test(String(token || ''))) return null;
+  return db.prepare('SELECT * FROM users WHERE login_gate_hash = ?').get(hashGate(token)) || null;
+}
+
+function rotateGate(userId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  db.prepare('UPDATE users SET login_gate_hash = ?, login_gate_seal = ? WHERE id = ?').run(hashGate(token), sealGate(token), userId);
+  return token;
+}
+
+function bootstrapLoginLink() {
+  const row = db.prepare("SELECT id, email, login_gate_seal FROM users WHERE role = 'super_admin' ORDER BY id LIMIT 1").get();
+  if (!row || row.login_gate_seal) return;
+  const token = rotateGate(row.id);
+  const base = (process.env.BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+  console.log(`[accès] Lien de connexion initial pour ${row.email} :\n${base}/e/${token}`);
+}
+
+function currentGateToken(user) {
+  if (!user?.login_gate_seal) return '';
+  try { return openGate(user.login_gate_seal); } catch { return ''; }
+}
+
+function loginLinkFor(req, token) {
+  const origin = String(req.headers.origin || process.env.BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+  return `${origin}/e/${token}`;
+}
+
+const gateLimiter = rateLimit({ windowMs: 15 * 60_000, max: 30, key: (req) => `gate:${req.ip}`, message: 'Trop de tentatives. Réessayez plus tard.' });
+
+app.get('/api/auth/gate/:token', gateLimiter, (req, res) => {
+  const user = userByGate(req.params.token);
+  if (!user) return res.status(404).json({ error: 'Introuvable' });
+  res.json({ email: user.email });
+});
+
 app.post('/api/auth/login', loginLimiter, (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
+  const { email, password, gate } = req.body || {};
+  if (!email || !password || !gate) return res.status(400).json({ error: 'Email et mot de passe requis' });
   const em = String(email).toLowerCase().trim();
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(em);
+  const gated = userByGate(gate);
+  const user = gated && gated.email === em ? gated : null;
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-    logSecurity('login_fail', req.ip, em);
+    logSecurity('login_fail', clientIp(req), em);
     return res.status(401).json({ error: 'Identifiants incorrects' });
   }
   const need2fa = user.totp_enabled || getSetting('two_fa_required') === '1';
@@ -729,6 +790,48 @@ app.post('/api/auth/logout', authRequired, (req, res) => {
     revokedTokens.set(tokenHash(token), (req.user?.exp || 0) * 1000);
     logSecurity('logout', req.ip, req.user?.email || '');
   }
+  res.json({ ok: true });
+});
+
+const forgotLimiter = rateLimit({ windowMs: 60 * 60_000, max: 8, key: (req) => `forgot:${req.ip}`, message: 'Trop de demandes. Réessayez plus tard.' });
+
+app.post('/api/auth/forgot', forgotLimiter, (req, res) => {
+  const em = String(req.body?.email || '').toLowerCase().trim();
+  const generic = { ok: true, message: 'Si un compte existe pour cette adresse, un lien de réinitialisation a été envoyé. Il expire dans une heure.' };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) || em.length > 120) return res.status(400).json({ error: 'Adresse email invalide' });
+  const user = db.prepare('SELECT id, email, full_name FROM users WHERE email = ?').get(em);
+  if (!user) {
+    logSecurity('password_forgot_unknown', clientIp(req), em);
+    return res.json(generic);
+  }
+  const token = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare('UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL').run(now, user.id);
+  db.prepare('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)').run(user.id, hash, now + 3600);
+  const origin = String(req.headers.origin || process.env.BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  const link = `${origin}/r/${token}`;
+  logSecurity('password_forgot', clientIp(req), user.email);
+  const html = `<p>Bonjour ${user.full_name || ''},</p><p>Pour choisir un nouveau mot de passe, ouvrez ce lien (valable 1 heure) :</p><p><a href="${link}">${link}</a></p><p>Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.</p>`;
+  sendMailTo(user.email, 'Réinitialisation de votre mot de passe — ADI', html).catch(() => {
+    console.log(`[mail] reset ${user.email}\n${link}`);
+  });
+  res.json(generic);
+});
+
+app.post('/api/auth/reset', forgotLimiter, (req, res) => {
+  const token = String(req.body?.token || '');
+  const next = String(req.body?.password || '');
+  if (!/^[a-f0-9]{64}$/i.test(token)) return res.status(400).json({ error: 'Lien invalide' });
+  if (next.length < 8 || next.length > 200) return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  const now = Math.floor(Date.now() / 1000);
+  const row = db.prepare('SELECT id, user_id FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').get(hash, now);
+  if (!row) return res.status(400).json({ error: 'Lien expiré ou déjà utilisé' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(next, 10), row.user_id);
+  db.prepare('UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL').run(now, row.user_id);
+  const user = db.prepare('SELECT email FROM users WHERE id = ?').get(row.user_id);
+  logSecurity('password_reset', clientIp(req), user?.email || '');
   res.json({ ok: true });
 });
 
@@ -1831,6 +1934,33 @@ app.delete('/api/admin/users/:id', authRequired, requirePerm('users.delete'), (r
   if (err) return res.status(409).json({ error: err });
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
   res.json({ ok: true });
+});
+
+app.post('/api/admin/users/:id/login-link', authRequired, requirePerm('users.edit'), async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user || hiddenSuper(user.role, req.user.role)) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  const rotate = req.body?.rotate === true || !user.login_gate_seal;
+  let token = rotate ? '' : currentGateToken(user);
+  if (!token) token = rotateGate(user.id);
+  const url = loginLinkFor(req, token);
+  const digits = String(user.phone || '').replace(/\D/g, '');
+  const text = `Bonjour${user.full_name ? ` ${user.full_name}` : ''}, voici votre lien personnel de connexion ADI. Ne le transmettez à personne :\n${url}`;
+  const whatsapp = digits.length >= 8 ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : '';
+  let mailed = false;
+  let mailError = '';
+  if (req.body?.send === 'email') {
+    const html = `<p>Bonjour${user.full_name ? ` ${user.full_name}` : ''},</p><p>Voici votre lien personnel de connexion. Il remplace l’adresse publique et ne doit pas être partagé :</p><p><a href="${url}">${url}</a></p>`;
+    try {
+      await sendMailTo(user.email, 'Votre lien de connexion — ADI', html);
+      mailed = true;
+    } catch (e) {
+      mailError = e?.message === 'EMAIL_NON_CONFIGURE'
+        ? 'L’envoi d’emails n’est pas configuré. Copiez le lien ou utilisez WhatsApp.'
+        : 'L’envoi de l’email a échoué. Copiez le lien ou utilisez WhatsApp.';
+    }
+  }
+  logSecurity('login_link', clientIp(req), user.email, req.body?.send || (rotate ? 'nouveau' : 'copie'));
+  res.json({ url, whatsapp, mailed, mailError, phone: user.phone || '' });
 });
 
 // ---------- Modules (super admin) ----------
@@ -6788,8 +6918,14 @@ app.use((err, req, res, next) => {
 
 // Passenger (N0C / CloudLinux) : PORT=passenger — sinon écoute TCP classique
 if (process.env.PORT === 'passenger' || process.env.PASSENGER_APP_ENV) {
-  app.listen('passenger', () => console.log('🚀 API ADI ONG (Passenger)'));
+  app.listen('passenger', () => {
+    console.log('🚀 API ADI ONG (Passenger)');
+    try { bootstrapLoginLink(); } catch (e) { console.error('[accès]', e.message); }
+  });
 } else {
   const host = process.env.HOST || '0.0.0.0';
-  app.listen(PORT, host, () => console.log(`🚀 API ADI ONG sur http://${host}:${PORT}`));
+  app.listen(PORT, host, () => {
+    console.log(`🚀 API ADI ONG sur http://${host}:${PORT}`);
+    try { bootstrapLoginLink(); } catch (e) { console.error('[accès]', e.message); }
+  });
 }

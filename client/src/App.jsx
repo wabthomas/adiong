@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import Navbar from './components/Navbar.jsx';
 import Footer from './components/Footer.jsx';
@@ -162,7 +162,9 @@ export default function App() {
       <ScrollToTop />
       <Routes>
         <Route path="/inscription" element={<PublicGate><Suspense fallback={<AdminFallback />}><RegisterPage /></Suspense></PublicGate>} />
-        <Route path="/admin/login" element={<Suspense fallback={<AdminFallback />}><AdminLogin /></Suspense>} />
+        <Route path="/e/:gate" element={<Suspense fallback={<AdminFallback />}><AdminLogin /></Suspense>} />
+        <Route path="/r/:reset" element={<Suspense fallback={<AdminFallback />}><AdminLogin /></Suspense>} />
+        <Route path="/admin/login" element={<Navigate to="/" replace />} />
         <Route path="/admin" element={<Suspense fallback={<AdminFallback />}><AdminLayout /></Suspense>}>
           <Route index element={<AdminPage><Dashboard /></AdminPage>} />
           <Route path="articles" element={<AdminPage><ArticlesAdmin /></AdminPage>} />

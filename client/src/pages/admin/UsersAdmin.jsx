@@ -382,10 +382,28 @@ export default function UsersAdmin() {
   const [inviteError, setInviteError] = useState('');
   const [created, setCreated] = useState(null);
   const [copied, setCopied] = useState('');
+  const [gateUser, setGateUser] = useState(null);
+  const [gateLink, setGateLink] = useState(null);
+  const [gateBusy, setGateBusy] = useState(false);
+  const [gateError, setGateError] = useState('');
   const [securityEvents, setSecurityEvents] = useState([]);
 
   const [roleCatalog, setRoleCatalog] = useState([]);
   const load = useCallback(() => api.adminUsers.list().then(setUsers).catch(() => {}), []);
+
+  const openGate = async (user, body = {}) => {
+    setGateUser(user);
+    setGateBusy(true);
+    setGateError('');
+    try {
+      const r = await api.adminUsers.loginLink(user.id, body);
+      setGateLink(r);
+    } catch (err) {
+      setGateError(err.message);
+    } finally {
+      setGateBusy(false);
+    }
+  };
   const loadRoles = useCallback(() => api.permissions.get().then((d) => setRoleCatalog(d.roles || [])).catch(() => {}), []);
   const loadInvites = useCallback(() => api.invites.list().then(setInvites).catch(() => {}), []);
   const loadSecurity = useCallback(() => api.adminSecurity.events().then(setSecurityEvents).catch(() => {}), []);
@@ -635,6 +653,13 @@ export default function UsersAdmin() {
                       <div className="flex justify-end gap-1.5">
                         <button
                           type="button"
+                          onClick={() => openGate(u)}
+                          className="rounded-lg bg-ink-50 px-2.5 py-1 text-[11px] font-bold text-ink-700 hover:bg-ink-100"
+                        >
+                          Lien
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setEditing({ ...emptyUser, ...u, password: '' })}
                           className="rounded-lg bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-700 hover:bg-brand-100"
                         >
@@ -790,6 +815,60 @@ export default function UsersAdmin() {
             {inviteError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{inviteError}</p>}
             <div className="flex justify-end border-t border-ink-100 pt-4">
               <button type="button" className="btn-primary !px-5 !py-2 text-sm" onClick={createInvite}>Générer</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={!!gateUser}
+        onClose={() => { setGateUser(null); setGateLink(null); setGateError(''); }}
+        title="Lien de connexion"
+      >
+        {gateUser && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-600">
+              Lien personnel de <strong>{gateUser.full_name || gateUser.email}</strong>. Il est chiffré et n’apparaît nulle part sur le site public. Un nouveau lien invalide l’ancien.
+            </p>
+            {gateLink?.url && (
+              <code className="block break-all rounded-xl bg-ink-50 px-3 py-2 text-xs font-semibold text-ink-800">{gateLink.url}</code>
+            )}
+            {gateError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{gateError}</p>}
+            {gateLink?.mailError && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">{gateLink.mailError}</p>}
+            {gateLink?.mailed && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">Email envoyé à {gateUser.email}.</p>}
+            {gateLink && !gateLink.whatsapp && (
+              <p className="text-xs text-ink-500">Ajoutez un numéro de téléphone sur le compte pour ouvrir WhatsApp.</p>
+            )}
+            <div className="flex flex-wrap justify-end gap-2 border-t border-ink-100 pt-4">
+              <button type="button" className="btn-ghost !px-3 !py-2 text-xs" disabled={gateBusy} onClick={() => openGate(gateUser, { rotate: true })}>
+                Nouveau lien
+              </button>
+              <button
+                type="button"
+                className="btn-ghost !px-3 !py-2 text-xs"
+                disabled={gateBusy || !gateLink?.url}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(gateLink.url);
+                    setCopied('gate');
+                    setTimeout(() => setCopied(''), 1600);
+                  } catch { /* ignore */ }
+                }}
+              >
+                {copied === 'gate' ? 'Copié' : 'Copier'}
+              </button>
+              <button type="button" className="btn-ghost !px-3 !py-2 text-xs" disabled={gateBusy} onClick={() => openGate(gateUser, { send: 'email' })}>
+                Email
+              </button>
+              <button
+                type="button"
+                className="btn-primary !px-3 !py-2 text-xs"
+                disabled={gateBusy || !gateLink?.whatsapp}
+                title={gateLink?.whatsapp ? 'Ouvrir WhatsApp' : 'Ajoutez un numéro de téléphone sur le compte'}
+                onClick={() => window.open(gateLink.whatsapp, '_blank', 'noopener')}
+              >
+                WhatsApp
+              </button>
             </div>
           </div>
         )}

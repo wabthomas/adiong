@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -10,16 +11,22 @@ import nodemailer from 'nodemailer';
 import multer from 'multer';
 import Jimp from 'jimp';
 import QRCode from 'qrcode';
+import { newTotpSecret, verifyTotp, otpauthUrl, newBackupCodes } from './totp.js';
 import { fileURLToPath } from 'node:url';
-import db, { newUniqueCode, ensureUserCodes } from './db.js';
+import db, { newUniqueCode, ensureUserCodes, checkpointDb, reopenDb, getSetting, setSetting } from './db.js';
+import AdmZip from 'adm-zip';
+import { DatabaseSync } from 'node:sqlite';
 import { seedIfEmpty, ensureSettings, syncMediaLibrary } from './seed.js';
+import { migrateSync, SYNC_TABLES, nowSec, applyRow, applyDelete, logSync, syncStateGet } from './sync.js';
+import { syncWorkerStatus, syncWorkerConfig, syncWorkerRun, syncWorkerStart } from './sync-worker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
+const dataBaseDir = process.env.ADI_DATA_DIR || path.join(__dirname, 'data');
 
 function loadSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  const file = path.join(__dirname, 'data', '.jwt-secret');
+  const file = path.join(dataBaseDir, '.jwt-secret');
   try {
     if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim();
     const secret = crypto.randomBytes(32).toString('hex');
@@ -49,6 +56,7 @@ loadDotEnv();
 
 ensureSettings();
 seedIfEmpty();
+migrateSync();
 ensureUserCodes();
 // Pas de top-level await : Passenger N0C exige un listen() pendant le chargement sync du startup file.
 void syncMediaLibrary().catch((e) => console.error('[media sync]', e));
@@ -96,6 +104,53 @@ app.use(cors({
   credentials: false
 }));
 app.use(express.json({ limit: '2mb' }));
+
+// IP réelle : derrière un reverse proxy, X-Forwarded-For fait foi (TRUST_PROXY=1 ou NODE_ENV=production)
+const TRUST_PROXY = process.env.TRUST_PROXY === '1' || process.env.NODE_ENV === 'production';
+if (TRUST_PROXY) app.set('trust proxy', true);
+const clientIp = (req) => {
+  if (TRUST_PROXY) {
+    const h = req.headers['x-forwarded-for'];
+    if (h) {
+      const first = String(h).split(',')[0].trim();
+      if (first && first !== '::1') return first;
+    }
+  }
+  return req.ip || '';
+};
+
+// Journal d'audit : écritures admin + actions publiques sensibles (avec IP réelle)
+const AUDIT_PUBLIC = [
+  { method: 'POST', re: /^\/api\/donate$/ },
+  { method: 'POST', re: /^\/api\/public\/shop\/orders$/ },
+  { method: 'POST', re: /^\/api\/register$/ },
+  { method: 'POST', re: /^\/api\/auth\/login$/ },
+  { method: 'POST', re: /^\/api\/auth\/forgot$/ },
+  { method: 'POST', re: /^\/api\/auth\/reset$/ }
+];
+const auditMiddleware = (req, res, next) => {
+  const isPublic = AUDIT_PUBLIC.some((a) => a.method === req.method && a.re.test(req.path));
+  const isAdminWrite = req.path.startsWith('/api/admin/') && req.method !== 'GET' && req.method !== 'HEAD';
+  if (!isPublic && !isAdminWrite) return next();
+  res.on('finish', () => {
+    try {
+      db.prepare('INSERT INTO audit_log (user_id, email, role, method, path, ip, ua, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(req.user?.id || null, req.user?.email || '', req.user?.role || 'public', req.method, String(req.path).slice(0, 300), clientIp(req), String(req.headers['user-agent'] || '').slice(0, 200), res.statusCode);
+    } catch { /* non bloquant */ }
+  });
+  next();
+};
+app.use(auditMiddleware);
+
+const ipBlocked = (ip) => {
+  try { return !!db.prepare('SELECT 1 FROM ip_blocklist WHERE ip = ?').get(ip); } catch { return false; }
+};
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return next();
+  const ip = clientIp(req);
+  if (ip && ipBlocked(ip)) return res.status(403).json({ blocked: true, error: 'Accès refusé' });
+  next();
+});
 
 // Chemins typiques des scanners WordPress (l'ancien site en était victime) → 404 uniforme
 const SUSPICIOUS_PATHS = [
@@ -171,9 +226,18 @@ const notifyEmail = (subject, html) => {
     .catch((e) => console.error(`[mail] échec : ${e.message}`));
 };
 
-const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
-const setSetting = (key, value) =>
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+const sendMailTo = (to, subject, html) => {
+  if (!transporter || !to) {
+    console.log(`[mail] (non configuré) ${subject} -> ${to}`);
+    return Promise.reject(new Error('EMAIL_NON_CONFIGURE'));
+  }
+  return transporter.sendMail({
+    from: process.env.MAIL_FROM || process.env.SMTP_USER || 'notifications@adiong.org',
+    to,
+    subject,
+    html
+  });
+};
 
 const safeUnlink = (full) => {
   try {
@@ -272,6 +336,10 @@ const authRequired = (req, res, next) => {
     req.user = jwt.verify(token, JWT_SECRET);
     const fresh = db.prepare('SELECT role FROM users WHERE id = ?').get(req.user.id);
     req.user.role = fresh?.role || 'viewer';
+    if (req.user.twoFa === 'pending') {
+      const PENDING_ROUTES = new Set(['/api/auth/totp/setup', '/api/auth/totp/confirm', '/api/auth/2fa/email', '/api/auth/me']);
+      if (!PENDING_ROUTES.has(req.path)) return res.status(401).json({ error: 'Vérification du 2ᵉ facteur requise' });
+    }
     next();
   } catch {
     res.status(401).json({ error: 'Session expirée, reconnectez-vous' });
@@ -284,6 +352,7 @@ const ROLES = {
   content: ['super_admin', 'admin', 'editor'],
   hr: ['super_admin', 'admin'],
   pos: ['super_admin', 'admin', 'cashier'],
+  compta: ['super_admin'],
   any: ['super_admin', 'admin', 'editor', 'viewer', 'cashier']
 };
 // Droits fins par catégorie de fonction (comme Kivu Business Car). Le super admin conserve toujours tout.
@@ -292,11 +361,12 @@ const PERM_GROUPS = [
   { id: 'content', label: 'Contenu' },
   { id: 'media', label: 'Médiathèque' },
   { id: 'donations', label: 'Dons' },
-  { id: 'inbox', label: 'Boîte contact' },
-  { id: 'chat', label: 'Messages' },
-  { id: 'grh', label: 'Ressources humaines' },
+  { id: 'inbox', label: 'Contact' },
+  { id: 'chat', label: 'Messagerie' },
+  { id: 'grh', label: 'GRH' },
   { id: 'leave', label: 'Mon espace' },
   { id: 'pos', label: 'Point de vente' },
+  { id: 'compta', label: 'Comptabilité' },
   { id: 'users', label: 'Utilisateurs' },
   { id: 'settings', label: 'Paramètres' }
 ];
@@ -304,44 +374,48 @@ const PERM_AREAS = [
   { id: 'dashboard.view', group: 'platform', label: 'Voir le tableau de bord' },
   { id: 'security.view', group: 'platform', label: 'Consulter le journal de sécurité' },
   { id: 'content.view', group: 'content', label: 'Consulter le contenu' },
-  { id: 'content.create', group: 'content', label: 'Créer articles, causes, campagnes, partenaires' },
+  { id: 'content.create', group: 'content', label: 'Créer du contenu' },
   { id: 'content.edit', group: 'content', label: 'Modifier le contenu' },
   { id: 'content.delete', group: 'content', label: 'Supprimer le contenu' },
   { id: 'media.view', group: 'media', label: 'Consulter la médiathèque' },
-  { id: 'media.upload', group: 'media', label: 'Ajouter ou modifier des médias' },
+  { id: 'media.upload', group: 'media', label: 'Ajouter des médias' },
   { id: 'media.delete', group: 'media', label: 'Supprimer des médias' },
   { id: 'donations.view', group: 'donations', label: 'Consulter les dons' },
   { id: 'donations.edit', group: 'donations', label: 'Traiter les dons' },
   { id: 'donations.delete', group: 'donations', label: 'Supprimer des dons' },
-  { id: 'inbox.view', group: 'inbox', label: 'Lire les messages du site' },
-  { id: 'inbox.edit', group: 'inbox', label: 'Marquer lu ou répondre' },
+  { id: 'inbox.view', group: 'inbox', label: 'Lire les messages' },
+  { id: 'inbox.edit', group: 'inbox', label: 'Répondre aux messages' },
   { id: 'inbox.delete', group: 'inbox', label: 'Supprimer des messages' },
   { id: 'chat.view', group: 'chat', label: 'Accéder à la messagerie' },
   { id: 'chat.send', group: 'chat', label: 'Envoyer des messages' },
   { id: 'chat.groups', group: 'chat', label: 'Créer et administrer les groupes' },
-  { id: 'grh.view', group: 'grh', label: 'Consulter la GRH' },
-  { id: 'grh.manage', group: 'grh', label: 'Gérer équipe, congés, tâches et recrutement' },
-  { id: 'grh.attendance', group: 'grh', label: 'Corriger les présences' },
-  { id: 'grh.payroll', group: 'grh', label: 'Gérer la paie et les salaires' },
+  { id: 'grh.view', group: 'grh', label: 'Consulter les dossiers' },
+  { id: 'grh.manage', group: 'grh', label: 'Gérer l’équipe' },
+  { id: 'grh.attendance', group: 'grh', label: 'Gérer les présences' },
+  { id: 'grh.payroll', group: 'grh', label: 'Gérer la paie' },
   { id: 'leave.view', group: 'leave', label: 'Accéder à Mon espace' },
-  { id: 'leave.request', group: 'leave', label: 'Déposer une demande de congé' },
+  { id: 'leave.request', group: 'leave', label: 'Demander un congé' },
   { id: 'pos.view', group: 'pos', label: 'Accéder au point de vente' },
-  { id: 'pos.sell', group: 'pos', label: 'Encaisser des ventes' },
-  { id: 'pos.manage', group: 'pos', label: 'Catalogue, retours, annulations et rapports' },
+  { id: 'pos.sell', group: 'pos', label: 'Encaisser une vente' },
+  { id: 'pos.manage', group: 'pos', label: 'Catalogue, retours et rapports' },
+  { id: 'compta.view', group: 'compta', label: 'Consulter la comptabilité' },
+  { id: 'compta.manage', group: 'compta', label: 'Saisir et annuler des écritures' },
+  { id: 'compta.close', group: 'compta', label: 'Clôturer un exercice' },
   { id: 'users.view', group: 'users', label: 'Consulter les comptes' },
-  { id: 'users.create', group: 'users', label: 'Créer des comptes et des invitations' },
+  { id: 'users.create', group: 'users', label: 'Créer des comptes' },
   { id: 'users.edit', group: 'users', label: 'Modifier des comptes' },
   { id: 'users.delete', group: 'users', label: 'Supprimer des comptes' },
-  { id: 'roles.manage', group: 'users', label: 'Gérer les rôles et les droits' },
+  { id: 'roles.manage', group: 'users', label: 'Gérer les rôles et droits' },
   { id: 'settings.view', group: 'settings', label: 'Consulter les paramètres' },
   { id: 'settings.write', group: 'settings', label: 'Modifier les paramètres' },
-  { id: 'modules.manage', group: 'settings', label: 'Activer ou désactiver les modules' }
+  { id: 'modules.manage', group: 'settings', label: 'Activer les modules' }
 ];
 /** Clé fine → ancienne zone, pour hériter d'un réglage déjà enregistré. */
 const permParent = (id) => {
   if (id === 'security.view' || id === 'roles.manage' || id.startsWith('users.')) return 'users';
   if (id === 'modules.manage' || id.startsWith('settings.')) return 'settings';
   if (id === 'dashboard.view') return 'dashboard';
+  if (id.startsWith('compta.')) return 'compta';
   const base = id.split('.')[0];
   return base === id ? null : base;
 };
@@ -351,7 +425,10 @@ const PERM_RESTRICT = {
   'roles.manage': ['super_admin'],
   'modules.manage': ['super_admin'],
   'chat.groups': ['super_admin', 'admin'],
-  'pos.manage': ['super_admin', 'admin']
+  'pos.manage': ['super_admin', 'admin'],
+  'compta.view': ['super_admin'],
+  'compta.manage': ['super_admin'],
+  'compta.close': ['super_admin']
 };
 const GROUP_AREA = {
   any: 'dashboard.view',
@@ -359,9 +436,28 @@ const GROUP_AREA = {
   admin: 'settings.view',
   hr: 'grh.view',
   pos: 'pos.view',
+  compta: 'compta.view',
   super: null
 };
 const ROLE_LIST = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
+function listAccessRoles() {
+  return db.prepare('SELECT key, label, description, is_system, sort_order FROM access_roles ORDER BY sort_order, label').all();
+}
+function knownRole(key) {
+  return !!db.prepare('SELECT key FROM access_roles WHERE key = ?').get(key);
+}
+function roleLabelOf(key) {
+  return db.prepare('SELECT label FROM access_roles WHERE key = ?').get(key)?.label || ROLE_LABELS[key] || key;
+}
+function slugRole(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+}
 const permEnabled = (role, area) => {
   if (role === 'super_admin') return true;
   if (!area) return true;
@@ -379,7 +475,8 @@ const seedFinePerms = () => {
   const exists = db.prepare('SELECT 1 AS n FROM role_permissions WHERE role = ? AND area = ?');
   const legacy = db.prepare('SELECT enabled FROM role_permissions WHERE role = ? AND area = ?');
   const ins = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
-  for (const role of ROLE_LIST) {
+  const roles = listAccessRoles().map((r) => r.key);
+  for (const role of roles) {
     for (const area of PERM_AREAS) {
       if (exists.get(role, area.id)) continue;
       const parent = permParent(area.id);
@@ -449,7 +546,7 @@ const isAllowedImage = (file) => {
 
 const isAllowedUpload = (file) => isAllowedImage(file) || isPdfFile(file);
 
-const uploadDir = path.join(__dirname, 'uploads');
+const uploadDir = process.env.ADI_UPLOADS_DIR || path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -469,18 +566,221 @@ const upload = multer({
 // NB: le montage statique /uploads est fait plus bas, APRÈS la route protégée
 // /uploads/chat/:file (les fichiers de messagerie ne sont jamais publics).
 
+const gateKey = () => crypto.createHash('sha256').update(String(JWT_SECRET)).digest();
+
+function sealGate(token) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', gateKey(), iv);
+  const enc = Buffer.concat([cipher.update(String(token), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), enc]).toString('base64url');
+}
+
+function openGate(packed) {
+  const buf = Buffer.from(String(packed || ''), 'base64url');
+  if (buf.length < 29) return '';
+  const decipher = crypto.createDecipheriv('aes-256-gcm', gateKey(), buf.subarray(0, 12));
+  decipher.setAuthTag(buf.subarray(12, 28));
+  return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString('utf8');
+}
+
+function hashGate(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function userByGate(token) {
+  if (!/^[A-Za-z0-9_-]{40,90}$/.test(String(token || ''))) return null;
+  return db.prepare('SELECT * FROM users WHERE login_gate_hash = ?').get(hashGate(token)) || null;
+}
+
+function rotateGate(userId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  db.prepare('UPDATE users SET login_gate_hash = ?, login_gate_seal = ? WHERE id = ?').run(hashGate(token), sealGate(token), userId);
+  return token;
+}
+
+function bootstrapLoginLink() {
+  const row = db.prepare("SELECT id, email, login_gate_seal FROM users WHERE role = 'super_admin' ORDER BY id LIMIT 1").get();
+  if (!row || row.login_gate_seal) return;
+  const token = rotateGate(row.id);
+  const base = (process.env.BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+  console.log(`[accès] Lien de connexion initial pour ${row.email} :\n${base}/e/${token}`);
+}
+
+function currentGateToken(user) {
+  if (!user?.login_gate_seal) return '';
+  try { return openGate(user.login_gate_seal); } catch { return ''; }
+}
+
+function loginLinkFor(req, token) {
+  const origin = String(req.headers.origin || process.env.BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+  return `${origin}/e/${token}`;
+}
+
+const gateLimiter = rateLimit({ windowMs: 15 * 60_000, max: 30, key: (req) => `gate:${req.ip}`, message: 'Trop de tentatives. Réessayez plus tard.' });
+
+app.get('/api/auth/gate/:token', gateLimiter, (req, res) => {
+  const user = userByGate(req.params.token);
+  if (!user) return res.status(404).json({ error: 'Introuvable' });
+  res.json({ email: user.email });
+});
+
 app.post('/api/auth/login', loginLimiter, (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
+  const { email, password, gate } = req.body || {};
+  if (!email || !password || !gate) return res.status(400).json({ error: 'Email et mot de passe requis' });
   const em = String(email).toLowerCase().trim();
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(em);
+  const gated = userByGate(gate);
+  const user = gated && gated.email === em ? gated : null;
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-    logSecurity('login_fail', req.ip, em);
+    logSecurity('login_fail', clientIp(req), em);
     return res.status(401).json({ error: 'Identifiants incorrects' });
+  }
+  const need2fa = user.totp_enabled || getSetting('two_fa_required') === '1';
+  if (need2fa) {
+    logSecurity('login_2fa', req.ip, user.email);
+    const pending = jwt.sign({ id: user.id, email: user.email, role: user.role, twoFa: 'pending', jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '10m' });
+    return res.json({
+      requires_2fa: true,
+      pending_token: pending,
+      totp_enrolled: !!user.totp_enabled,
+      email_2fa_available: !!transporter
+    });
   }
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role, jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '12h' });
   logSecurity('login_ok', req.ip, user.email);
   res.json({ token, user: publicUser(user) });
+});
+
+const twoFaLimiter = rateLimit({ windowMs: 15 * 60_000, max: 20, key: (req) => `2fa:${req.ip}`, message: 'Trop de tentatives de vérification. Réessayez dans 15 minutes.' });
+
+const issueToken = (user) => jwt.sign({ id: user.id, email: user.email, role: user.role, jti: crypto.randomBytes(12).toString('hex') }, JWT_SECRET, { expiresIn: '12h' });
+
+// Armement 2FA : génération du secret + QR (le secret n'est persisté qu'au confirm)
+app.post('/api/auth/totp/setup', authRequired, async (req, res) => {
+  const secret = newTotpSecret();
+  const url = otpauthUrl({ secret, account: req.user.email });
+  let qr = '';
+  try { qr = await QRCode.toDataURL(url, { width: 240, margin: 1 }); } catch { /* QR indisponible : le secret manuel reste utilisable */ }
+  res.json({ secret, otpauth_url: url, qr, email_2fa_available: !!transporter });
+});
+
+// Confirmation : un code TOTP valide → activation + 10 codes de secours (affichés une fois)
+app.post('/api/auth/totp/confirm', authRequired, (req, res) => {
+  const { secret, code } = req.body || {};
+  if (!secret || !verifyTotp(String(secret), String(code || '')))
+    return res.status(400).json({ error: 'Code incorrect — vérifiez l’heure de votre téléphone' });
+  const codes = newBackupCodes(10);
+  const stored = codes.map((c) => crypto.createHash('sha256').update(c).digest('hex')).join(';');
+  db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_backup_codes = ? WHERE id = ?').run(String(secret), stored, req.user.id);
+  logSecurity('totp_enrolled', req.ip, req.user.email);
+  res.json({ ok: true, backup_codes: codes });
+});
+
+// Régénération des codes de secours (remplace l'ensemble)
+app.post('/api/auth/totp/backup-codes/regenerate', authRequired, (req, res) => {
+  const user = db.prepare('SELECT totp_enabled FROM users WHERE id = ?').get(req.user.id);
+  if (!user?.totp_enabled) return res.status(400).json({ error: 'La 2FA n’est pas active sur ce compte' });
+  const codes = newBackupCodes(10);
+  const stored = codes.map((c) => crypto.createHash('sha256').update(c).digest('hex')).join(';');
+  db.prepare('UPDATE users SET totp_backup_codes = ? WHERE id = ?').run(stored, req.user.id);
+  res.json({ ok: true, backup_codes: codes });
+});
+
+// Désactivation
+app.delete('/api/auth/totp', authRequired, (req, res) => {
+  db.prepare('UPDATE users SET totp_secret = \'\', totp_enabled = 0, totp_backup_codes = \'\' WHERE id = ?').run(req.user.id);
+  logSecurity('totp_disabled', req.ip, req.user.email);
+  res.json({ ok: true });
+});
+
+// État 2FA du compte courant
+app.get('/api/auth/totp/status', authRequired, (req, res) => {
+  const user = db.prepare('SELECT totp_enabled, totp_backup_codes FROM users WHERE id = ?').get(req.user.id);
+  res.json({
+    two_fa_required: getSetting('two_fa_required') === '1',
+    totp_enrolled: !!user?.totp_enabled,
+    backup_remaining: user?.totp_backup_codes ? user.totp_backup_codes.split(';').filter(Boolean).length : 0,
+    email_2fa_available: !!transporter
+  });
+});
+
+// Code par email (secours) — jeton en attente ou session normale
+app.post('/api/auth/2fa/email', authRequired, (req, res) => {
+  if (!transporter) return res.status(503).json({ error: 'L’envoi par email n’est pas configuré sur ce serveur' });
+  const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user.id);
+  if (!user?.email) return res.status(400).json({ error: 'Adresse email manquante' });
+  const recent = db.prepare('SELECT COUNT(*) AS n FROM email_2fa_codes WHERE user_id = ? AND used_at IS NULL AND expires_at > ?').get(req.user.id, Math.floor(Date.now() / 1000));
+  if (recent.n >= 3) return res.status(429).json({ error: 'Trop de codes demandés — réessayez plus tard' });
+  const code = String(crypto.randomInt(100000, 1000000));
+  const hash = crypto.createHash('sha256').update(code).digest('hex');
+  db.prepare('INSERT INTO email_2fa_codes (user_id, code_hash, expires_at) VALUES (?, ?, ?)').run(req.user.id, hash, Math.floor(Date.now() / 1000) + 600);
+  sendMailTo(user.email, 'Votre code ADI ONG', `<p>Bonjour,${req.user.twoFa === 'pending' ? ' pour finaliser votre connexion' : ''}</p><p> votre code de vérification est : <strong style="font-size:20px;letter-spacing:4px">${code}</strong></p><p>Il expire dans 10 minutes. Ne le partagez avec personne.</p>`).then(
+    () => { logSecurity('2fa_email_sent', req.ip, req.user.email); res.json({ sent: true }); },
+    () => res.status(503).json({ error: 'L’envoi de l’email a échoué — réessayez' })
+  );
+});
+
+// Vérification finale : code TOTP, code de secours ou code email
+app.post('/api/auth/2fa/verify', twoFaLimiter, (req, res) => {
+  const { pending_token: pendingToken, code } = req.body || {};
+  let payload;
+  try {
+    payload = jwt.verify(String(pendingToken || ''), JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Session de vérification expirée — reconnectez-vous' });
+  }
+  if (payload.twoFa !== 'pending') return res.status(401).json({ error: 'Identifiants incorrects' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  const input = String(code || '').trim().toUpperCase();
+  let method = null;
+  if (user.totp_enabled && user.totp_secret && verifyTotp(user.totp_secret, input)) method = 'totp';
+  else if (user.totp_backup_codes) {
+    const h = crypto.createHash('sha256').update(input).digest('hex');
+    const codes = user.totp_backup_codes.split(';').filter(Boolean);
+    if (codes.includes(h)) {
+      codes.splice(codes.indexOf(h), 1);
+      db.prepare('UPDATE users SET totp_backup_codes = ? WHERE id = ?').run(codes.join(';'), user.id);
+      method = 'backup';
+    }
+  }
+  if (!method) {
+    const h = crypto.createHash('sha256').update(String(code || '').trim()).digest('hex');
+    const row = db.prepare('SELECT id FROM email_2fa_codes WHERE user_id = ? AND code_hash = ? AND used_at IS NULL AND expires_at > ?').get(user.id, h, Math.floor(Date.now() / 1000));
+    if (row) {
+      db.prepare('UPDATE email_2fa_codes SET used_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), row.id);
+      method = 'email';
+    }
+  }
+  if (!method) {
+    logSecurity('2fa_fail', req.ip, user.email);
+    return res.status(400).json({ error: 'Code incorrect' });
+  }
+  logSecurity('2fa_ok', req.ip, user.email);
+  res.json({ token: issueToken(user), user: publicUser(user) });
+});
+
+// Bascule globale (super admin)
+app.put('/api/admin/security/two-fa', authRequired, (req, res) => {
+  if (!actorIsSuper(req)) return res.status(403).json({ error: 'Réservé au super admin' });
+  const { required } = req.body || {};
+  const on = required ? '1' : '0';
+  setSetting('two_fa_required', on);
+  const uncovered = !transporter
+    ? db.prepare('SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 0').get().n
+    : 0;
+  logSecurity('two_fa_required_' + (on === '1' ? 'on' : 'off'), req.ip, req.user.email);
+  res.json({ two_fa_required: on === '1', uncovered });
+});
+
+app.get('/api/admin/security/two-fa', authRequired, (req, res) => {
+  const on = getSetting('two_fa_required') === '1';
+  const enrolled = db.prepare('SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 1').get().n;
+  res.json({
+    two_fa_required: on,
+    enrolled,
+    uncovered: !transporter ? db.prepare('SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 0').get().n : 0,
+    email_2fa_available: !!transporter
+  });
 });
 
 app.post('/api/auth/logout', authRequired, (req, res) => {
@@ -490,6 +790,48 @@ app.post('/api/auth/logout', authRequired, (req, res) => {
     revokedTokens.set(tokenHash(token), (req.user?.exp || 0) * 1000);
     logSecurity('logout', req.ip, req.user?.email || '');
   }
+  res.json({ ok: true });
+});
+
+const forgotLimiter = rateLimit({ windowMs: 60 * 60_000, max: 8, key: (req) => `forgot:${req.ip}`, message: 'Trop de demandes. Réessayez plus tard.' });
+
+app.post('/api/auth/forgot', forgotLimiter, (req, res) => {
+  const em = String(req.body?.email || '').toLowerCase().trim();
+  const generic = { ok: true, message: 'Si un compte existe pour cette adresse, un lien de réinitialisation a été envoyé. Il expire dans une heure.' };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) || em.length > 120) return res.status(400).json({ error: 'Adresse email invalide' });
+  const user = db.prepare('SELECT id, email, full_name FROM users WHERE email = ?').get(em);
+  if (!user) {
+    logSecurity('password_forgot_unknown', clientIp(req), em);
+    return res.json(generic);
+  }
+  const token = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare('UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL').run(now, user.id);
+  db.prepare('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)').run(user.id, hash, now + 3600);
+  const origin = String(req.headers.origin || process.env.BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  const link = `${origin}/r/${token}`;
+  logSecurity('password_forgot', clientIp(req), user.email);
+  const html = `<p>Bonjour ${user.full_name || ''},</p><p>Pour choisir un nouveau mot de passe, ouvrez ce lien (valable 1 heure) :</p><p><a href="${link}">${link}</a></p><p>Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.</p>`;
+  sendMailTo(user.email, 'Réinitialisation de votre mot de passe — ADI', html).catch(() => {
+    console.log(`[mail] reset ${user.email}\n${link}`);
+  });
+  res.json(generic);
+});
+
+app.post('/api/auth/reset', forgotLimiter, (req, res) => {
+  const token = String(req.body?.token || '');
+  const next = String(req.body?.password || '');
+  if (!/^[a-f0-9]{64}$/i.test(token)) return res.status(400).json({ error: 'Lien invalide' });
+  if (next.length < 8 || next.length > 200) return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  const now = Math.floor(Date.now() / 1000);
+  const row = db.prepare('SELECT id, user_id FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').get(hash, now);
+  if (!row) return res.status(400).json({ error: 'Lien expiré ou déjà utilisé' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(next, 10), row.user_id);
+  db.prepare('UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL').run(now, row.user_id);
+  const user = db.prepare('SELECT email FROM users WHERE id = ?').get(row.user_id);
+  logSecurity('password_reset', clientIp(req), user?.email || '');
   res.json({ ok: true });
 });
 
@@ -835,7 +1177,7 @@ app.get('/api/public/donations/qr', async (req, res) => {
 });
 
 // Preuves de paiement (captures d'écran) — stockées hors du site public
-const proofDir = path.join(__dirname, 'data', 'donation-proofs');
+const proofDir = path.join(dataBaseDir, 'donation-proofs');
 fs.mkdirSync(proofDir, { recursive: true });
 const proofLimiter = rateLimit({ windowMs: 60 * 60_000, max: 30, key: (req) => `proof:${req.ip}`, message: 'Trop d’envois de preuve. Réessayez dans une heure.' });
 const proofUpload = multer({
@@ -1121,7 +1463,9 @@ app.put('/api/admin/donations/:id', authRequired, requirePerm('donations.edit'),
   const status = DONATE_STATUSES.includes(req.body?.status) ? req.body.status : 'nouvelle';
   db.prepare('UPDATE donations SET status = ? WHERE id = ?').run(status, req.params.id);
   syncCampaignCollected(prev.campaign_id);
-  res.json(db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id));
+  const upd = db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ?').get(req.params.id);
+  comptaOnDonationChange(prev.status, upd);
+  res.json(upd);
 });
 app.get('/api/admin/donations/:id/proof', authRequired, requirePerm('donations.view'), (req, res) => {
   const d = db.prepare('SELECT * FROM donations WHERE id = ?').get(req.params.id);
@@ -1134,6 +1478,7 @@ app.delete('/api/admin/donations/:id', authRequired, requirePerm('donations.dele
   if (d?.proof && fs.existsSync(d.proof)) fs.unlink(d.proof, () => {});
   db.prepare('DELETE FROM donations WHERE id = ?').run(req.params.id);
   syncCampaignCollected(d?.campaign_id);
+  if (d?.status === 'confirmee') deleteComptaSource('donation', d.id);
   res.json({ ok: true });
 });
 
@@ -1405,7 +1750,7 @@ function publicUser(u) {
     email: u.email,
     full_name: u.full_name,
     role: u.role,
-    role_label: ROLE_LABELS[u.role] || u.role,
+    role_label: roleLabelOf(u.role),
     photo: u.photo || '',
     phone: u.phone || '',
     job_title: u.job_title || '',
@@ -1435,7 +1780,7 @@ function applyUserFields(user, body, { allowRole = false, actorRole } = {}) {
   if (typeof job_title === 'string') db.prepare('UPDATE users SET job_title = ? WHERE id = ?').run(job_title.trim(), user.id);
   if (typeof bio === 'string') db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio.trim(), user.id);
   if (allowRole && role) {
-    if (!['super_admin', 'admin', 'editor', 'viewer', 'cashier'].includes(role)) throw Object.assign(new Error('Rôle invalide'), { status: 400 });
+    if (!knownRole(role)) throw Object.assign(new Error('Rôle invalide'), { status: 400 });
     if (role === 'super_admin' && actorRole !== 'super_admin')
       throw Object.assign(new Error('Seul un super administrateur peut accorder ce rôle'), { status: 403 });
     const err = guardLastAdmin(user.id, role);
@@ -1468,6 +1813,70 @@ app.get('/api/admin/security', authRequired, requirePerm('security.view'), (req,
   res.json(rows);
 });
 
+app.get('/api/admin/audit', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const { from, to, method, q } = req.query;
+  const where = [];
+  const params = [];
+  if (from) { where.push('date(created_at) >= ?'); params.push(String(from).slice(0, 10)); }
+  if (to) { where.push('date(created_at) <= ?'); params.push(String(to).slice(0, 10)); }
+  if (method) { where.push('method = ?'); params.push(String(method).toUpperCase().slice(0, 10)); }
+  if (q) {
+    where.push('(path LIKE ? OR email LIKE ? OR ip LIKE ?)');
+    const like = `%${String(q).slice(0, 100)}%`;
+    params.push(like, like, like);
+  }
+  const sql = `SELECT * FROM audit_log ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 1000`;
+  const rows = db.prepare(sql).all(...params);
+  const top = db.prepare('SELECT ip, COUNT(*) n FROM audit_log GROUP BY ip ORDER BY n DESC, ip LIMIT 10').all();
+  const byStatus = db.prepare('SELECT status, COUNT(*) n FROM audit_log GROUP BY status').all();
+  res.json({ rows, top_ips: top, by_status: byStatus });
+});
+
+const isValidIp = (v) => {
+  const t = String(v || '').trim();
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(t) && t.split('.').every((o) => Number(o) <= 255);
+};
+
+app.get('/api/admin/security/blocklist', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  res.json(db.prepare('SELECT * FROM ip_blocklist ORDER BY created_at DESC').all());
+});
+
+app.post('/api/admin/security/blocklist', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const ip = String(req.body?.ip || '').trim();
+  const reason = String(req.body?.reason || '').slice(0, 300);
+  if (!isValidIp(ip)) return res.status(400).json({ error: 'Adresse IPv4 invalide' });
+  try {
+    db.prepare('INSERT INTO ip_blocklist (ip, reason, created_by) VALUES (?, ?, ?)').run(ip, reason, req.user.id);
+  } catch {
+    return res.status(409).json({ error: 'Cette adresse est déjà bloquée' });
+  }
+  logSecurity('ip_block', clientIp(req), req.user.email, ip);
+  res.json({ ok: true, ip });
+});
+
+app.delete('/api/admin/security/blocklist/:ip', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const info = db.prepare('DELETE FROM ip_blocklist WHERE ip = ?').run(String(req.params.ip || ''));
+  if (!info.changes) return res.status(404).json({ error: 'Adresse inconnue' });
+  logSecurity('ip_unblock', clientIp(req), req.user.email, String(req.params.ip));
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/security/alerts', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const alerts = db.prepare(`
+    SELECT ip, COUNT(*) AS n, MAX(created_at) AS last_at
+    FROM security_events
+    WHERE type = 'login_fail' AND created_at > datetime('now', '-15 minutes')
+    GROUP BY ip HAVING n >= 5 ORDER BY n DESC LIMIT 50
+  `).all();
+  const blocked = new Set(db.prepare('SELECT ip FROM ip_blocklist').all().map((r) => r.ip));
+  res.json(alerts.map((a) => ({ ...a, blocked: blocked.has(a.ip) })));
+});
+
 app.get('/api/admin/users', authRequired, requirePerm('users.view'), (req, res) => {
   const users = db.prepare('SELECT * FROM users ORDER BY created_at').all()
     .filter((u) => !hiddenSuper(u.role, req.user.role));
@@ -1478,7 +1887,7 @@ app.post('/api/admin/users', authRequired, requirePerm('users.create'), (req, re
   const { email, password, full_name, role, photo, phone, job_title, bio } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
   if (password.length < 8) return res.status(400).json({ error: 'Mot de passe : 8 caractères minimum' });
-  if (!['super_admin', 'admin', 'editor', 'viewer', 'cashier'].includes(role)) return res.status(400).json({ error: 'Rôle invalide' });
+  if (!knownRole(role)) return res.status(400).json({ error: 'Rôle invalide' });
   if (role === 'super_admin' && req.user.role !== 'super_admin')
     return res.status(403).json({ error: 'Seul un super administrateur peut créer un super administrateur' });
   const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).toLowerCase().trim());
@@ -1527,12 +1936,40 @@ app.delete('/api/admin/users/:id', authRequired, requirePerm('users.delete'), (r
   res.json({ ok: true });
 });
 
+app.post('/api/admin/users/:id/login-link', authRequired, requirePerm('users.edit'), async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user || hiddenSuper(user.role, req.user.role)) return res.status(404).json({ error: 'Utilisateur introuvable' });
+  const rotate = req.body?.rotate === true || !user.login_gate_seal;
+  let token = rotate ? '' : currentGateToken(user);
+  if (!token) token = rotateGate(user.id);
+  const url = loginLinkFor(req, token);
+  const digits = String(user.phone || '').replace(/\D/g, '');
+  const text = `Bonjour${user.full_name ? ` ${user.full_name}` : ''}, voici votre lien personnel de connexion ADI. Ne le transmettez à personne :\n${url}`;
+  const whatsapp = digits.length >= 8 ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : '';
+  let mailed = false;
+  let mailError = '';
+  if (req.body?.send === 'email') {
+    const html = `<p>Bonjour${user.full_name ? ` ${user.full_name}` : ''},</p><p>Voici votre lien personnel de connexion. Il remplace l’adresse publique et ne doit pas être partagé :</p><p><a href="${url}">${url}</a></p>`;
+    try {
+      await sendMailTo(user.email, 'Votre lien de connexion — ADI', html);
+      mailed = true;
+    } catch (e) {
+      mailError = e?.message === 'EMAIL_NON_CONFIGURE'
+        ? 'L’envoi d’emails n’est pas configuré. Copiez le lien ou utilisez WhatsApp.'
+        : 'L’envoi de l’email a échoué. Copiez le lien ou utilisez WhatsApp.';
+    }
+  }
+  logSecurity('login_link', clientIp(req), user.email, req.body?.send || (rotate ? 'nouveau' : 'copie'));
+  res.json({ url, whatsapp, mailed, mailError, phone: user.phone || '' });
+});
+
 // ---------- Modules (super admin) ----------
 app.get('/api/admin/modules', authRequired, (req, res) => {
   res.json({
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
     chat_enabled: getSetting('chat_enabled') !== '0',
+    compta_enabled: getSetting('compta_enabled') === '1',
     maintenance_enabled: getSetting('maintenance_enabled') === '1',
     maintenance_message: getSetting('maintenance_message') || '',
     is_super: req.user.role === 'super_admin'
@@ -1540,10 +1977,11 @@ app.get('/api/admin/modules', authRequired, (req, res) => {
 });
 
 app.put('/api/admin/modules', authRequired, requirePerm('modules.manage'), (req, res) => {
-  const { grh_enabled, pos_enabled, chat_enabled, maintenance_enabled, maintenance_message } = req.body || {};
+  const { grh_enabled, pos_enabled, chat_enabled, compta_enabled, maintenance_enabled, maintenance_message } = req.body || {};
   if (typeof grh_enabled === 'boolean') setSetting('grh_enabled', grh_enabled ? '1' : '0');
   if (typeof pos_enabled === 'boolean') setSetting('pos_enabled', pos_enabled ? '1' : '0');
   if (typeof chat_enabled === 'boolean') setSetting('chat_enabled', chat_enabled ? '1' : '0');
+  if (typeof compta_enabled === 'boolean') setSetting('compta_enabled', compta_enabled ? '1' : '0');
   if (typeof maintenance_enabled === 'boolean') setSetting('maintenance_enabled', maintenance_enabled ? '1' : '0');
   if (typeof maintenance_message === 'string') {
     setSetting('maintenance_message', maintenance_message.trim().slice(0, 500));
@@ -1552,24 +1990,462 @@ app.put('/api/admin/modules', authRequired, requirePerm('modules.manage'), (req,
     grh_enabled: getSetting('grh_enabled') === '1',
     pos_enabled: getSetting('pos_enabled') === '1',
     chat_enabled: getSetting('chat_enabled') !== '0',
+    compta_enabled: getSetting('compta_enabled') === '1',
     maintenance_enabled: getSetting('maintenance_enabled') === '1',
     maintenance_message: getSetting('maintenance_message') || '',
     is_super: true
   });
 });
+// ---------- Sauvegarde / restauration de la base de données (super admin) ----------
+const BACKUP_DIR = path.join(os.tmpdir(), 'adiong-backup-' + process.pid);
+const backupUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      try { fs.mkdirSync(BACKUP_DIR, { recursive: true }); } catch { /* existant */ }
+      cb(null, BACKUP_DIR);
+    },
+    filename: (req, file, cb) => cb(null, `restore-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`)
+  }),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (String(file.originalname || '').toLowerCase().endsWith('.zip')) cb(null, true);
+    else cb(new Error('Fichier .zip requis'));
+  }
+});
 
+const collectUploads = (dir, prefix, out = []) => {
+  if (!fs.existsSync(dir)) return out;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) collectUploads(full, `${prefix}/${e.name}`, out);
+    else out.push(`${prefix}/${e.name}`);
+  }
+  return out;
+};
+
+app.get('/api/admin/backup', authRequired, requirePerm('modules.manage'), (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+    checkpointDb();
+    const zip = new AdmZip();
+    zip.addLocalFile(path.join(dataBaseDir, 'adiong.db'), 'db', 'adiong.db');
+    for (const rel of collectUploads(uploadDir, 'uploads')) {
+      zip.addLocalFile(path.join(uploadDir, rel.slice('uploads/'.length)), 'uploads', rel.slice('uploads/'.length));
+    }
+    const counts = {};
+    for (const r of db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
+      try { counts[r.name] = db.prepare(`SELECT COUNT(*) n FROM "${r.name}"`).get().n; } catch { counts[r.name] = -1; }
+    }
+    zip.addFile('manifest.json', Buffer.from(JSON.stringify({
+      app: 'ADI ONG',
+      created_at: new Date().toISOString(),
+      node: process.version,
+      tables: counts
+    }, null, 2)));
+    const buf = zip.toBuffer();
+    logSecurity('backup_export', req.ip, req.user.email);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="adiong-sauvegarde-${new Date().toISOString().slice(0, 10)}.zip"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[backup]', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Sauvegarde impossible' });
+  }
+});
+
+const backupUploadSafe = (req, res, next) => {
+  backupUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Fichier invalide' });
+    next();
+  });
+};
+
+app.post('/api/admin/backup/restore', authRequired, requirePerm('modules.manage'), backupUploadSafe, (req, res) => {
+  const tmpFile = req.file?.path;
+  const fail = (code, msg) => {
+    try { if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    res.status(code).json({ error: msg });
+  };
+  if (req.user.role !== 'super_admin') return fail(403, 'Réservé au super administrateur');
+  if (!req.file) return fail(400, 'Fichier de sauvegarde manquant');
+  let zip;
+  try { zip = new AdmZip(tmpFile); } catch { return fail(400, 'Archive ZIP invalide'); }
+  const dbEntry = zip.getEntries().find((e) => e.entryName === 'db/adiong.db' || e.entryName.endsWith('adiong.db'));
+  if (!dbEntry) return fail(400, 'Base de données absente de l’archive');
+  const candidate = path.join(BACKUP_DIR, `candidate-${Date.now()}.db`);
+  try {
+    fs.writeFileSync(candidate, dbEntry.getData());
+  } catch { return fail(500, 'Lecture de l’archive impossible'); }
+  let check;
+  try {
+    check = new DatabaseSync(candidate);
+    const tables = new Set(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
+    if (!tables.has('users') || !tables.has('settings')) {
+      check.close();
+      fs.unlinkSync(candidate);
+      return fail(400, 'Archive non reconnue comme une sauvegarde ADI ONG');
+    }
+  } catch {
+    try { fs.unlinkSync(candidate); } catch { /* ignore */ }
+    return fail(400, 'Base de données corrompue dans l’archive');
+  }
+  const restoredCounts = {};
+  try {
+    for (const t of ['users', 'articles', 'campaigns', 'causes', 'donations']) {
+      try { restoredCounts[t] = check.prepare(`SELECT COUNT(*) n FROM "${t}"`).get().n; } catch { restoredCounts[t] = 0; }
+    }
+  } finally {
+    check.close();
+  }
+  try {
+    checkpointDb();
+    const dbFile = path.join(dataBaseDir, 'adiong.db');
+    fs.renameSync(candidate, dbFile);
+    for (const suffix of ['-wal', '-shm']) {
+      try { fs.unlinkSync(dbFile + suffix); } catch { /* absent */ }
+    }
+    const uploadsEntries = zip.getEntries().filter((e) => e.entryName.startsWith('uploads/') && !e.isDirectory);
+    for (const e of uploadsEntries) {
+      const target = path.join(uploadDir, e.entryName.slice('uploads/'.length));
+      try {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, e.getData());
+      } catch { /* fichier non critique */ }
+    }
+    reopenDb();
+    logSecurity('backup_restore', req.ip, req.user.email, JSON.stringify(restoredCounts).slice(0, 200));
+    res.json({ ok: true, restored: restoredCounts, files: uploadsEntries.length });
+  } catch (err) {
+    console.error('[backup] restore', err);
+    fail(500, 'Restauration impossible — l’application a été rouverte avec la base trouvée');
+  }
+});
+// ---------- Maintenance : optimisation BDD, purge des journaux, orphelins (super admin) ----------
+const runMaintenanceCore = (deep) => {
+  const report = { vacuum: false, logs_purged: 0, orphan_files: [] };
+  try { db.exec('ANALYZE'); } catch { /* non bloquant */ }
+  try { db.exec('VACUUM'); report.vacuum = true; } catch { /* non bloquant */ }
+  try {
+    const info1 = db.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-365 days')").run();
+    const info2 = db.prepare("DELETE FROM security_events WHERE created_at < datetime('now', '-365 days')").run();
+    report.logs_purged = (info1.changes || 0) + (info2.changes || 0);
+  } catch { /* non bloquant */ }
+  if (deep) {
+    const referenced = new Set();
+    const add = (v) => {
+      if (!v) return;
+      const t = String(v);
+      const m = t.match(/\/uploads\/[^?\s"']+/);
+      if (m) referenced.add(m[0].replace(/^\//, ''));
+    };
+    const addBasename = (dirRel, v) => {
+      if (!v) return;
+      const b = String(v).split('/').pop();
+      if (b) referenced.add(`${dirRel}/${b}`);
+    };
+    for (const r of db.prepare('SELECT url, filename FROM media').all()) { add(r.url); if (r.filename) addBasename('uploads/media', r.filename); }
+    for (const t of ['articles', 'campaigns', 'causes']) {
+      const cols = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+      const imgCols = ['image', 'seo_image'].filter((c) => cols.includes(c));
+      if (imgCols.length) {
+        for (const r of db.prepare(`SELECT ${imgCols.join(', ')} FROM ${t}`).all())
+          for (const c of imgCols) add(r[c]);
+      }
+    }
+    for (const r of db.prepare('SELECT photo FROM users').all()) add(r.photo);
+    for (const r of db.prepare('SELECT value FROM settings').all()) add(r.value);
+    for (const r of db.prepare('SELECT proof FROM donations').all()) addBasename('data/donation-proofs', r.proof);
+    for (const r of db.prepare('SELECT file FROM grh_documents').all()) addBasename('data/employee-docs', r.file);
+    for (const r of db.prepare('SELECT cv_file FROM grh_candidates').all()) addBasename('data/cvs', r.cv_file);
+    for (const r of db.prepare('SELECT file FROM grh_admin_docs').all()) addBasename('data/admin-docs', r.file);
+    for (const r of db.prepare('SELECT attachment FROM chat_messages').all()) addBasename('uploads/chat', r.attachment);
+
+    const orphans = (dirRel) => {
+      const dir = path.join(__dirname, dirRel);
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!e.isFile()) continue;
+        if (referenced.has(`${dirRel}/${e.name}`)) continue;
+        const full = path.join(dir, e.name);
+        try {
+          const st = fs.statSync(full);
+          fs.unlinkSync(full);
+          report.orphan_files.push({ file: `${dirRel}/${e.name}`, size: st.size });
+        } catch { /* concurrent ou protégé */ }
+      }
+    };
+    orphans('data/donation-proofs');
+    orphans('data/employee-docs');
+    orphans('data/cvs');
+    orphans('data/admin-docs');
+    orphans('uploads/media');
+    orphans('uploads/docs');
+    orphans('uploads/chat');
+  }
+  return report;
+};
+
+app.get('/api/admin/maintenance', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  res.json({ last: getSetting('last_maintenance') || '' });
+});
+
+app.post('/api/admin/maintenance', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  try {
+    const report = runMaintenanceCore(true);
+    setSetting('last_maintenance', new Date().toISOString());
+    logSecurity('maintenance', clientIp(req), req.user.email, `purge=${report.logs_purged} fichiers=${report.orphan_files.length}`);
+    res.json({ ok: true, ...report, at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[maintenance]', err);
+    res.status(500).json({ error: 'Maintenance impossible' });
+  }
+});
+
+const nextDailyMaintenanceDelay = () => {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(3, 0, 5, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  return target - now;
+};
+const scheduleDailyMaintenance = () => {
+  setTimeout(() => {
+    try {
+      const r = runMaintenanceCore(false);
+      console.log(`[maintenance] quotidienne terminée : purge=${r.logs_purged}, vacuum=${r.vacuum}`);
+    } catch (e) {
+      console.error('[maintenance] quotidienne', e);
+    }
+    scheduleDailyMaintenance();
+  }, nextDailyMaintenanceDelay());
+};
+scheduleDailyMaintenance();
+syncWorkerStart();
+
+app.get('/api/admin/sync/config', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  if (process.env.LOCAL_COPY !== '1') return res.status(404).json({ error: 'Indisponible sur cette instance' });
+  const st = syncWorkerStatus();
+  res.json({ ...st, token: st.configured ? '••••' : '' });
+});
+
+app.put('/api/admin/sync/config', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  const r = syncWorkerConfig(req.body || {});
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  logSecurity('sync_config', clientIp(req), req.user.email, `${r.url || ''} intervalle=${r.intervalMs}`);
+  res.json(r);
+});
+
+app.post('/api/admin/sync/run', authRequired, (req, res) => {
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'Réservé au super administrateur' });
+  if (process.env.LOCAL_COPY !== '1') return res.status(404).json({ error: 'Indisponible sur cette instance' });
+  res.json({ ok: true, started: true });
+  void syncWorkerRun();
+});
+
+// ---------- Synchronisation (Phase 2) ----------
+const SYNC_VIEW_PERM = {
+  articles: 'content.view', article_categories: 'content.view', causes: 'content.view',
+  campaigns: 'content.view', partners: 'content.view', media: 'media.view',
+  donations: 'donations.view',
+  stock_products: 'pos.view', stock_categories: 'pos.view', stock_movements: 'pos.view',
+  pos_sales: 'pos.view', pos_sale_items: 'pos.view', pos_returns: 'pos.view',
+  pos_return_items: 'pos.view', shop_orders: 'pos.view',
+  acc_entries: 'compta.view', acc_entry_lines: 'compta.view', acc_exercises: 'compta.view',
+  acc_in_kind: 'compta.view', acc_accounts: 'compta.view', acc_journals: 'compta.view',
+  grh_departments: 'grh.view', grh_employees: 'grh.view', grh_jobs: 'grh.view',
+  grh_candidates: 'grh.view', grh_leaves: 'grh.view', grh_attendance: 'grh.view',
+  grh_payroll: 'grh.view', grh_salary_history: 'grh.view', grh_projects: 'grh.view',
+  grh_tasks: 'grh.view', grh_task_notes: 'grh.view', grh_evaluations: 'grh.view',
+  grh_trainings: 'grh.view', grh_training_attendees: 'grh.view', grh_announcements: 'grh.view',
+  grh_documents: 'grh.view', grh_admin_docs: 'grh.view', grh_project_members: 'grh.view',
+  users: 'users.view'
+};
+const SYNC_EDIT_PERM = {
+  articles: 'content.edit', article_categories: 'content.edit', causes: 'content.edit',
+  campaigns: 'content.edit', partners: 'content.edit', media: 'media.upload',
+  donations: 'donations.edit',
+  stock_products: 'pos.manage', stock_categories: 'pos.manage', stock_movements: 'pos.manage',
+  pos_sales: 'pos.sell', pos_sale_items: 'pos.sell', pos_returns: 'pos.manage',
+  pos_return_items: 'pos.manage', shop_orders: 'pos.manage',
+  acc_entries: 'compta.manage', acc_entry_lines: 'compta.manage', acc_exercises: 'compta.manage',
+  acc_in_kind: 'compta.manage',
+  grh_departments: 'grh.manage', grh_employees: 'grh.manage', grh_jobs: 'grh.manage',
+  grh_candidates: 'grh.manage', grh_leaves: 'grh.manage', grh_attendance: 'grh.attendance',
+  grh_payroll: 'grh.payroll', grh_salary_history: 'grh.payroll', grh_projects: 'grh.manage',
+  grh_tasks: 'grh.manage', grh_task_notes: 'grh.manage', grh_evaluations: 'grh.manage',
+  grh_trainings: 'grh.manage', grh_training_attendees: 'grh.manage', grh_announcements: 'grh.manage',
+  grh_documents: 'grh.manage', grh_admin_docs: 'grh.manage', grh_project_members: 'grh.manage'
+};
+const syncCanRead = (req, table) => actorIsSuper(req) || permEnabled(req.user?.role, SYNC_VIEW_PERM[table]);
+const syncCanWrite = (req, table) => actorIsSuper(req) || permEnabled(req.user?.role, SYNC_EDIT_PERM[table]);
+
+app.get('/api/sync/pull', authRequired, (req, res) => {
+  try {
+    const since = Math.max(0, parseInt(req.query.since || '0', 10) || 0);
+    const out = { serverTime: nowSec(), tables: {}, tombstones: [] };
+    let count = 0;
+    for (const [table, conf] of Object.entries(SYNC_TABLES)) {
+      if (!conf.pull || !syncCanRead(req, table)) continue;
+      const rows = db.prepare(`SELECT * FROM ${table} WHERE updated_at > ? ORDER BY updated_at ASC, id ASC LIMIT 10000`).all(since);
+      out.tables[table] = rows.map(({ origin, ...r }) => r);
+      count += rows.length;
+    }
+    for (const [table, conf] of Object.entries(SYNC_TABLES)) {
+      if (!conf.pull || !syncCanRead(req, table)) continue;
+      for (const t of db.prepare('SELECT row_id AS id, deleted_at FROM tombstones WHERE table_name = ? AND deleted_at > ? ORDER BY deleted_at ASC').all(table, since)) {
+        out.tombstones.push({ table, ...t });
+      }
+    }
+    out.truncated = count >= 10000;
+    res.json(out);
+  } catch (e) {
+    console.error('[sync pull]', e);
+    res.status(500).json({ error: 'Synchronisation impossible' });
+  }
+});
+
+app.post('/api/sync/push', authRequired, (req, res) => {
+  try {
+    const clientId = String(req.body?.clientId || 'inconnu');
+    const items = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 1000) : [];
+    const results = [];
+    let applied = 0, conflicts = 0, rejected = 0;
+    const touched = new Set();
+    for (const item of items) {
+      const table = String(item?.table || '');
+      const conf = SYNC_TABLES[table];
+      const id = Number(item?.id);
+      if (!conf?.push) { rejected++; results.push({ table, id, status: 'rejected', reason: 'table non synchronisée' }); continue; }
+      if (!syncCanWrite(req, table)) { rejected++; results.push({ table, id, status: 'rejected', reason: 'permission insuffisante' }); continue; }
+      if (!Number.isInteger(id) || id <= 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'id invalide' }); continue; }
+      const ts = Number(item?.updated_at) || 0;
+      if (ts <= 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'horodatage invalide' }); continue; }
+      touched.add(table);
+      try {
+        if (item?.deleted) {
+          const r = applyDelete(table, id, ts, 'prod');
+          if (r.status === 'applied') applied++;
+          else { conflicts++; results.push({ table, id, status: 'conflict', reason: r.reason }); }
+        } else {
+          const data = { ...(item.data || {}) };
+          delete data.updated_at;
+          delete data.origin;
+          if (Object.keys(data).length === 0) { rejected++; results.push({ table, id, status: 'rejected', reason: 'vide' }); continue; }
+          const r = applyRow(table, id, data, ts, 'prod');
+          if (r.status === 'applied') applied++;
+          else if (r.status === 'conflict') { conflicts++; results.push({ table, id, status: 'conflict', reason: r.reason, row: r.row }); }
+          else { rejected++; results.push({ table, id, status: 'rejected', reason: r.reason }); }
+        }
+      } catch (e) {
+        rejected++;
+        results.push({ table, id, status: 'rejected', reason: e.message || 'erreur' });
+      }
+    }
+    logSync(clientId, 'push', [...touched].join(','), items.length, applied, conflicts, rejected);
+    res.json({ ok: true, results, applied, conflicts, rejected, serverTime: nowSec() });
+  } catch (e) {
+    console.error('[sync push]', e);
+    res.status(500).json({ error: 'Synchronisation impossible' });
+  }
+});
+
+app.get('/api/sync/status', authRequired, (req, res) => {
+  const gs = syncStateGet('_global');
+  let pending = 0;
+  for (const [t, c] of Object.entries(SYNC_TABLES)) {
+    if (!c.push) continue;
+    pending += db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE origin = 'local' AND updated_at > ?`).get(gs.last_pushed_at).n;
+    pending += db.prepare("SELECT COUNT(*) n FROM tombstones WHERE table_name = ? AND origin = 'local' AND deleted_at > ?").get(t, gs.last_pushed_at).n;
+  }
+  res.json({
+    enabled: true,
+    last_sync: db.prepare("SELECT at FROM sync_log WHERE direction IN ('push', 'pull', 'cycle') ORDER BY at DESC LIMIT 1").get()?.at || 0,
+    pending_local: pending
+  });
+});
+
+const SYNC_MEDIA_MAX = 20 * 1024 * 1024;
+const safeUploadPath = (url) => {
+  const rel = String(url || '').replace(/^\/+/, '').replace(/^uploads\//, '');
+  if (!rel || rel.includes('..') || rel.includes('\\')) return null;
+  const full = path.resolve(uploadDir, rel);
+  if (full !== uploadDir && !full.startsWith(uploadDir + path.sep)) return null;
+  return { rel, full };
+};
+
+app.post('/api/sync/media/manifest', authRequired, (req, res) => {
+  if (!syncCanWrite(req, 'media')) return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle' });
+  const items = (Array.isArray(req.body?.files) ? req.body.files : []).slice(0, 200);
+  const out = [];
+  for (const it of items) {
+    const p = safeUploadPath(it?.url);
+    if (!p) { out.push({ url: it?.url, needs: 'invalid' }); continue; }
+    let needs = true;
+    try {
+      const st = fs.statSync(p.full);
+      needs = st.size !== Number(it.size);
+    } catch { needs = true; }
+    out.push({ url: it?.url, needs });
+  }
+  res.json({ ok: true, files: out });
+});
+
+app.put('/api/sync/media/upload', authRequired, express.raw({ type: () => true, limit: SYNC_MEDIA_MAX }), (req, res) => {
+  if (!syncCanWrite(req, 'media')) return res.status(403).json({ error: 'Accès refusé : permission non accordée à votre rôle' });
+  const p = safeUploadPath(req.query.url);
+  if (!p) return res.status(400).json({ error: 'Chemin de média invalide' });
+  const sha = String(req.query.sha256 || '').toLowerCase();
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!body.length) return res.status(400).json({ error: 'Fichier vide' });
+  const shaActual = crypto.createHash('sha256').update(body).digest('hex');
+  if (sha && sha !== shaActual) return res.status(409).json({ error: 'Empreinte du fichier incorrecte' });
+  try {
+    fs.mkdirSync(path.dirname(p.full), { recursive: true });
+    const tmp = p.full + '.tmp-' + crypto.randomBytes(4).toString('hex');
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, p.full);
+    const row = db.prepare('SELECT id FROM media WHERE url = ?').get('/' + p.rel);
+    if (row) db.prepare('UPDATE media SET sha256 = ?, size = ? WHERE id = ?').run(shaActual, body.length, row.id);
+    logSync(String(req.body?.clientId || req.user?.email || 'media'), 'media', p.rel, 1, 1, 0, 0);
+    res.json({ ok: true, size: body.length, sha256: shaActual });
+  } catch (e) {
+    console.error('[sync media upload]', e);
+    res.status(500).json({ error: 'Échec de l’enregistrement du média' });
+  }
+});
+
+
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
+// ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 // ---------- Permissions : matrice rôles × zones (configurable par le super admin) ----------
 app.get('/api/admin/permissions', authRequired, (req, res) => {
   const canManage = req.user.role === 'super_admin' || permEnabled(req.user.role, 'roles.manage');
-  const roles = (canManage ? ROLE_LIST : ROLE_LIST.filter((r) => r === req.user.role))
-    .filter((r) => r !== 'super_admin' || actorIsSuper(req));
+  const counts = Object.fromEntries(db.prepare('SELECT role, COUNT(*) n FROM users GROUP BY role').all().map((r) => [r.role, r.n]));
+  const roles = listAccessRoles()
+    .filter((r) => canManage || r.key === req.user.role)
+    .filter((r) => r.key !== 'super_admin' || actorIsSuper(req));
   res.json({
     groups: PERM_GROUPS,
     areas: PERM_AREAS,
-    matrix: roles.map((role) => ({
-      role,
-      locked: role === 'super_admin',
-      permissions: PERM_AREAS.map((a) => ({ area: a.id, enabled: permEnabled(role, a.id) }))
+    roles: roles.map((r) => ({
+      key: r.key,
+      label: r.label,
+      description: r.description || '',
+      is_system: r.is_system === 1,
+      user_count: counts[r.key] || 0
+    })),
+    matrix: roles.map((r) => ({
+      role: r.key,
+      label: r.label,
+      description: r.description || '',
+      is_system: r.is_system === 1,
+      user_count: counts[r.key] || 0,
+      locked: r.key === 'super_admin',
+      permissions: PERM_AREAS.map((a) => ({ area: a.id, enabled: permEnabled(r.key, a.id) }))
     })),
     is_super: canManage
   });
@@ -1582,7 +2458,7 @@ app.put('/api/admin/permissions', authRequired, requirePerm('roles.manage'), (re
   let changed = 0;
   for (const [role, areas] of Object.entries(m)) {
     if (role === 'super_admin') return res.status(400).json({ error: 'Le super administrateur conserve toujours tous les droits' });
-    if (!ROLES.any.includes(role)) return res.status(400).json({ error: `Rôle inconnu : ${role}` });
+    if (!knownRole(role)) return res.status(400).json({ error: `Rôle inconnu : ${role}` });
     if (!areas || typeof areas !== 'object') continue;
     for (const [area, on] of Object.entries(areas)) {
       if (!PERM_AREAS.some((a) => a.id === area)) return res.status(400).json({ error: `Zone inconnue : ${area}` });
@@ -1591,6 +2467,36 @@ app.put('/api/admin/permissions', authRequired, requirePerm('roles.manage'), (re
     }
   }
   res.json({ ok: true, changed });
+});
+
+app.post('/api/admin/roles', authRequired, requirePerm('roles.manage'), (req, res) => {
+  const label = String(req.body?.label || '').trim().slice(0, 80);
+  const key = slugRole(req.body?.key || label);
+  const description = String(req.body?.description || '').trim().slice(0, 240);
+  if (!label) return res.status(400).json({ error: 'Libellé requis' });
+  if (!key) return res.status(400).json({ error: 'Clé de rôle invalide' });
+  if (key === 'super_admin') return res.status(403).json({ error: 'Impossible de créer un Super admin' });
+  if (knownRole(key)) return res.status(409).json({ error: 'Ce rôle existe déjà' });
+  const sort = (db.prepare('SELECT COALESCE(MAX(sort_order), 4) n FROM access_roles').get().n || 4) + 1;
+  db.prepare('INSERT INTO access_roles (key, label, description, is_system, sort_order) VALUES (?, ?, ?, 0, ?)').run(key, label, description, sort);
+  const ins = db.prepare('INSERT OR IGNORE INTO role_permissions (role, area, enabled) VALUES (?, ?, ?)');
+  for (const area of PERM_AREAS) {
+    const on = area.id === 'dashboard.view' || area.id === 'chat.view' ? 1 : 0;
+    ins.run(key, area.id, on);
+  }
+  res.status(201).json({ role: { key, label, description, is_system: false } });
+});
+
+app.delete('/api/admin/roles/:key', authRequired, requirePerm('roles.manage'), (req, res) => {
+  const key = String(req.params.key || '');
+  const role = db.prepare('SELECT * FROM access_roles WHERE key = ?').get(key);
+  if (!role || hiddenSuper(role.key, req.user.role)) return res.status(404).json({ error: 'Rôle introuvable' });
+  if (role.is_system === 1) return res.status(403).json({ error: 'Ce rôle du système ne peut pas être supprimé' });
+  const used = db.prepare('SELECT COUNT(*) n FROM users WHERE role = ?').get(key).n;
+  if (used > 0) return res.status(409).json({ error: `Impossible : ${used} compte${used > 1 ? 's' : ''} utilise${used > 1 ? 'nt' : ''} encore ce rôle` });
+  db.prepare('DELETE FROM role_permissions WHERE role = ?').run(key);
+  db.prepare('DELETE FROM access_roles WHERE key = ?').run(key);
+  res.json({ ok: true });
 });
 
 // ---------- GRH (rôles admin+super, module activable) ----------
@@ -1856,7 +2762,7 @@ app.get('/api/admin/grh/employees/:id', ...GRH, (req, res) => {
 });
 
 // Documents du dossier (privés : accès HR uniquement, jamais servis publiquement)
-const empDocsDir = path.join(__dirname, 'data', 'employee-docs');
+const empDocsDir = path.join(dataBaseDir, 'employee-docs');
 if (!fs.existsSync(empDocsDir)) fs.mkdirSync(empDocsDir, { recursive: true });
 
 const docsUpload = multer({
@@ -1994,7 +2900,7 @@ app.get('/api/admin/grh/attendance', ...GRH, (req, res) => {
   let sql = ATTENDANCE_SQL;
   const where = [];
   const params = [];
-  if (month && /^\d{4}-\d{2}$/.test(month)) { where.push('a.date >= ? AND a.date < ?'); params.push(`${month}-01`, `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)) , 1)).toISOString().slice(0, 7)}`); }
+  if (month && /^\d{4}-\d{2}$/.test(month)) { where.push('a.date >= ? AND a.date < ?'); params.push(`${month}-01`, new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 10)); }
   else { const today = orgParts().date; where.push('a.date >= ?'); params.push(today.slice(0, 8) + '01'); }
   if (employee_id) { where.push('a.employee_id = ?'); params.push(employee_id); }
   if (q) { where.push('e.full_name LIKE ?'); params.push(`%${q}%`); }
@@ -2036,7 +2942,7 @@ app.delete('/api/admin/grh/attendance/:id', ...GRH, (req, res) => {
 
 app.get('/api/admin/grh/attendance/export', ...GRH, (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : orgParts().date.slice(0, 7);
-  const end = `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 7)}`;
+  const end = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 10);
   const rows = db.prepare(`${ATTENDANCE_SQL} WHERE a.date >= ? AND a.date < ? ORDER BY a.date, e.full_name`).all(`${month}-01`, end);
   const dur = (a) => {
     const s = new Date(String(a.clock_in || a.last_seen).replace(' ', 'T') + 'Z').getTime();
@@ -2114,14 +3020,18 @@ app.put('/api/admin/grh/payroll/:id', ...PAY, (req, res) => {
       deductions, String(b.deductions_label || '').slice(0, 200), base + bonus - deductions,
       b.currency || ex.currency, status, ex.id
     );
-    res.json(db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(ex.id));
+    const upd = db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(ex.id);
+    comptaOnPayrollChange(ex.status, upd);
+    res.json(upd);
   } catch {
     res.status(409).json({ error: 'Un bulletin existe déjà pour cet employé ce mois-ci.' });
   }
 });
 
 app.delete('/api/admin/grh/payroll/:id', ...PAY, (req, res) => {
+  const ex = db.prepare('SELECT * FROM grh_payroll WHERE id = ?').get(req.params.id);
   db.prepare('DELETE FROM grh_payroll WHERE id = ?').run(req.params.id);
+  if (ex?.status === 'envoye') deleteComptaSource('payroll', ex.id);
   res.json({ ok: true });
 });
 
@@ -2248,7 +3158,7 @@ app.get('/api/admin/grh/payroll/:id/pdf', ...PAY, async (req, res) => {
 });
 
 // ---------- Recrutement : offres + candidats ----------
-const cvDir = path.join(__dirname, 'data', 'cvs');
+const cvDir = path.join(dataBaseDir, 'cvs');
 if (!fs.existsSync(cvDir)) fs.mkdirSync(cvDir, { recursive: true });
 const cvUpload = multer({
   storage: multer.diskStorage({
@@ -2700,7 +3610,7 @@ app.put('/api/admin/grh/projects/:id', ...GRH, (req, res) => {
   const status = PROJECT_STATUSES[b.status] ? b.status : 'planifie';
   const memberIds = [...new Set((Array.isArray(b.member_ids) ? b.member_ids : []).map(Number).filter((n) => n > 0))];
   runTx(() => {
-    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?, updated_at = datetime('now')
+    db.prepare(`UPDATE grh_projects SET name = ?, description = ?, client = ?, deadline = ?, status = ?
       WHERE id = ?`).run(
       String(b.name).trim().slice(0, 150),
       String(b.description || '').slice(0, 2000),
@@ -2825,7 +3735,7 @@ app.put('/api/admin/grh/tasks/:id', ...GRH, (req, res) => {
   const nextStatus = o.status ?? ex.status;
   const completedAt = nextStatus === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
   db.prepare(`UPDATE grh_tasks SET
-      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?, updated_at = datetime('now')
+      title = ?, description = ?, project_id = ?, assignee_id = ?, priority = ?, due_date = ?, status = ?, completed_at = ?
     WHERE id = ?`).run(
     o.title ?? ex.title,
     o.description ?? ex.description,
@@ -2846,7 +3756,7 @@ const applyTaskStatus = (id, status, { authorId, authorName, note }) => {
   if (!TASK_STATUSES[status]) return { fail: 400, msg: 'Statut invalide' };
   if (status === ex.status && !note) return { ok: ex };
   const completedAt = status === 'terminee' ? (ex.completed_at || new Date().toISOString().slice(0, 10)) : null;
-  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`).run(status, completedAt, ex.id);
+  db.prepare(`UPDATE grh_tasks SET status = ?, completed_at = ? WHERE id = ?`).run(status, completedAt, ex.id);
   if (note) {
     db.prepare('INSERT INTO grh_task_notes (task_id, author_id, author_name, body) VALUES (?, ?, ?, ?)')
       .run(ex.id, authorId, authorName, String(note).slice(0, 1000));
@@ -3051,7 +3961,7 @@ app.post('/api/admin/grh/chat/:employeeId', ...GRH, (req, res) => {
 });
 
 // ---------- Documents administratifs ----------
-const adminDocsDir = path.join(__dirname, 'data', 'admin-docs');
+const adminDocsDir = path.join(dataBaseDir, 'admin-docs');
 fs.mkdirSync(adminDocsDir, { recursive: true });
 const adminDocsUpload = multer({
   storage: multer.diskStorage({
@@ -3440,6 +4350,10 @@ const authChatFile = (req, res, next) => {
     req.user = jwt.verify(token, JWT_SECRET);
     const fresh = db.prepare('SELECT role FROM users WHERE id = ?').get(req.user.id);
     req.user.role = fresh?.role || 'viewer';
+    if (req.user.twoFa === 'pending') {
+      const PENDING_ROUTES = new Set(['/api/auth/totp/setup', '/api/auth/totp/confirm', '/api/auth/2fa/email', '/api/auth/me']);
+      if (!PENDING_ROUTES.has(req.path)) return res.status(401).json({ error: 'Vérification du 2ᵉ facteur requise' });
+    }
     next();
   } catch {
     res.status(401).json({ error: 'Session expirée, reconnectez-vous' });
@@ -4000,8 +4914,8 @@ app.get('/api/admin/invites', authRequired, requirePerm('users.view'), (req, res
 
 app.post('/api/admin/invites', authRequired, requirePerm('users.create'), (req, res) => {
   const { email, role, label, days } = req.body || {};
-  if (!INVITE_ROLES.includes(role))
-    return res.status(400).json({ error: 'Rôle invalide pour une invitation (éditeur, consultation ou administrateur)' });
+  if (!knownRole(role) || role === 'super_admin')
+    return res.status(400).json({ error: 'Rôle invalide pour une invitation' });
   const em = email ? String(email).toLowerCase().trim() : null;
   if (em && db.prepare('SELECT id FROM users WHERE email = ?').get(em))
     return res.status(409).json({ error: 'Un compte existe déjà avec cet email — modifiez-le depuis Utilisateurs' });
@@ -4025,14 +4939,19 @@ const POS_ADMIN = [authRequired, requirePerm('pos.manage'), requireModule('pos_e
 const PAYMENT_METHODS = ['especes', 'mobile', 'carte', 'virement', 'autre'];
 const STOCK_MOVEMENT_TYPES = ['entree', 'sortie', 'ajustement'];
 const money2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+let txDepth = 0;
 const runTx = (fn) => {
-  db.exec('BEGIN');
+  const outer = txDepth === 0;
+  if (outer) db.exec('BEGIN');
+  txDepth++;
   try {
     const out = fn();
-    db.exec('COMMIT');
+    txDepth--;
+    if (outer) db.exec('COMMIT');
     return out;
   } catch (e) {
-    try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ }
+    txDepth--;
+    if (outer) { try { db.exec('ROLLBACK'); } catch { /* déjà rollbacké */ } }
     throw e;
   }
 };
@@ -4278,6 +5197,104 @@ app.post('/api/admin/pos/products/:id/movements', ...POS, (req, res) => {
   res.json({ ok: true, stock: nextStock });
 });
 
+// Fiche de stock
+app.get('/api/admin/pos/products/:id/stock-card', ...POS, (req, res) => {
+  try {
+    const p = db.prepare('SELECT * FROM stock_products WHERE id = ?').get(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Produit introuvable' });
+    const { from, to, format } = req.query;
+    const all = db.prepare('SELECT m.*, u.email AS by_name FROM stock_movements m LEFT JOIN users u ON u.id = m.created_by WHERE m.product_id = ? ORDER BY m.id ASC').all(p.id);
+    let bal = 0;
+    let opening = 0;
+    const movements = [];
+    let totalIn = 0;
+    let totalOut = 0;
+    for (const m of all) {
+      const day = String(m.created_at || '').slice(0, 10);
+      const balBefore = bal;
+      if (m.type === 'entree') bal += m.qty;
+      else if (m.type === 'sortie') bal -= m.qty;
+      else bal = m.new_stock || 0;
+      let inQ = 0;
+      let outQ = 0;
+      if (m.type === 'entree') inQ = m.qty;
+      else if (m.type === 'sortie') outQ = m.qty;
+      else {
+        const delta = bal - balBefore;
+        if (delta >= 0) inQ = delta;
+        else outQ = -delta;
+      }
+      const inPeriod = (!from || day >= from) && (!to || day <= to);
+      if (inPeriod) {
+        movements.push({
+          id: m.id,
+          date: day,
+          type: m.type,
+          reason: m.reason || '',
+          by: m.by_name || '',
+          in: inQ,
+          out: outQ,
+          balance: bal
+        });
+        totalIn += inQ;
+        totalOut += outQ;
+      } else if (from && day < from) {
+        opening = bal;
+      }
+    }
+    const closing = p.stock;
+    const period = [from, to].filter(Boolean).join(' → ') || 'Toute la période';
+    const TYPE_LABEL = { entree: 'Entrée', sortie: 'Sortie', ajustement: 'Ajustement' };
+    if (format === 'csv') {
+      const esc = (v) => { const t = String(v ?? ''); return /[;\"\n]/.test(t) ? `\"${t.replace(/\"/g, '\"\"')}\"` : t; };
+      const lines = [
+        `Produit;${esc(p.name)}`,
+        `Période;${esc(period)}`,
+        `Solde initial;${opening}`,
+        '',
+        'Date;Type;Motif;Par;Entrées;Sorties;Solde',
+        ...movements.map((m) => [m.date, TYPE_LABEL[m.type] || m.type, esc(m.reason), esc(m.by), m.in, m.out, m.balance].join(';')),
+        '',
+        `Totaux;;${totalIn};${totalOut};`,
+        `Solde final;${closing}`
+      ];
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="fiche-stock-' + p.id + '.csv"');
+      return res.send('\uFEFF' + lines.join('\r\n'));
+    }
+    if (format === 'pdf') {
+      return comptaTablePdf(res, {
+        title: `Fiche de stock — ${p.name}`,
+        subtitle: `Période : ${period} · Solde initial : ${opening} · Solde final : ${closing}`,
+        pdfName: `fiche-stock-${p.id}.pdf`,
+        columns: [
+          { label: 'Date', width: 62, align: 'left' },
+          { label: 'Type', width: 82, align: 'left' },
+          { label: 'Motif', width: 240, align: 'left' },
+          { label: 'Par', width: 105, align: 'left' },
+          { label: 'Entrées', width: 52, align: 'right' },
+          { label: 'Sorties', width: 52, align: 'right' },
+          { label: 'Solde', width: 52, align: 'right' }
+        ],
+        rows: movements.map((m) => [
+          m.date,
+          TYPE_LABEL[m.type] || m.type,
+          pdfSafeText(m.reason),
+          pdfSafeText(m.by),
+          String(m.in),
+          String(m.out),
+          String(m.balance)
+        ]),
+        totals: ['', '', 'Totaux', '', String(totalIn), String(totalOut), String(closing)]
+      });
+    }
+    res.json({ product: { id: p.id, name: p.name, barcode: p.barcode, reference: p.reference, stock: p.stock }, opening, closing, total_in: totalIn, total_out: totalOut, movements });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// Ventes
 // Ventes
 app.post('/api/admin/pos/sales', ...POS, requirePerm('pos.sell'), (req, res) => {
   const b = req.body || {};
@@ -4330,7 +5347,9 @@ app.post('/api/admin/pos/sales', ...POS, requirePerm('pos.sell'), (req, res) => 
     db.prepare('UPDATE pos_sales SET number = ? WHERE id = ?').run(number, id);
     return id;
   });
-  res.json(fetchSale(sid));
+  const sale = fetchSale(sid);
+  comptaOnPosSale(sale);
+  res.json(sale);
 });
 
 app.get('/api/admin/pos/sales', ...POS, (req, res) => {
@@ -4708,6 +5727,1041 @@ app.get('/api/admin/pos/sales/:id/invoice', ...POS, async (req, res) => {
   }
 });
 
+// ---------- Comptabilité (SYCEBNL — OHADA, en vigueur depuis le 01/01/2024) ----------
+// Comptabilité d'engagement en partie double. Exercice d'ADI : ouverture à zéro au 01/01/2026.
+const COMPTA = [authRequired, requirePerm('compta.view'), requireModule('compta_enabled', 'Comptabilité')];
+const COMPTA_WRITE = [authRequired, requirePerm('compta.manage'), requireModule('compta_enabled', 'Comptabilité')];
+const COMPTA_CLOSE = [authRequired, requirePerm('compta.close'), requireModule('compta_enabled', 'Comptabilité')];
+const COMPTA_START = '2026-01-01';
+const ACC_NATURES = ['asset', 'liability', 'equity', 'expense', 'income'];
+
+const comptaAddDays = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const comptaNextYearEnd = (startIso) => {
+  const d = new Date(startIso + 'T00:00:00Z');
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+const comptaExerciseInfo = () => {
+  let ex = db.prepare("SELECT * FROM acc_exercises WHERE status = 'ouvert' ORDER BY start_date DESC LIMIT 1").get();
+  if (!ex) {
+    const last = db.prepare('SELECT * FROM acc_exercises ORDER BY start_date DESC LIMIT 1').get();
+    if (last) {
+      const s = comptaAddDays(last.end_date, 1);
+      db.prepare('INSERT INTO acc_exercises (start_date, end_date) VALUES (?, ?)').run(s, comptaNextYearEnd(s));
+    } else {
+      db.prepare("INSERT OR IGNORE INTO acc_exercises (start_date, end_date) VALUES (?, ?)").run(COMPTA_START, comptaNextYearEnd(COMPTA_START));
+    }
+    ex = db.prepare("SELECT * FROM acc_exercises WHERE status = 'ouvert' ORDER BY start_date DESC LIMIT 1").get();
+  }
+  return ex;
+};
+const comptaExerciseBalances = (start, end) => {
+  const rows = db.prepare(`SELECT l.account_code AS code, a.nature,
+      COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE e.date >= ? AND e.date <= ? AND a.nature IN ('expense', 'income')
+    GROUP BY l.account_code`).all(start, end);
+  const charges = rows.filter((r) => r.nature === 'expense' && cmoney(r.d - r.c) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.d - r.c) }));
+  const resources = rows.filter((r) => r.nature === 'income' && cmoney(r.c - r.d) !== 0).map((r) => ({ code: r.code, amount: cmoney(r.c - r.d) }));
+  const totalCharges = cmoney(charges.reduce((s, c) => s + c.amount, 0));
+  const totalResources = cmoney(resources.reduce((s, c) => s + c.amount, 0));
+  return { charges, resources, totalCharges, totalResources, result: cmoney(totalResources - totalCharges) };
+};
+// source_id des dotations = asset_id * 10000 + année (une dotation par actif et par année)
+const comptaAssetAccumulated = (assetId) =>
+  db.prepare(`SELECT COALESCE(SUM(l.credit), 0) v FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    WHERE e.source = 'depreciation' AND e.source_id >= ? AND e.source_id < ? AND l.account_code LIKE '28%'`)
+    .get(assetId * 10000, assetId * 10000 + 10000).v;
+const comptaAssetRows = () => db.prepare('SELECT * FROM acc_assets ORDER BY acquired_at, id').all().map((a) => {
+  const accumulated = cmoney(comptaAssetAccumulated(a.id));
+  return { ...a, accumulated, net: cmoney(a.amount - accumulated), fully_depreciated: a.status === 'en_service' && accumulated >= a.amount - 0.005 };
+});
+const comptaGenerateDepreciations = (year, user) => {
+  year = Number(year);
+  const date = `${year}-12-31`;
+  let created = 0;
+  for (const a of db.prepare("SELECT * FROM acc_assets WHERE status = 'en_service'").all()) {
+    if (a.acquired_at > date) continue;
+    const startYear = Number(a.acquired_at.slice(0, 4));
+    const endYear = startYear + Math.max(1, a.useful_life) - 1;
+    if (year < startYear || year > endYear) continue;
+    const sourceId = a.id * 10000 + year;
+    if (db.prepare("SELECT id FROM acc_entries WHERE source = 'depreciation' AND source_id = ?").get(sourceId)) continue;
+    const accumulated = cmoney(comptaAssetAccumulated(a.id));
+    if (accumulated >= a.amount - 0.005) continue;
+    const annual = cmoney(a.amount / Math.max(1, a.useful_life));
+    const amount = year === endYear ? cmoney(a.amount - accumulated) : cmoney(Math.min(annual, a.amount - accumulated));
+    if (amount <= 0) continue;
+    createComptaEntry({
+      date, journal: 'OD',
+      label: `Dotations aux amortissements ${year} — ${a.label}`,
+      lines: [
+        { account_code: '651', debit: amount, credit: 0, label: 'Dotation aux amortissements' },
+        { account_code: a.account_code === '243' ? '283' : '281', debit: 0, credit: amount, label: `Amortissement ${a.account_code}` }
+      ],
+      source: 'depreciation', sourceId, createdBy: user
+    });
+    created++;
+  }
+  return created;
+};
+const TREASURY_BY_METHOD = {
+  airtel: '5161', mpesa: '5162', orange: '5163',
+  mobile: '516', carte: '511', virement: '511',
+  especes: '531', cash: '531', caisse: '531', autre: '581'
+};
+const cmoney = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const nextComptaRef = (date) => {
+  const year = String(date).slice(0, 4);
+  const last = db.prepare('SELECT ref FROM acc_entries WHERE ref LIKE ? ORDER BY id DESC LIMIT 1').get(`EC-${year}-%`);
+  const n = last ? (parseInt(last.ref.split('-')[2], 10) + 1) : 1;
+  return `EC-${year}-${String(n).padStart(4, '0')}`;
+};
+
+const comptaSourceEntry = (source, sourceId) =>
+  source && source !== 'manual' ? db.prepare('SELECT * FROM acc_entries WHERE source = ? AND source_id = ?').get(source, sourceId) : null;
+
+const deleteComptaEntry = (id) =>
+  runTx(() => {
+    db.prepare('DELETE FROM acc_entry_lines WHERE entry_id = ?').run(id);
+    db.prepare('DELETE FROM acc_entries WHERE id = ?').run(id);
+  });
+
+const deleteComptaSource = (source, sourceId) => {
+  const e = comptaSourceEntry(source, sourceId);
+  if (e) deleteComptaEntry(e.id);
+};
+
+const createComptaEntry = ({ date, journal, label, lines, source = 'manual', sourceId = 0, createdBy = 'system', reversalOf = 0 }) => {
+  date = String(date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw Object.assign(new Error('Date invalide (format AAAA-MM-JJ)'), { status: 400 });
+  const ex = comptaExerciseInfo();
+  if (date < ex.start_date) throw Object.assign(new Error(`L'exercice ouvert démarre le ${ex.start_date} — les exercices clôturés sont verrouillés`), { status: 400 });
+  const valid = (Array.isArray(lines) ? lines : [])
+    .map((l) => ({
+      account_code: String(l?.account_code || '').trim(),
+      label: String(l?.label || '').trim().slice(0, 120),
+      debit: cmoney(l?.debit), credit: cmoney(l?.credit)
+    }))
+    .filter((l) => l.account_code && (l.debit > 0 || l.credit > 0));
+  if (valid.length < 2) throw Object.assign(new Error('Une écriture doit contenir au moins 2 lignes à montant non nul'), { status: 400 });
+  const totalDebit = cmoney(valid.reduce((s, l) => s + l.debit, 0));
+  const totalCredit = cmoney(valid.reduce((s, l) => s + l.credit, 0));
+  if (Math.abs(totalDebit - totalCredit) > 0.005)
+    throw Object.assign(new Error(`Écriture déséquilibrée : débits ${totalDebit.toFixed(2)} ≠ crédits ${totalCredit.toFixed(2)}`), { status: 400 });
+  for (const l of valid)
+    if (!db.prepare('SELECT id FROM acc_accounts WHERE code = ? AND active = 1').get(l.account_code))
+      throw Object.assign(new Error(`Compte inconnu ou inactif : ${l.account_code}`), { status: 404 });
+  if (!db.prepare('SELECT id FROM acc_journals WHERE code = ?').get(journal))
+    throw Object.assign(new Error(`Journal inconnu : ${journal}`), { status: 400 });
+  return runTx(() => {
+    const ref = nextComptaRef(date);
+    const e = db.prepare('INSERT INTO acc_entries (date, journal_code, ref, label, source, source_id, is_reversal_of, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(date, journal, ref, String(label || '').trim().slice(0, 200), source, sourceId || 0, reversalOf || 0, createdBy);
+    const insL = db.prepare('INSERT INTO acc_entry_lines (entry_id, account_code, label, debit, credit) VALUES (?, ?, ?, ?, ?)');
+    for (const l of valid) insL.run(e.lastInsertRowid, l.account_code, l.label, l.debit, l.credit);
+    return e.lastInsertRowid;
+  });
+};
+
+const entryDetail = (id) => {
+  const e = db.prepare('SELECT * FROM acc_entries WHERE id = ?').get(id);
+  if (!e) return null;
+  e.lines = db.prepare('SELECT * FROM acc_entry_lines WHERE entry_id = ? ORDER BY id').all(e.id);
+  return e;
+};
+
+const comptaOnDonationChange = (prevStatus, d) => {
+  if (getSetting('compta_enabled') !== '1' || !d) return;
+  if (prevStatus === 'confirmee' && d.status !== 'confirmee') return deleteComptaSource('donation', d.id);
+  if (d.status === 'confirmee' && prevStatus !== 'confirmee') {
+    if (comptaSourceEntry('donation', d.id)) return;
+    const treasury = TREASURY_BY_METHOD[d.method] || '581';
+    try {
+      createComptaEntry({
+        date: String(d.created_at || '').slice(0, 10),
+        journal: treasury === '531' ? 'CAI' : 'BQ',
+        label: `Don ${d.reference || ''} — ${d.donor_name || 'Anonyme'}`.trim(),
+        lines: [
+          { account_code: treasury, debit: d.amount, credit: 0, label: 'Encaissement du don' },
+          { account_code: d.campaign_id ? '7491' : '749', debit: 0, credit: d.amount, label: d.campaign_id ? 'Don affecté à un projet' : 'Don fonds général' }
+        ],
+        source: 'donation', sourceId: d.id
+      });
+    } catch (err) { console.error('[compta] don', err.message); }
+  }
+};
+
+const comptaOnPosSale = (s) => {
+  if (getSetting('compta_enabled') !== '1' || !s) return;
+  if (comptaSourceEntry('pos_sale', s.id)) return;
+  const treasury = TREASURY_BY_METHOD[s.payment_method] || '581';
+  try {
+    createComptaEntry({
+      date: String(s.created_at || '').slice(0, 10),
+      journal: treasury === '531' ? 'CAI' : 'BQ',
+      label: `Vente ${s.number || s.id}${s.customer_name ? ' — ' + s.customer_name : ''}`,
+      lines: [
+        { account_code: treasury, debit: s.total, credit: 0, label: 'Encaissement' },
+        { account_code: '703', debit: 0, credit: s.total, label: 'Ressources des activités' }
+      ],
+      source: 'pos_sale', sourceId: s.id
+    });
+  } catch (err) { console.error('[compta] pos', err.message); }
+};
+
+const comptaOnPayrollChange = (prevStatus, p) => {
+  if (getSetting('compta_enabled') !== '1' || !p) return;
+  if (prevStatus === 'envoye' && p.status !== 'envoye') return deleteComptaSource('payroll', p.id);
+  if (p.status === 'envoye' && prevStatus !== 'envoye') {
+    if (comptaSourceEntry('payroll', p.id)) return;
+    const emp = db.prepare('SELECT full_name FROM grh_employees WHERE id = ?').get(p.employee_id);
+    const dim = new Date(`${p.month}-01T00:00:00Z`);
+    dim.setUTCMonth(dim.getUTCMonth() + 1); dim.setUTCDate(0);
+    const date = `${p.month}-${String(dim.getUTCDate()).padStart(2, '0')}`;
+    try {
+      createComptaEntry({
+        date,
+        journal: 'BQ',
+        label: `Paie ${p.month} — ${emp?.full_name || `employé ${p.employee_id}`}`,
+        lines: [
+          { account_code: '641', debit: p.net, credit: 0, label: 'Salaire net payé' },
+          { account_code: '511', debit: 0, credit: p.net, label: 'Virement banque' }
+        ],
+        source: 'payroll', sourceId: p.id
+      });
+    } catch (err) { console.error('[compta] paie', err.message); }
+  }
+};
+
+app.get('/api/admin/compta/overview', ...COMPTA, (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? req.query.month : new Date().toISOString().slice(0, 7);
+  const tr = db.prepare(`SELECT COALESCE(SUM(l.debit), 0) d, COALESCE(SUM(l.credit), 0) c
+    FROM acc_entry_lines l JOIN acc_accounts a ON a.code = l.account_code WHERE a.class = 5`).get();
+  const rm = db.prepare(`SELECT a.nature, COALESCE(SUM(l.debit), 0) d, COALESCE(SUM(l.credit), 0) c
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE e.date LIKE ? GROUP BY a.nature`).all(`${month}-%`);
+  const getN = (n) => rm.find((x) => x.nature === n);
+  const resources = getN('income') ? cmoney(getN('income').c - getN('income').d) : 0;
+  const charges = getN('expense') ? cmoney(getN('expense').d - getN('expense').c) : 0;
+  const ex = comptaExerciseInfo();
+  const yb = comptaExerciseBalances(ex.start_date, ex.end_date);
+  const reported = db.prepare("SELECT COALESCE(SUM(l.credit - l.debit), 0) v FROM acc_entry_lines l WHERE l.account_code = '171'").get().v;
+  res.json({
+    month,
+    treasury: cmoney(tr.d - tr.c),
+    resources,
+    charges,
+    surplus: cmoney(resources - charges),
+    exercise: ex,
+    year_result: yb.result,
+    year_charges: yb.totalCharges,
+    year_ressources: yb.totalResources,
+    reported_surplus: cmoney(reported),
+    entries: db.prepare('SELECT COUNT(*) AS n FROM acc_entries').get().n,
+    accounts: db.prepare('SELECT COUNT(*) AS n FROM acc_accounts WHERE active = 1').get().n
+  });
+});
+
+app.get('/api/admin/compta/trend', ...COMPTA, (req, res) => {
+  const n = Math.min(24, Math.max(3, Number(req.query.months) || 12));
+  const now = new Date();
+  const months = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    months.push(d.toISOString().slice(0, 7));
+  }
+  const first = months[0] + '-01';
+  const lastD = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+  const last = lastD.toISOString().slice(0, 10);
+  const rows = db.prepare(`SELECT substr(e.date, 1, 7) m, a.nature,
+      COALESCE(SUM(l.debit), 0) d, COALESCE(SUM(l.credit), 0) c
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE e.date >= ? AND e.date <= ? AND a.nature IN ('income', 'expense')
+    GROUP BY m, a.nature`).all(first, last);
+  res.json(months.map((m) => ({
+    month: m,
+    ressources: cmoney(rows.filter((r) => r.m === m && r.nature === 'income').reduce((s, r) => s + r.c - r.d, 0)),
+    charges: cmoney(rows.filter((r) => r.m === m && r.nature === 'expense').reduce((s, r) => s + r.d - r.c, 0))
+  })));
+});
+
+app.get('/api/admin/compta/accounts', ...COMPTA, (req, res) => {
+  let sql = 'SELECT * FROM acc_accounts';
+  const params = [];
+  if (req.query.q) { sql += ' WHERE code LIKE ? OR name LIKE ?'; params.push(`%${req.query.q}%`, `%${req.query.q}%`); }
+  sql += ' ORDER BY code';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/admin/compta/accounts', ...COMPTA_WRITE, (req, res) => {
+  const code = String(req.body.code || '').trim();
+  const name = String(req.body.name || '').trim();
+  if (!/^\d{2,5}$/.test(code)) return res.status(400).json({ error: 'Code de compte invalide (2 à 5 chiffres)' });
+  if (!name) return res.status(400).json({ error: 'Nom du compte requis' });
+  const nature = ACC_NATURES.includes(req.body.nature) ? req.body.nature : 'expense';
+  if (db.prepare('SELECT id FROM acc_accounts WHERE code = ?').get(code)) return res.status(409).json({ error: 'Ce code de compte existe déjà' });
+  const r = db.prepare('INSERT INTO acc_accounts (code, name, nature, class, is_system) VALUES (?, ?, ?, ?, 0)').run(code, name.slice(0, 80), nature, Number(code[0]));
+  res.json(db.prepare('SELECT * FROM acc_accounts WHERE id = ?').get(r.lastInsertRowid));
+});
+
+app.put('/api/admin/compta/accounts/:id', ...COMPTA_WRITE, (req, res) => {
+  const acc = db.prepare('SELECT * FROM acc_accounts WHERE id = ?').get(req.params.id);
+  if (!acc) return res.status(404).json({ error: 'Compte introuvable' });
+  const name = req.body.name != null ? String(req.body.name).trim() : acc.name;
+  if (!name) return res.status(400).json({ error: 'Nom du compte requis' });
+  const nature = ACC_NATURES.includes(req.body.nature) ? req.body.nature : acc.nature;
+  if (req.body.active === false && db.prepare('SELECT COUNT(*) AS n FROM acc_entry_lines WHERE account_code = ?').get(acc.code).n > 0)
+    return res.status(409).json({ error: 'Ce compte est utilisé par des écritures : désactivation impossible' });
+  const active = req.body.active === false ? 0 : 1;
+  db.prepare('UPDATE acc_accounts SET name = ?, nature = ?, active = ? WHERE id = ?').run(name.slice(0, 80), nature, active, acc.id);
+  res.json(db.prepare('SELECT * FROM acc_accounts WHERE id = ?').get(acc.id));
+});
+
+app.get('/api/admin/compta/journals', ...COMPTA, (req, res) => res.json(db.prepare('SELECT * FROM acc_journals ORDER BY code').all()));
+
+app.get('/api/admin/compta/entries', ...COMPTA, async (req, res) => {
+  const params = [];
+  let sql = `SELECT e.*,
+    (SELECT COALESCE(SUM(l.debit), 0) FROM acc_entry_lines l WHERE l.entry_id = e.id) AS total,
+    (SELECT COUNT(*) FROM acc_entry_lines l WHERE l.entry_id = e.id) AS line_count
+    FROM acc_entries e WHERE 1 = 1`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  if (req.query.journal) { sql += ' AND e.journal_code = ?'; params.push(req.query.journal); }
+  if (req.query.q) { sql += ' AND (e.label LIKE ? OR e.ref LIKE ?)'; params.push(`%${req.query.q}%`, `%${req.query.q}%`); }
+  if (req.query.account) { sql += ' AND EXISTS (SELECT 1 FROM acc_entry_lines l2 WHERE l2.entry_id = e.id AND l2.account_code = ?)'; params.push(req.query.account); }
+  sql += ' ORDER BY e.id DESC LIMIT 500';
+  const rows = db.prepare(sql).all(...params);
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      const period = `${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'}`;
+      return await comptaTablePdf(res, {
+        title: 'Journal des écritures',
+        subtitle: `${period} - ${rows.length} écriture(s)${req.query.journal ? ` - journal ${req.query.journal}` : ''}`,
+        pdfName: `journal-compta-${new Date().toISOString().slice(0, 10)}`,
+        columns: [
+          { label: 'Réf.', width: 90, align: 'left' },
+          { label: 'Date', width: 62, align: 'left' },
+          { label: 'Journal', width: 48, align: 'left' },
+          { label: 'Libellé', width: 190, align: 'left' },
+          { label: 'Source', width: 75, align: 'left' },
+          { label: 'Montant', width: 50, align: 'right' }
+        ],
+        rows: rows.map((e) => [e.ref, e.date, e.journal_code, e.label || '', e.source, fmtMoney(e.total)])
+      });
+    } catch (err) {
+      console.error('[compta] pdf journal', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json(rows);
+});
+
+app.get('/api/admin/compta/entries/:id', ...COMPTA, (req, res) => {
+  const e = entryDetail(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
+  res.json(e);
+});
+
+app.post('/api/admin/compta/entries', ...COMPTA_WRITE, (req, res) => {
+  try {
+    const id = createComptaEntry({
+      date: req.body.date,
+      journal: req.body.journal,
+      label: req.body.label,
+      lines: req.body.lines,
+      createdBy: req.user.email
+    });
+    res.json(entryDetail(id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/compta/entries/:id/reverse', ...COMPTA_WRITE, (req, res) => {
+  const e = entryDetail(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
+  if (e.source === 'cloture' || e.source === 'cloture2')
+    return res.status(403).json({ error: 'Écriture de clôture : l\'exercice est verrouillé (aucun contre-sens)' });
+  if (comptaSourceEntry('reverse', e.id)) return res.status(409).json({ error: 'Cette écriture est déjà annulée' });
+  try {
+    const id = createComptaEntry({
+      date: e.date,
+      journal: 'OD',
+      label: `Annulation de ${e.ref} : ${e.label}`.slice(0, 200),
+      lines: e.lines.map((l) => ({ account_code: l.account_code, debit: l.credit, credit: l.debit, label: l.label })),
+      source: 'reverse', sourceId: e.id,
+      createdBy: req.user.email,
+      reversalOf: e.id
+    });
+    res.json(entryDetail(id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/compta/entries/:id', ...COMPTA_WRITE, (req, res) => {
+  const e = db.prepare('SELECT * FROM acc_entries WHERE id = ?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Écriture introuvable' });
+  if (e.source !== 'manual')
+    return res.status(403).json({ error: 'Écriture automatique : correction uniquement par annulation (aucun effacement)' });
+  const rev = db.prepare("SELECT id FROM acc_entries WHERE source = 'reverse' AND is_reversal_of = ?").get(e.id);
+  runTx(() => {
+    if (rev) deleteComptaEntry(rev.id);
+    deleteComptaEntry(e.id);
+  });
+  res.json({ ok: true, with_reversal: !!rev });
+});
+
+app.get('/api/admin/compta/balance', ...COMPTA, async (req, res) => {
+  const params = [];
+  let sql = `SELECT l.account_code AS code, a.name, a.nature,
+      COALESCE(SUM(l.debit), 0) AS debit, COALESCE(SUM(l.credit), 0) AS credit
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE 1 = 1`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  sql += ' GROUP BY l.account_code ORDER BY l.account_code';
+  const rows = db.prepare(sql).all(...params).map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) }));
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      const NATURE_FR = { asset: 'Actif', liability: 'Passif', equity: 'Capitaux propres', expense: 'Charge', income: 'Produit' };
+      const totD = cmoney(rows.reduce((s, r) => s + r.debit, 0));
+      const totC = cmoney(rows.reduce((s, r) => s + r.credit, 0));
+      return await comptaTablePdf(res, {
+        title: 'Balance',
+        subtitle: `Du ${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'} - ${rows.length} compte(s)`,
+        pdfName: `balance-${req.query.from || 'debut'}-${req.query.to || 'aujourdhui'}`,
+        columns: [
+          { label: 'Compte', width: 45, align: 'left' },
+          { label: 'Intitulé', width: 185, align: 'left' },
+          { label: 'Nature', width: 75, align: 'left' },
+          { label: 'Débit', width: 60, align: 'right' },
+          { label: 'Crédit', width: 60, align: 'right' },
+          { label: 'Solde D-C', width: 90, align: 'right' }
+        ],
+        rows: rows.map((r) => [r.code, r.name, NATURE_FR[r.nature] || r.nature, fmtMoney(r.debit), fmtMoney(r.credit), fmtMoney(r.balance)]),
+        totals: ['', 'Totaux', '', fmtMoney(totD), fmtMoney(totC), fmtMoney(cmoney(totD - totC))]
+      });
+    } catch (err) {
+      console.error('[compta] pdf balance', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json(rows);
+});
+
+app.get('/api/admin/compta/ledger', ...COMPTA, async (req, res) => {
+  const account = String(req.query.account || '');
+  if (!account) return res.status(400).json({ error: 'Compte requis (paramètre account)' });
+  const acc = db.prepare('SELECT * FROM acc_accounts WHERE code = ?').get(account);
+  if (!acc) return res.status(404).json({ error: 'Compte inconnu' });
+  const params = [account];
+  let sql = `SELECT e.id AS entry_id, e.ref, e.date, e.journal_code, e.label, l.label AS line_label, l.debit, l.credit
+    FROM acc_entry_lines l JOIN acc_entries e ON e.id = l.entry_id
+    WHERE l.account_code = ?`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  sql += ' ORDER BY e.date, e.id, l.id';
+  let cum = 0;
+  const rows = db.prepare(sql).all(...params).map((r) => {
+    cum = cmoney(cum + r.debit - r.credit);
+    return { ...r, cum };
+  });
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      return await comptaTablePdf(res, {
+        title: 'Grand livre',
+        subtitle: `${acc.code} - ${acc.name} · du ${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'}`,
+        pdfName: `grand-livre-${acc.code}-${req.query.from || 'debut'}-${req.query.to || 'aujourdhui'}`,
+        columns: [
+          { label: 'Date', width: 58, align: 'left' },
+          { label: 'Réf.', width: 82, align: 'left' },
+          { label: 'Journal', width: 42, align: 'left' },
+          { label: 'Libellé', width: 168, align: 'left' },
+          { label: 'Débit', width: 56, align: 'right' },
+          { label: 'Crédit', width: 56, align: 'right' },
+          { label: 'Cumul', width: 53, align: 'right' }
+        ],
+        rows: rows.map((r) => [r.date, r.ref, r.journal_code, r.line_label || r.label || '', fmtMoney(r.debit), fmtMoney(r.credit), fmtMoney(r.cum)])
+      });
+    } catch (err) {
+      console.error('[compta] pdf ledger', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json(rows);
+});
+
+const CASHBOOKS = {
+  caisse: { label: 'Livre de caisse', codes: ['531'] },
+  banque: { label: 'Livre de banque', codes: ['511', '512', '516', '5161', '5162', '5163', '581'] }
+};
+app.get('/api/admin/compta/cash-book', ...COMPTA, async (req, res) => {
+  const book = CASHBOOKS[String(req.query.book || '')];
+  if (!book) return res.status(400).json({ error: 'Livre inconnu (paramètre book : caisse ou banque)' });
+  const ph = book.codes.map(() => '?').join(', ');
+  const where = `FROM acc_entry_lines l JOIN acc_entries e ON e.id = l.entry_id WHERE l.account_code IN (${ph})`;
+  let opening = 0;
+  if (req.query.from) {
+    const r = db.prepare(`SELECT COALESCE(SUM(l.debit), 0) - COALESCE(SUM(l.credit), 0) AS t ${where} AND e.date < ?`).get(...book.codes, req.query.from);
+    opening = cmoney(Number(r?.t) || 0);
+  }
+  const params = [...book.codes];
+  let sql = `SELECT e.id AS entry_id, e.ref, e.date, e.journal_code, e.label, l.account_code, l.label AS line_label, l.debit, l.credit ${where}`;
+  if (req.query.from) { sql += ' AND e.date >= ?'; params.push(req.query.from); }
+  if (req.query.to) { sql += ' AND e.date <= ?'; params.push(req.query.to); }
+  sql += ' ORDER BY e.date, e.id, l.id';
+  let cum = opening;
+  const rows = db.prepare(sql).all(...params).map((r) => {
+    cum = cmoney(cum + r.debit - r.credit);
+    return { ...r, cum };
+  });
+  const period = `du ${req.query.from || 'début'} au ${req.query.to || 'aujourd\u2019hui'}`;
+  if (String(req.query.format || '') === 'csv') {
+    const esc = (v) => { const s = String(v ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = ['Date;Réf.;Journal;Libellé;Compte;Encaissements;Décaissements;Solde'];
+    rows.forEach((r) => lines.push([r.date, r.ref, r.journal_code, r.line_label || r.label || '', r.account_code, r.debit, r.credit, r.cum].map(esc).join(';')));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="livre-${req.query.book}.csv"`);
+    res.send('\uFEFF' + lines.join('\n'));
+    return;
+  }
+  if (String(req.query.format || '') === 'pdf') {
+    try {
+      return await comptaTablePdf(res, {
+        title: book.label,
+        subtitle: `${period} · solde initial : ${fmtMoney(opening)}`,
+        pdfName: `livre-${req.query.book}-${req.query.from || 'debut'}-${req.query.to || 'aujourdhui'}`,
+        columns: [
+          { label: 'Date', width: 56, align: 'left' },
+          { label: 'Réf.', width: 78, align: 'left' },
+          { label: 'Journal', width: 40, align: 'left' },
+          { label: 'Libellé', width: 168, align: 'left' },
+          { label: 'Compte', width: 34, align: 'left' },
+          { label: 'Encaiss.', width: 48, align: 'right' },
+          { label: 'Décaiss.', width: 48, align: 'right' },
+          { label: 'Solde', width: 47, align: 'right' }
+        ],
+        rows: rows.map((r) => [r.date, r.ref, r.journal_code, pdfSafeText(r.line_label || r.label || ''), r.account_code, fmtMoney(r.debit), fmtMoney(r.credit), fmtMoney(r.cum)]),
+        totals: rows.length ? ['', 'Soldes', '', '', '', fmtMoney(rows.reduce((a, r) => a + r.debit, 0)), fmtMoney(rows.reduce((a, r) => a + r.credit, 0)), fmtMoney(cum)] : null
+      });
+    } catch (err) {
+      console.error('[compta] pdf cash-book', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Export PDF impossible' });
+    }
+    return;
+  }
+  res.json({ book: req.query.book, opening, closing: cum, rows });
+});
+
+// ---------- États financiers SYCEBNL ----------
+const pdfSafeText = (t) => String(t ?? '').replace(/[\u2190-\u21FF\u2200-\u22FF\u2600-\u27BF]/g, '-');
+
+const comptaTablePdf = async (res, { title, subtitle, pdfName, columns, rows, totals }) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const W = 595.28, H = 841.89;
+  let page = doc.addPage([W, H]);
+  const [font, fontBold] = await Promise.all([
+    doc.embedFont(StandardFonts.Helvetica),
+    doc.embedFont(StandardFonts.HelveticaBold)
+  ]);
+  const brand = rgb(0.059, 0.227, 0.533);
+  const ink = rgb(0.1, 0.12, 0.18);
+  const gray = rgb(0.45, 0.5, 0.58);
+  const siteName = getSetting('site_name') || 'ADI ONG';
+  const tagline = getSetting('site_tagline') || '';
+
+  const drawTitle = () => {
+    page.drawRectangle({ x: 0, y: H - 88, width: W, height: 88, color: brand });
+    page.drawText(siteName.toUpperCase(), { x: 40, y: H - 60, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+    if (tagline) page.drawText(pdfSafeText(tagline).slice(0, 90), { x: 40, y: H - 78, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+    page.drawText(pdfSafeText(title), { x: 40, y: H - 118, size: 20, font: fontBold, color: ink });
+    if (subtitle) page.drawText(pdfSafeText(subtitle), { x: 40, y: H - 136, size: 10, font, color: gray });
+  };
+  drawTitle();
+  const colX = [];
+  { let x = 46; for (const c of columns) { colX.push(x); x += c.width; } }
+  let y = H - 164;
+  const drawHeader = () => {
+    page.drawRectangle({ x: 40, y: y - 14, width: W - 80, height: 17, color: brand });
+    columns.forEach((c, i) => {
+      page.drawText(c.label.toUpperCase(), { x: c.align === 'right' ? colX[i] + c.width - 6 : colX[i], y: y - 10, size: 8.5, font: fontBold, color: rgb(1, 1, 1), align: c.align === 'right' ? 'right' : 'left' });
+    });
+    y -= 26;
+  };
+  const fit = (t, c) => {
+    let s = pdfSafeText(t);
+    const avail = c.width - 6;
+    while (s.length > 1 && font.widthOfTextAtSize(s, 8.5) > avail) s = s.slice(0, -1);
+    return s;
+  };
+  const newPage = () => {
+    page = doc.addPage([W, H]);
+    page.drawText(`${pdfSafeText(siteName)} - ${pdfSafeText(title)} (suite)`, { x: 40, y: H - 40, size: 10, font: fontBold, color: gray });
+    y = H - 70;
+    drawHeader();
+  };
+  const drawRow = (cells, bold, bg) => {
+    if (y < 62) newPage();
+    if (bg) page.drawRectangle({ x: 40, y: y - 12, width: W - 80, height: 15, color: bg });
+    columns.forEach((c, i) => {
+      page.drawText(fit(cells[i], c), { x: c.align === 'right' ? colX[i] + c.width - 6 : colX[i], y, size: 8.5, font: bold ? fontBold : font, color: ink, align: c.align === 'right' ? 'right' : 'left' });
+    });
+    y -= 13.5;
+  };
+  drawHeader();
+  for (const r of rows) drawRow(r, false, null);
+  if (totals) {
+    if (y < 66) newPage();
+    page.drawRectangle({ x: 40, y: y - 3, width: W - 80, height: 1.2, color: gray });
+    y -= 5;
+    drawRow(totals, true, rgb(0.93, 0.95, 0.98));
+  }
+  const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  .  ');
+  if (footer) page.drawText(pdfSafeText(footer).slice(0, 100), { x: 40, y: 30, size: 7.5, font, color: gray });
+  page.drawText('Etabli le ' + new Date().toISOString().slice(0, 10) + ' - SYCEBNL (OHADA)', { x: W - 48, y: 30, size: 7.5, font, color: gray, align: 'right' });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${pdfName || 'export'}.pdf"`);
+  res.send(Buffer.from(await doc.save()));
+};
+const comptaBalances = (from, to) => {
+  const params = [];
+  let sql = `SELECT l.account_code AS code, a.name, a.nature, a.class,
+      COALESCE(SUM(l.debit), 0) AS debit, COALESCE(SUM(l.credit), 0) AS credit
+    FROM acc_entry_lines l
+    JOIN acc_entries e ON e.id = l.entry_id
+    JOIN acc_accounts a ON a.code = l.account_code
+    WHERE 1 = 1`;
+  if (from) { sql += ' AND e.date >= ?'; params.push(from); }
+  if (to) { sql += ' AND e.date <= ?'; params.push(to); }
+  sql += ' GROUP BY l.account_code ORDER BY l.account_code';
+  return db.prepare(sql).all(...params);
+};
+
+const buildBalanceSheet = (at) => {
+  // Les comptes de constatation (charges 6xx/8xx, produits 7xx/8xx) ne figurent pas en
+  // libellés : ils sont regroupés en « surplus / déficit de l'exercice » au passif.
+  const rows = comptaBalances(COMPTA_START, at)
+    .map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) }))
+    .filter((r) => Math.abs(r.balance) >= 0.005 && r.nature !== 'expense' && r.nature !== 'income');
+  const actif = {
+    immobilisations: [], stocks: [], tresorerie: [], autres: []
+  };
+  const passif = { ressources: [], dettes: [] };
+  for (const r of rows) {
+    const b = r.balance;
+    if (r.class === 4) {
+      (b > 0 ? actif.autres : passif.dettes).push({ ...r, amount: cmoney(b > 0 ? b : -b) });
+    } else if (r.nature === 'asset') {
+      if (r.class === 2) actif.immobilisations.push({ ...r, amount: cmoney(b) });
+      else if (r.class === 3) actif.stocks.push({ ...r, amount: cmoney(b) });
+      else if (r.class === 5) actif.tresorerie.push({ ...r, amount: cmoney(b) });
+      else actif.autres.push({ ...r, amount: cmoney(b) });
+    } else if (r.nature === 'equity') {
+      passif.ressources.push({ ...r, amount: cmoney(-b) });
+    } else if (r.nature === 'liability') {
+      passif.dettes.push({ ...r, amount: cmoney(-b) });
+    }
+  }
+  // Surplus / déficit de l'exercice (non encore reporté en 171)
+  const res = buildResult(COMPTA_START, at);
+  if (res.resultat > 0.005) passif.ressources.push({ code: '178', name: "Surplus de l'exercice (non reporté)", amount: res.resultat });
+  else if (res.resultat < -0.005) passif.dettes.push({ code: '168', name: "Déficit de l'exercice (non reporté)", amount: -res.resultat });
+  const sum = (list) => cmoney(list.reduce((s, r) => s + r.amount, 0));
+  const totalActif = cmoney(sum(actif.immobilisations) + sum(actif.stocks) + sum(actif.tresorerie) + sum(actif.autres));
+  const totalPassif = cmoney(sum(passif.ressources) + sum(passif.dettes));
+  return {
+    at,
+    actif: { ...actif, total: totalActif },
+    passif: { ...passif, total: totalPassif },
+    equilibre: Math.abs(totalActif - totalPassif) < 0.005
+  };
+};
+
+const buildResult = (from, to) => {
+  const rows = comptaBalances(from, to)
+    .map((r) => ({ ...r, balance: cmoney(r.debit - r.credit) }))
+    .filter((r) => (r.nature === 'expense' && r.balance > 0) || (r.nature === 'income' && r.balance < 0));
+  const charges = rows.filter((r) => r.nature === 'expense').map((r) => ({ code: r.code, name: r.name, amount: cmoney(r.balance) }));
+  const ressources = rows.filter((r) => r.nature === 'income').map((r) => ({ code: r.code, name: r.name, amount: cmoney(-r.balance) }));
+  const totalCharges = cmoney(charges.reduce((s, r) => s + r.amount, 0));
+  const totalRessources = cmoney(ressources.reduce((s, r) => s + r.amount, 0));
+  return {
+    from: from || null, to: to || null,
+    charges, ressources,
+    total_charges: totalCharges,
+    total_ressources: totalRessources,
+    resultat: cmoney(totalRessources - totalCharges)
+  };
+};
+
+const sendComptaStatementCsv = (res, filename, headers, rows) => {
+  const esc = (v) => {
+    const s = String(v ?? '');
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = '\uFEFF' + [headers, ...rows].map((r) => r.map(esc).join(';')).join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+};
+
+const comptaStatementPdf = async (res, { title, subtitle, sections }) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const W = 595.28;
+  let page = doc.addPage([W, 841.89]);
+  const [font, fontBold] = await Promise.all([
+    doc.embedFont(StandardFonts.Helvetica),
+    doc.embedFont(StandardFonts.HelveticaBold)
+  ]);
+  const brand = rgb(0.059, 0.227, 0.533);
+  const ink = rgb(0.1, 0.12, 0.18);
+  const gray = rgb(0.45, 0.5, 0.58);
+  const siteName = getSetting('site_name') || 'ADI ONG';
+  const tagline = getSetting('site_tagline') || '';
+
+  page.drawRectangle({ x: 0, y: 841.89 - 88, width: W, height: 88, color: brand });
+  page.drawText(siteName.toUpperCase(), { x: 40, y: 782, size: 18, font: fontBold, color: rgb(1, 1, 1) });
+  if (tagline) page.drawText(tagline, { x: 40, y: 764, size: 9, font, color: rgb(0.85, 0.89, 0.95) });
+  page.drawText(title, { x: 40, y: 724, size: 20, font: fontBold, color: ink });
+  page.drawText(subtitle, { x: 40, y: 706, size: 10, font, color: gray });
+
+  let y = 678;
+  const newPage = () => {
+    page = doc.addPage([W, 841.89]);
+    page.drawText(`${siteName} — ${title} (suite)`, { x: 40, y: 790, size: 10, font: fontBold, color: gray });
+    y = 764;
+  };
+  const fmt = (n) => fmtMoney(n);
+  const drawBlock = (label, items, total, opts = {}) => {
+    if (y < 90) newPage();
+    const half = (W - 80) / 2;
+    const xLabel = 46;
+    const xAmt = opts.twoCol ? 40 + half - 8 : W - 48;
+    page.drawRectangle({ x: 40, y: y - 16, width: opts.twoCol ? half : W - 80, height: 18, color: rgb(0.93, 0.95, 0.98) });
+    page.drawText(label.toUpperCase(), { x: xLabel, y: y - 10, size: 9.5, font: fontBold, color: brand });
+    y -= 30;
+    for (const it of items) {
+      if (y < 50) newPage();
+      page.drawText(it.code, { x: xLabel, y, size: 8.5, font, color: gray });
+      page.drawText(it.name.slice(0, opts.twoCol ? 34 : 52), { x: xLabel + 32, y, size: 8.5, font, color: ink });
+      page.drawText(fmt(it.amount), { x: xAmt, y, size: 8.5, font, color: ink, align: 'right' });
+      y -= 13;
+    }
+    page.drawRectangle({ x: 40, y: y - 4, width: opts.twoCol ? half : W - 80, height: 1.2, color: gray });
+    page.drawText('Total ' + label, { x: xLabel, y: y - 12, size: 9.5, font: fontBold, color: ink });
+    page.drawText(fmt(total), { x: xAmt, y: y - 12, size: 9.5, font: fontBold, color: ink, align: 'right' });
+    y -= 30;
+  };
+  for (const s of sections) drawBlock(s.label, s.items, s.total, s);
+  const footer = [getSetting('address'), getSetting('phone1'), getSetting('email')].filter(Boolean).join('  ·  ');
+  if (footer) page.drawText(footer.slice(0, 100), { x: 40, y: 30, size: 7.5, font, color: gray });
+  page.drawText('Etabli le ' + new Date().toISOString().slice(0, 10) + ' — SYCEBNL (OHADA)', { x: W - 48, y: 30, size: 7.5, font, color: gray, align: 'right' });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${sections.pdfName || 'etat'}.pdf"`);
+  res.send(Buffer.from(await doc.save()));
+};
+
+app.get('/api/admin/compta/statements/balance-sheet', ...COMPTA, async (req, res) => {
+  const at = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.at || '')) ? req.query.at : (new Date().toISOString().slice(0, 10));
+  const data = buildBalanceSheet(at);
+  const format = String(req.query.format || '');
+  try {
+    if (format === 'csv') {
+      const rows = [];
+      const sec = (label, list, total) => {
+        rows.push([label, '', '']);
+        for (const it of list) rows.push([`${it.code}  ${it.name}`, '', fmtMoney(it.amount)]);
+        rows.push([`Total ${label}`, '', fmtMoney(total)]);
+      };
+      sec('ACTIF — Immobilisations', data.actif.immobilisations, cmoney(data.actif.immobilisations.reduce((s, r) => s + r.amount, 0)));
+      sec('ACTIF — Stocks', data.actif.stocks, cmoney(data.actif.stocks.reduce((s, r) => s + r.amount, 0)));
+      sec('ACTIF — Trésorerie', data.actif.tresorerie, cmoney(data.actif.tresorerie.reduce((s, r) => s + r.amount, 0)));
+      sec('ACTIF — Autres actifs', data.actif.autres, cmoney(data.actif.autres.reduce((s, r) => s + r.amount, 0)));
+      rows.push(['TOTAL ACTIF', '', fmtMoney(data.actif.total)]);
+      sec('PASSIF — Ressources durables', data.passif.ressources, cmoney(data.passif.ressources.reduce((s, r) => s + r.amount, 0)));
+      sec('PASSIF — Dettes et passifs', data.passif.dettes, cmoney(data.passif.dettes.reduce((s, r) => s + r.amount, 0)));
+      rows.push(['TOTAL PASSIF', '', fmtMoney(data.passif.total)]);
+      return sendComptaStatementCsv(res, `bilan-${at}.csv`, ['Compte', 'Libellé', 'Montant'], rows);
+    }
+    if (format === 'pdf') {
+      const flat = (list) => list.map((r) => ({ code: r.code, name: r.name, amount: r.amount }));
+      return comptaStatementPdf(res, {
+        title: 'Bilan (SYCEBNL)',
+        subtitle: `Au ${at} — USD`,
+        pdfName: `bilan-${at}`,
+        sections: [
+          { label: 'Actif — Immobilisations', items: flat(data.actif.immobilisations), total: cmoney(data.actif.immobilisations.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Actif — Stocks', items: flat(data.actif.stocks), total: cmoney(data.actif.stocks.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Actif — Trésorerie', items: flat(data.actif.tresorerie), total: cmoney(data.actif.tresorerie.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Actif — Autres actifs', items: flat(data.actif.autres), total: cmoney(data.actif.autres.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Passif — Ressources durables', items: flat(data.passif.ressources), total: cmoney(data.passif.ressources.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Passif — Dettes et passifs', items: flat(data.passif.dettes), total: cmoney(data.passif.dettes.reduce((s, r) => s + r.amount, 0)), twoCol: true },
+          { label: 'Totaux', items: [
+            { code: '', name: 'Total ACTIF', amount: data.actif.total },
+            { code: '', name: 'Total PASSIF', amount: data.passif.total },
+            { code: '', name: data.equilibre ? 'Bilan équilibré' : 'ATTENTION : bilan déséquilibré', amount: cmoney(data.actif.total - data.passif.total) }
+          ], total: 0 }
+        ]
+      });
+    }
+  } catch (err) {
+    console.error('[compta] etat', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Impossible de générer l\'état' });
+  }
+  res.json(data);
+});
+
+app.get('/api/admin/compta/statements/result', ...COMPTA, async (req, res) => {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || '')) ? req.query.from : (new Date().toISOString().slice(0, 7) + '-01');
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')) ? req.query.to : (new Date().toISOString().slice(0, 10));
+  const data = buildResult(from, to);
+  const format = String(req.query.format || '');
+  try {
+    if (format === 'csv') {
+      const rows = [];
+      rows.push(['CHARGES', '', '']);
+      for (const c of data.charges) rows.push([`${c.code}  ${c.name}`, '', fmtMoney(c.amount)]);
+      rows.push(['Total charges', '', fmtMoney(data.total_charges)]);
+      rows.push(['RESSOURCES', '', '']);
+      for (const r2 of data.ressources) rows.push([`${r2.code}  ${r2.name}`, '', fmtMoney(r2.amount)]);
+      rows.push(['Total ressources', '', fmtMoney(data.total_ressources)]);
+      rows.push([data.resultat >= 0 ? 'SURPLUS DE L\'EXERCICE' : 'DEFICIT DE L\'EXERCICE', '', fmtMoney(Math.abs(data.resultat))]);
+      return sendComptaStatementCsv(res, `compte-de-resultat-${from}_${to}.csv`, ['Compte', 'Libellé', 'Montant'], rows);
+    }
+    if (format === 'pdf') {
+      return comptaStatementPdf(res, {
+        title: 'Compte de résultat (SYCEBNL)',
+        subtitle: `Du ${from} au ${to} — USD`,
+        pdfName: `compte-de-resultat-${from}_${to}`,
+        sections: [
+          { label: 'Charges', items: data.charges, total: data.total_charges },
+          { label: 'Ressources', items: data.ressources, total: data.total_ressources },
+          { label: 'Résultat', items: [{ code: '', name: data.resultat >= 0 ? 'SURPLUS DE L\'EXERCICE' : 'DEFICIT DE L\'EXERCICE', amount: Math.abs(data.resultat) }], total: Math.abs(data.resultat) }
+        ]
+      });
+    }
+  } catch (err) {
+    console.error('[compta] etat', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Impossible de générer l\'état' });
+  }
+  res.json(data);
+});
+
+// ---------- Exercices : clôture SYCEBNL (report du résultat, verrouillage) ----------
+app.get('/api/admin/compta/exercises', ...COMPTA, (req, res) => {
+  res.json(db.prepare('SELECT * FROM acc_exercises ORDER BY start_date').all().map((ex) => {
+    const b = comptaExerciseBalances(ex.start_date, ex.end_date);
+    return { ...ex, total_charges: b.totalCharges, total_ressources: b.totalResources, resultat_calcule: b.result };
+  }));
+});
+
+app.post('/api/admin/compta/exercises/:id/close', ...COMPTA_CLOSE, (req, res) => {
+  const ex = db.prepare('SELECT * FROM acc_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ error: 'Exercice introuvable' });
+  if (ex.status !== 'ouvert') return res.status(409).json({ error: 'Cet exercice est déjà clôturé' });
+  const openCount = db.prepare("SELECT COUNT(*) n FROM acc_exercises WHERE status = 'ouvert'").get().n;
+  if (openCount > 1) return res.status(409).json({ error: 'Un seul exercice peut être ouvert à la fois' });
+  const today = new Date().toISOString().slice(0, 10);
+  const date = today < ex.start_date ? ex.start_date : (today > ex.end_date ? ex.end_date : today);
+  const year = ex.start_date.slice(0, 4);
+  try {
+    runTx(() => {
+      comptaGenerateDepreciations(year, req.user.email);
+      const b = comptaExerciseBalances(ex.start_date, ex.end_date);
+      if (!b.charges.length && !b.resources.length)
+        throw Object.assign(new Error('Aucun mouvement sur cet exercice — rien à clôturer'), { status: 400 });
+      const linesA = [
+        ...b.charges.map((c) => ({ account_code: c.code, debit: 0, credit: c.amount, label: `Charges ${c.code} clôturées` })),
+        ...b.resources.map((r) => ({ account_code: r.code, debit: r.amount, credit: 0, label: `Ressources ${r.code} clôturées` }))
+      ];
+      if (b.result >= 0) linesA.push({ account_code: '178', debit: 0, credit: b.result, label: "Surplus de l'exercice (transit)" });
+      else linesA.push({ account_code: '168', debit: -b.result, credit: 0, label: "Déficit de l'exercice (transit)" });
+      const linesB = b.result >= 0
+        ? [
+          { account_code: '178', debit: b.result, credit: 0, label: "Report du surplus de l'exercice" },
+          { account_code: '171', debit: 0, credit: b.result, label: 'Surplus reporté' }
+        ]
+        : [
+          { account_code: '171', debit: -b.result, credit: 0, label: 'Imputation du déficit sur le surplus reporté' },
+          { account_code: '168', debit: 0, credit: -b.result, label: "Déficit de l'exercice (transit)" }
+        ];
+      createComptaEntry({ date, journal: 'OD', label: `Clôture des charges et ressources — exercice ${year}`, lines: linesA, source: 'cloture', sourceId: ex.id, createdBy: req.user.email });
+      createComptaEntry({ date, journal: 'OD', label: b.result >= 0 ? `Report du résultat de l'exercice ${year} (surplus ${b.result.toFixed(2)} USD)` : `Report du résultat de l'exercice ${year} (déficit ${(-b.result).toFixed(2)} USD)`, lines: linesB, source: 'cloture2', sourceId: ex.id, createdBy: req.user.email });
+      db.prepare("UPDATE acc_exercises SET status = 'cloture', result = ?, closed_at = ?, closed_by = ? WHERE id = ?").run(b.result, new Date().toISOString(), req.user.email, ex.id);
+      const nextStart = comptaAddDays(ex.end_date, 1);
+      db.prepare('INSERT INTO acc_exercises (start_date, end_date) VALUES (?, ?)').run(nextStart, comptaNextYearEnd(nextStart));
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] cloture', err);
+    return res.status(500).json({ error: 'Clôture impossible — l\'exercice est inchangé' });
+  }
+  res.json(db.prepare('SELECT * FROM acc_exercises WHERE id = ?').get(ex.id));
+});
+
+// ---------- Immobilisations & amortissements (classes 2 / 28) ----------
+app.get('/api/admin/compta/assets', ...COMPTA, (req, res) => {
+  res.json(comptaAssetRows());
+});
+
+app.post('/api/admin/compta/assets', ...COMPTA, (req, res) => {
+  const label = String(req.body?.label || '').trim().slice(0, 120);
+  const code = String(req.body?.account_code || '').trim();
+  const amount = cmoney(req.body?.amount);
+  const date = String(req.body?.acquired_at || '').slice(0, 10);
+  const life = Math.max(1, Math.min(50, Number(req.body?.useful_life) || 5));
+  const method = String(req.body?.payment_method || 'virement');
+  if (!label) return res.status(400).json({ error: 'Libellé requis' });
+  if (!/^\d{3}$/.test(code) || code[0] !== '2' || code.startsWith('28') || code.startsWith('29'))
+    return res.status(400).json({ error: 'Compte d\u2019immobilisation invalide (classe 2, hors 28x/29x)' });
+  if (!db.prepare('SELECT id FROM acc_accounts WHERE code = ?').get(code))
+    return res.status(400).json({ error: 'Compte inconnu dans le plan' });
+  if (amount <= 0) return res.status(400).json({ error: 'Montant invalide' });
+  const treasury = TREASURY_BY_METHOD[method] || '511';
+  const id = db.prepare('INSERT INTO acc_assets (label, account_code, amount, acquired_at, useful_life, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(label, code, amount, date, life, req.user.email).lastInsertRowid;
+  try {
+    createComptaEntry({
+      date, journal: treasury === '531' ? 'CAI' : 'BQ',
+      label: `Acquisition \u2014 ${label}`,
+      lines: [
+        { account_code: code, debit: amount, credit: 0, label },
+        { account_code: treasury, debit: 0, credit: amount, label: 'R\u00e8glement' }
+      ],
+      source: 'asset', sourceId: id, createdBy: req.user.email
+    });
+  } catch (err) {
+    db.prepare('DELETE FROM acc_assets WHERE id = ?').run(id);
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] asset', err);
+    return res.status(500).json({ error: 'Acquisition impossible' });
+  }
+  res.json(comptaAssetRows().find((a) => a.id === id));
+});
+
+app.put('/api/admin/compta/assets/:id', ...COMPTA, (req, res) => {
+  const a = db.prepare('SELECT * FROM acc_assets WHERE id = ?').get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Actif introuvable' });
+  const b = { ...a, ...req.body };
+  const label = String(b.label || '').trim().slice(0, 120) || a.label;
+  const life = Math.max(1, Math.min(50, Number(b.useful_life) || a.useful_life));
+  const status = b.status === 'cede' ? 'cede' : 'en_service';
+  const cededAt = status === 'cede' ? (b.ceded_at || new Date().toISOString().slice(0, 10)) : '';
+  db.prepare('UPDATE acc_assets SET label = ?, useful_life = ?, status = ?, ceded_at = ? WHERE id = ?').run(label, life, status, cededAt, a.id);
+  res.json(comptaAssetRows().find((x) => x.id === a.id));
+});
+
+app.delete('/api/admin/compta/assets/:id', ...COMPTA, (req, res) => {
+  const a = db.prepare('SELECT * FROM acc_assets WHERE id = ?').get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Actif introuvable' });
+  runTx(() => {
+    deleteComptaSource('asset', a.id);
+    db.prepare('DELETE FROM acc_entry_lines WHERE entry_id IN (SELECT id FROM acc_entries WHERE source = ? AND source_id >= ? AND source_id < ?)')
+      .run('depreciation', a.id * 10000, a.id * 10000 + 10000);
+    db.prepare('DELETE FROM acc_entries WHERE source = ? AND source_id >= ? AND source_id < ?')
+      .run('depreciation', a.id * 10000, a.id * 10000 + 10000);
+    db.prepare('DELETE FROM acc_assets WHERE id = ?').run(a.id);
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/compta/assets/depreciate', ...COMPTA, (req, res) => {
+  const ex = comptaExerciseInfo();
+  const year = Number(String(req.query.year || '').slice(0, 4)) || 0;
+  if (year !== Number(ex.start_date.slice(0, 4)))
+    return res.status(400).json({ error: `Seul l\u2019exercice ouvert (${ex.start_date.slice(0, 4)}) peut \u00eatre dot\u00e9 en cours d\u2019ann\u00e9e` });
+  try {
+    const n = comptaGenerateDepreciations(year, req.user.email);
+    res.json({ ok: true, created: n, year });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] depreciate', err);
+    res.status(500).json({ error: 'G\u00e9n\u00e9ration des dotations impossible' });
+  }
+});
+
+// ---------- Contributions en nature (classe 9) ----------
+app.get('/api/admin/compta/in-kind', ...COMPTA, (req, res) => {
+  res.json(db.prepare('SELECT * FROM acc_in_kind ORDER BY date DESC, id DESC').all());
+});
+
+app.post('/api/admin/compta/in-kind', ...COMPTA, (req, res) => {
+  const date = String(req.body?.date || '').slice(0, 10);
+  const direction = req.body?.direction === 'donne' ? 'donne' : 'recu';
+  const partner = String(req.body?.partner || '').trim().slice(0, 120);
+  const description = String(req.body?.description || '').trim().slice(0, 300);
+  const amount = cmoney(req.body?.amount);
+  const code = String(req.body?.account_code || '').trim();
+  if (!partner) return res.status(400).json({ error: 'Partenaire requis (donateur ou b\u00e9n\u00e9ficiaire)' });
+  if (amount <= 0) return res.status(400).json({ error: 'Valorisation invalide' });
+  const acc = db.prepare('SELECT * FROM acc_accounts WHERE code = ?').get(code);
+  if (!acc) return res.status(400).json({ error: 'Compte inconnu dans le plan' });
+  if (direction === 'recu' && ![3, 6].includes(acc.class))
+    return res.status(400).json({ error: 'Contribution re\u00e7ue : compte concern\u00e9 de classe 3 (stocks) ou 6 (charges)' });
+  if (direction === 'donne' && acc.class !== 3)
+    return res.status(400).json({ error: 'Contribution donn\u00e9e : compte concern\u00e9 de classe 3 (stocks)' });
+  const id = db.prepare('INSERT INTO acc_in_kind (date, direction, partner, description, amount, account_code, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(date, direction, partner, description, amount, code, req.user.email).lastInsertRowid;
+  const lines = direction === 'recu'
+    ? [
+      { account_code: code, debit: amount, credit: 0, label: description || partner },
+      { account_code: '971', debit: 0, credit: amount, label: 'Contribution en nature re\u00e7ue' }
+    ]
+    : [
+      { account_code: '911', debit: amount, credit: 0, label: 'Contribution en nature donn\u00e9e' },
+      { account_code: code, debit: 0, credit: amount, label: description || partner }
+    ];
+  try {
+    createComptaEntry({
+      date, journal: 'OD',
+      label: `Contribution en nature ${direction === 'recu' ? 're\u00e7ue de ' : 'donn\u00e9e \u00e0 '}${partner}`,
+      lines, source: 'in_kind', sourceId: id, createdBy: req.user.email
+    });
+  } catch (err) {
+    db.prepare('DELETE FROM acc_in_kind WHERE id = ?').run(id);
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error('[compta] in_kind', err);
+    return res.status(500).json({ error: 'Saisie impossible' });
+  }
+  res.json(db.prepare('SELECT * FROM acc_in_kind WHERE id = ?').get(id));
+});
+
+app.delete('/api/admin/compta/in-kind/:id', ...COMPTA, (req, res) => {
+  const r = db.prepare('SELECT * FROM acc_in_kind WHERE id = ?').get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Contribution introuvable' });
+  runTx(() => {
+    deleteComptaSource('in_kind', r.id);
+    db.prepare('DELETE FROM acc_in_kind WHERE id = ?').run(r.id);
+  });
+  res.json({ ok: true });
+});
+
+
 // ---------- Boutique en ligne (commandes publiques) + suivi admin ----------
 const SHOP_METHODS = ['mobile', 'especes'];
 const nextShopRef = () => {
@@ -4843,7 +6897,7 @@ app.patch('/api/admin/pos/orders/:id', ...POS, (req, res) => {
           .run(p.id, 'entree', qty, nextStock, `Commande en ligne annulée ${o.reference}`, req.user.id);
       }
     }
-    db.prepare(`UPDATE shop_orders SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, o.id);
+    db.prepare(`UPDATE shop_orders SET status = ? WHERE id = ?`).run(status, o.id);
   });
   const up = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(o.id);
   res.json({ ...up, items: lines });
@@ -4864,7 +6918,14 @@ app.use((err, req, res, next) => {
 
 // Passenger (N0C / CloudLinux) : PORT=passenger — sinon écoute TCP classique
 if (process.env.PORT === 'passenger' || process.env.PASSENGER_APP_ENV) {
-  app.listen('passenger', () => console.log('🚀 API ADI ONG (Passenger)'));
+  app.listen('passenger', () => {
+    console.log('🚀 API ADI ONG (Passenger)');
+    try { bootstrapLoginLink(); } catch (e) { console.error('[accès]', e.message); }
+  });
 } else {
-  app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API ADI ONG sur http://0.0.0.0:${PORT}`));
+  const host = process.env.HOST || '0.0.0.0';
+  app.listen(PORT, host, () => {
+    console.log(`🚀 API ADI ONG sur http://${host}:${PORT}`);
+    try { bootstrapLoginLink(); } catch (e) { console.error('[accès]', e.message); }
+  });
 }

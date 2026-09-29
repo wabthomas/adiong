@@ -1,5 +1,4 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
 
 export default function Maintenance({ message, site }) {
   const name = site?.site_name || 'ADI ONG';
@@ -44,13 +43,6 @@ export default function Maintenance({ message, site }) {
           Nous reviendrons bientôt
         </h1>
         <p className="mt-4 text-base leading-relaxed text-white/70 sm:text-lg">{text}</p>
-
-        <Link
-          to="/admin/login"
-          className="mt-10 inline-flex text-sm font-semibold text-white/50 underline-offset-4 transition hover:text-white hover:underline"
-        >
-          Accès administration
-        </Link>
       </div>
     </div>
   );

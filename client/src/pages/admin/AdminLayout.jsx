@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, getToken, setToken, getSavedUser, setSavedUser } from '../../api.js';
+import { useSite } from '../../hooks/useSite.jsx';
 import SyncBadge from '../../sync/SyncBadge.jsx';
 
 const ALL_ROLES = ['super_admin', 'admin', 'editor', 'viewer', 'cashier'];
@@ -198,6 +199,9 @@ function loadSidebarCollapsed() {
 export default function AdminLayout() {
   const nav = useNavigate();
   const { pathname } = useLocation();
+  const { site } = useSite();
+  const brand = site?.site_name || 'ADI ONG';
+  const mark = site?.favicon || '/uploads/seed/favicon.png';
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState(false);
   const [authed] = useState(!!getToken());
@@ -261,7 +265,7 @@ export default function AdminLayout() {
   }, [pathname, visibleTree]);
 
   useEffect(() => {
-    if (!getToken()) nav('/admin/login', { replace: true });
+    if (!getToken()) nav('/', { replace: true });
   }, [nav]);
 
   useEffect(() => {
@@ -316,7 +320,7 @@ export default function AdminLayout() {
   const logout = () => {
     api.logout().catch(() => {});
     setToken(null);
-    nav('/admin/login', { replace: true });
+    nav('/', { replace: true });
   };
 
   const toggleGroup = (id) => {
@@ -368,15 +372,18 @@ export default function AdminLayout() {
 
     return (
     <div className="flex h-full flex-col bg-white">
-      <div className={`py-5 ${rail ? 'px-2' : 'px-5'}`}>
+      <div className={`flex items-center gap-3 py-5 ${rail ? 'justify-center px-2' : 'px-5'}`}>
         <img
-          src="/uploads/seed/logo.png"
-          alt="ADI ONG"
-          title="ADI ONG"
-          className={`rounded-xl ${rail ? 'mx-auto h-10 w-auto' : 'w-full'}`}
+          src={mark}
+          alt={brand}
+          title={brand}
+          className="h-10 w-10 shrink-0 rounded-xl object-contain"
         />
         {!rail && (
-          <p className="mt-2 text-center text-[11px] font-semibold uppercase tracking-wider text-ink-400">Espace admin</p>
+          <div className="min-w-0">
+            <p className="truncate font-display text-sm font-extrabold text-ink-900">{brand}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Espace admin</p>
+          </div>
         )}
       </div>
       <nav className={`flex-1 space-y-1 overflow-y-auto pb-4 ${rail ? 'px-1.5' : 'px-3'}`}>

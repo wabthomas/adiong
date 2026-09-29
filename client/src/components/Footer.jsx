@@ -151,7 +151,6 @@ export default function Footer() {
         <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-6 text-center sm:mt-14 sm:flex-row sm:gap-4 sm:pt-7 sm:text-left">
           <p className="text-xs text-white/50 sm:text-sm">{site.copyright || '© 2026 ADI ONG — Tous droits réservés.'}</p>
           <div className="flex flex-wrap items-center justify-center gap-4 text-xs sm:gap-5 sm:text-sm">
-            <Link to="/admin" className="text-white/40 transition-colors hover:text-accent-300">Espace admin</Link>
             <FooterCredit text={site.footer_credit} />
           </div>
         </div>
