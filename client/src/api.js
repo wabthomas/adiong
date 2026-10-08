@@ -247,6 +247,7 @@ export const api = {
     maintenance: () => req('/api/admin/maintenance', { method: 'POST', body: {}, auth: true }),
     maintenanceLast: () => req('/api/admin/maintenance', { auth: true })
   },
+  employeeSuggestions: (q) => req(`/api/admin/employees-for-account?q=${encodeURIComponent(q || '')}`, { auth: true }),
   media: {
     list: (q = '', type = '') => {
       const p = new URLSearchParams();

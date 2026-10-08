@@ -50,6 +50,36 @@ def call(method, path, body=None, token=None, raw=False):
             return e.code, {"raw": b[:200].decode("utf-8", errors="replace")}
 
 
+
+_SUPER_GATE = os.environ.get("E2E_GATE", "")
+_ADMIN_TOKEN = {"t": ""}
+
+def _admin_token():
+    if not _ADMIN_TOKEN["t"]:
+        s, ad = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _SUPER_GATE})
+        if s == 200:
+            _ADMIN_TOKEN["t"] = ad.get("token", "")
+    return _ADMIN_TOKEN["t"]
+
+def _gate_for(email):
+    import re as _re
+    if email == "admin@adiong.org" and _SUPER_GATE:
+        return _SUPER_GATE
+    tok = _admin_token()
+    if not tok:
+        return ""
+    s2, users = call("GET", "/api/admin/users", token=tok)
+    if s2 != 200 or not isinstance(users, list):
+        return ""
+    u = next((x for x in users if x.get("email") == email), None)
+    if not u:
+        return ""
+    s3, lk = call("POST", "/api/admin/users/%s/login-link" % u["id"], {"rotate": True}, token=tok)
+    if s3 != 200:
+        return ""
+    m = _re.search(r"/e/([A-Za-z0-9_-]+)$", str(lk.get("url", "")))
+    return m.group(1) if m else ""
+
 def sqlite_exec(stmts):
     con = sqlite3.connect(DB_FILE, timeout=10)
     cur = con.cursor()
@@ -66,7 +96,7 @@ def main():
     orig = None
 
     print("== Setup ==")
-    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!"})
+    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
     check("login super admin", s == 200 and b.get("token"), f"status={s}")
     T = b.get("token")
     me = b.get("user", {})
@@ -110,7 +140,7 @@ def main():
         check("carte membre inconnue → 404", s == 404, f"status={s}")
 
         print("== Authentification ==")
-        s, _ = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "mauvais-mot-de-passe"})
+        s, _ = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "mauvais-mot-de-passe", "gate": _gate_for("admin@adiong.org")})
         check("mot de passe incorrect → 401", s == 401, f"status={s}")
         s, m = call("GET", "/api/auth/me", token=T)
         check("profile connecté", s == 200 and m.get("email") == "admin@adiong.org", f"status={s}")
@@ -250,7 +280,7 @@ def main():
         s, _ = call("POST", "/api/admin/users", {"email": f"e2e-nonsup-{stamp}@exemple.org", "password": "E2E-backup-2026!", "full_name": "Non Sup", "role": "admin"}, token=T)
         nonsup_id = _.get("id") if isinstance(_, dict) else None
         if nonsup_id:
-            t2 = call("POST", "/api/auth/login", {"email": f"e2e-nonsup-{stamp}@exemple.org", "password": "E2E-backup-2026!"})[1].get("token")
+            t2 = call("POST", "/api/auth/login", {"email": f"e2e-nonsup-{stamp}@exemple.org", "password": "E2E-backup-2026!", "gate": _gate_for(f"e2e-nonsup-{stamp}@exemple.org")})[1].get("token")
             s, _ = call("GET", "/api/admin/backup", token=t2, raw=True)
             check("backup refusé au non-super (403)", s == 403, f"status={s}")
             call("DELETE", f"/api/admin/users/{nonsup_id}", token=T)
@@ -279,7 +309,7 @@ def main():
         s, bl = call("GET", "/api/admin/security/blocklist", token=T)
         check("IP listée comme bloquée", s == 200 and any(b.get("ip") == "203.0.113.77" for b in bl), f"n={len(bl) if isinstance(bl, list) else bl}")
         for i in range(5):
-            s, _ = call("POST", "/api/auth/login", {"email": "e2e-bad@example.org", "password": f"Mauvais-{stamp}-{i}"})
+            s, _ = call("POST", "/api/auth/login", {"email": "e2e-bad@example.org", "password": f"Mauvais-{stamp}-{i}", "gate": "e2e-neg-" + stamp + "0123456789abcdef0123456789abcdef0123456789"})
             if s == 429:
                 break
         time.sleep(1)

@@ -3,6 +3,7 @@
 # confirmation, intégration comptable SYCEBNL), invitations + inscription,
 # mot de passe, déconnexion, cartes membres, gestion des utilisateurs.
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -59,6 +60,36 @@ def call(method, path, body=None, token=None):
             return e.code, {"raw": raw[:200]}
 
 
+
+_SUPER_GATE = os.environ.get("E2E_GATE", "")
+_ADMIN_TOKEN = {"t": ""}
+
+def _admin_token():
+    if not _ADMIN_TOKEN["t"]:
+        s, ad = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _SUPER_GATE})
+        if s == 200:
+            _ADMIN_TOKEN["t"] = ad.get("token", "")
+    return _ADMIN_TOKEN["t"]
+
+def _gate_for(email):
+    import re as _re
+    if email == "admin@adiong.org" and _SUPER_GATE:
+        return _SUPER_GATE
+    tok = _admin_token()
+    if not tok:
+        return ""
+    s2, users = call("GET", "/api/admin/users", token=tok)
+    if s2 != 200 or not isinstance(users, list):
+        return ""
+    u = next((x for x in users if x.get("email") == email), None)
+    if not u:
+        return ""
+    s3, lk = call("POST", "/api/admin/users/%s/login-link" % u["id"], {"rotate": True}, token=tok)
+    if s3 != 200:
+        return ""
+    m = _re.search(r"/e/([A-Za-z0-9_-]+)$", str(lk.get("url", "")))
+    return m.group(1) if m else ""
+
 def call_multipart(method, path, fields, file_field, filename, content, mime, token=None):
     boundary = "----e2e" + str(int(time.time() * 1000))
     parts = []
@@ -95,7 +126,7 @@ def main():
     emailReg = f"e2e.reg.{stamp}@adiong.org"
 
     print("== Setup ==")
-    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!"})
+    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
     check("login super admin", s == 200 and b.get("token"), f"status={s}")
     T = b.get("token")
     s, uR = call("POST", "/api/admin/users", {"email": emailR, "password": PASS, "full_name": "Rédacteur E2E", "role": "editor"}, token=T)
@@ -104,9 +135,9 @@ def main():
     s, uA = call("POST", "/api/admin/users", {"email": emailA, "password": PASS, "full_name": "Adjoint E2E", "role": "admin"}, token=T)
     check("utilisateur A (admin)", s in (200, 201) and uA.get("id"), f"status={s} {uA}")
     idA = uA.get("id")
-    s, b = call("POST", "/api/auth/login", {"email": emailR, "password": PASS})
+    s, b = call("POST", "/api/auth/login", {"email": emailR, "password": PASS, "gate": _gate_for(emailR)})
     TR = b.get("token")
-    s, b = call("POST", "/api/auth/login", {"email": emailA, "password": PASS})
+    s, b = call("POST", "/api/auth/login", {"email": emailA, "password": PASS, "gate": _gate_for(emailA)})
     TA = b.get("token")
     check("logins R et A", bool(TR and TA))
 
@@ -272,9 +303,9 @@ def main():
             check("mot de passe actuel incorrect (401)", s == 401, f"status={s}")
             s, _ = call("POST", "/api/auth/password", {"current": PASS, "next": reg_new_pass}, token=TRg)
             check("mot de passe changé", s == 200, f"status={s}")
-            s, _ = call("POST", "/api/auth/login", {"email": emailReg, "password": PASS})
+            s, _ = call("POST", "/api/auth/login", {"email": emailReg, "password": PASS, "gate": _gate_for(emailReg)})
             check("ancien mot de passe rejeté (401)", s == 401, f"status={s}")
-            s, b = call("POST", "/api/auth/login", {"email": emailReg, "password": reg_new_pass})
+            s, b = call("POST", "/api/auth/login", {"email": emailReg, "password": reg_new_pass, "gate": _gate_for(emailReg)})
             check("nouveau mot de passe accepté", s == 200 and b.get("token"), f"status={s}")
             TRg2 = b.get("token")
             code = me.get("unique_code", "")

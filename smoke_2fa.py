@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import struct
 import time
 import urllib.request
@@ -38,6 +39,36 @@ def req(path, token=None, body=None, method=None):
         except Exception:
             return e.code, {}
 
+
+
+_SUPER_GATE = os.environ.get("E2E_GATE", "")
+_ADMIN_TOKEN = {"t": ""}
+
+def _admin_token():
+    if not _ADMIN_TOKEN["t"]:
+        s, ad = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _SUPER_GATE})
+        if s == 200:
+            _ADMIN_TOKEN["t"] = ad.get("token", "")
+    return _ADMIN_TOKEN["t"]
+
+def _gate_for(email):
+    import re as _re
+    if email == "admin@adiong.org" and _SUPER_GATE:
+        return _SUPER_GATE
+    tok = _admin_token()
+    if not tok:
+        return ""
+    s2, users = req("/api/admin/users", token=tok)
+    if s2 != 200 or not isinstance(users, list):
+        return ""
+    u = next((x for x in users if x.get("email") == email), None)
+    if not u:
+        return ""
+    s3, lk = req("/api/admin/users/%s/login-link" % u["id"], body={"rotate": True}, token=tok)
+    if s3 != 200:
+        return ""
+    m = _re.search(r"/e/([A-Za-z0-9_-]+)$", str(lk.get("url", "")))
+    return m.group(1) if m else ""
 
 # --- TOTP côté test (RFC 6238, SHA1, 6 chiffres) ---
 def b32decode(s):
@@ -75,12 +106,13 @@ if _dbfile:
     _c.close()
 
 print("== 2FA hors service : connexion directe ==")
-s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!"})
+s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
 if s == 429:
     print("  ! rate-limit de connexion actif — redémarrez l'API puis relancez le test")
     raise SystemExit(2)
 check("login simple OK", s == 200 and "token" in d and not d.get("requires_2fa"), d)
 admin = d.get("token", "")
+_ADMIN_TOKEN["t"] = admin
 
 s, d = req("/api/auth/totp/status", token=admin)
 check("statut initial : inactive, non exigée", s == 200 and d["totp_enrolled"] is False and d["two_fa_required"] is False, d)
@@ -101,7 +133,7 @@ s, d = req("/api/auth/totp/status", token=admin)
 check("statut : active, 10 restants", s == 200 and d["totp_enrolled"] is True and d["backup_remaining"] == 10, d)
 
 print("== Login à 2 étapes ==")
-s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!"})
+s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
 check("login : requires_2fa + jeton temporaire", s == 200 and d.get("requires_2fa") and d.get("pending_token") and d.get("totp_enrolled") is True, d)
 pending = d.get("pending_token", "")
 
@@ -121,7 +153,7 @@ s, d = req("/api/admin/articles", token=admin2)
 check("vrai jeton : accès admin OK", s == 200, d)
 
 print("== Code de secours ==")
-s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!"})
+s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
 pending = d.get("pending_token", "")
 s, d = req("/api/auth/2fa/verify", body={"pending_token": pending, "code": backup_codes[0]})
 check("verify code de secours : OK", s == 200 and "token" in d, d)
@@ -130,7 +162,7 @@ admin3 = d.get("token", "")
 s, d = req("/api/auth/totp/status", token=admin3)
 check("reste 9 codes de secours", s == 200 and d["backup_remaining"] == 9, d)
 
-s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!"})
+s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
 pending = d.get("pending_token", "")
 s, d = req("/api/auth/2fa/verify", body={"pending_token": pending, "code": backup_codes[0]})
 check("code de secours déjà utilisé : refusé", s == 400, d)
@@ -146,7 +178,7 @@ check("activation globale", s == 200 and d["two_fa_required"] is True, d)
 s, d = req("/api/admin/users", token=admin3, body={"email": "redactrice.e2e@adiong.org", "password": "E2ePassw0rd!", "full_name": "E2E Rédactrice", "role": "editor"})
 if s in (200, 201):
     check("compte test créé", True)
-    s, d = req("/api/auth/login", body={"email": "redactrice.e2e@adiong.org", "password": "E2ePassw0rd!"})
+    s, d = req("/api/auth/login", body={"email": "redactrice.e2e@adiong.org", "password": "E2ePassw0rd!", "gate": _gate_for("redactrice.e2e@adiong.org")})
     check("2ᵉ compte : 2FA exigée, non armé", s == 200 and d.get("requires_2fa") and d.get("totp_enrolled") is False and d.get("email_2fa_available") is False, d)
     pending2 = d.get("pending_token", "")
 
@@ -175,7 +207,7 @@ s, d = req("/api/auth/totp/backup-codes/regenerate", token=admin3, body={})
 check("régénération : 10 nouveaux codes", s == 200 and len(d.get("backup_codes", [])) == 10, d)
 new_codes = d.get("backup_codes", [])
 
-s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!"})
+s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
 pending = d.get("pending_token", "")
 s, d = req("/api/auth/2fa/verify", body={"pending_token": pending, "code": new_codes[3]})
 check("nouveau code de secours accepté", s == 200 and "token" in d, d)
@@ -189,7 +221,7 @@ check("statut : de nouveau inactive", s == 200 and d["totp_enrolled"] is False, 
 print("== Retirer l'obligation ==")
 s, d = req("/api/admin/security/two-fa", token=admin4, body={"required": False}, method="PUT")
 check("désactivation globale", s == 200 and d["two_fa_required"] is False, d)
-s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!"})
+s, d = req("/api/auth/login", body={"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
 check("login admin de nouveau direct", s == 200 and "token" in d and not d.get("requires_2fa"), d)
 
 print("== Journal de sécurité ==")

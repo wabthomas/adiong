@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Test E2E du module comptabilité SYCEBNL — API :4000 (DB fresh seedée).
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -36,6 +37,36 @@ def call(method, path, body=None, token=None, expect=None):
         except Exception:
             return e.code, {"raw": raw[:200]}
 
+
+
+_SUPER_GATE = os.environ.get("E2E_GATE", "")
+_ADMIN_TOKEN = {"t": ""}
+
+def _admin_token():
+    if not _ADMIN_TOKEN["t"]:
+        s, ad = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _SUPER_GATE})
+        if s == 200:
+            _ADMIN_TOKEN["t"] = ad.get("token", "")
+    return _ADMIN_TOKEN["t"]
+
+def _gate_for(email):
+    import re as _re
+    if email == "admin@adiong.org" and _SUPER_GATE:
+        return _SUPER_GATE
+    tok = _admin_token()
+    if not tok:
+        return ""
+    s2, users = call("GET", "/api/admin/users", token=tok)
+    if s2 != 200 or not isinstance(users, list):
+        return ""
+    u = next((x for x in users if x.get("email") == email), None)
+    if not u:
+        return ""
+    s3, lk = call("POST", "/api/admin/users/%s/login-link" % u["id"], {"rotate": True}, token=tok)
+    if s3 != 200:
+        return ""
+    m = _re.search(r"/e/([A-Za-z0-9_-]+)$", str(lk.get("url", "")))
+    return m.group(1) if m else ""
 
 def check(name, cond, extra=""):
     global OK, KO
@@ -80,7 +111,7 @@ def main():
     clean()
 
     print("== Auth ==")
-    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!"})
+    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
     check("login admin", s == 200 and b.get("token"), f"status={s}")
     T = b.get("token")
     s, st = call("PUT", "/api/admin/modules", {"compta_enabled": True}, token=T)

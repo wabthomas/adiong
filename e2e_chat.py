@@ -54,6 +54,36 @@ def call(method, path, body=None, token=None, headers=None):
             return e.code, {"raw": raw[:200]}
 
 
+
+_SUPER_GATE = os.environ.get("E2E_GATE", "")
+_ADMIN_TOKEN = {"t": ""}
+
+def _admin_token():
+    if not _ADMIN_TOKEN["t"]:
+        s, ad = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _SUPER_GATE})
+        if s == 200:
+            _ADMIN_TOKEN["t"] = ad.get("token", "")
+    return _ADMIN_TOKEN["t"]
+
+def _gate_for(email):
+    import re as _re
+    if email == "admin@adiong.org" and _SUPER_GATE:
+        return _SUPER_GATE
+    tok = _admin_token()
+    if not tok:
+        return ""
+    s2, users = call("GET", "/api/admin/users", token=tok)
+    if s2 != 200 or not isinstance(users, list):
+        return ""
+    u = next((x for x in users if x.get("email") == email), None)
+    if not u:
+        return ""
+    s3, lk = call("POST", "/api/admin/users/%s/login-link" % u["id"], {"rotate": True}, token=tok)
+    if s3 != 200:
+        return ""
+    m = _re.search(r"/e/([A-Za-z0-9_-]+)$", str(lk.get("url", "")))
+    return m.group(1) if m else ""
+
 def call_multipart(method, path, fields, file_field, filename, content, mime, token):
     boundary = "----e2e" + str(int(time.time() * 1000))
     parts = []
@@ -88,7 +118,7 @@ def main():
     PASS = "E2Echat123!"
 
     print("== Setup ==")
-    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!"})
+    s, b = call("POST", "/api/auth/login", {"email": "admin@adiong.org", "password": "AdiOng2026!", "gate": _gate_for("admin@adiong.org")})
     check("login super admin", s == 200 and b.get("token"), f"status={s}")
     T = b.get("token")
     s, mods = call("GET", "/api/admin/modules", token=T)
@@ -107,9 +137,9 @@ def main():
     check("création utilisateur 3 (editor)", s in (200, 201) and u3.get("id"), f"status={s} {u3}")
     id2, id3 = u2.get("id"), u3.get("id")
 
-    s, b = call("POST", "/api/auth/login", {"email": email2, "password": PASS})
+    s, b = call("POST", "/api/auth/login", {"email": email2, "password": PASS, "gate": _gate_for(email2)})
     T2 = b.get("token")
-    s, b = call("POST", "/api/auth/login", {"email": email3, "password": PASS})
+    s, b = call("POST", "/api/auth/login", {"email": email3, "password": PASS, "gate": _gate_for(email3)})
     T3 = b.get("token")
     check("logins des deux utilisateurs", bool(T2 and T3))
 

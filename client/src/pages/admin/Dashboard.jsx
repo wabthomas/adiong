@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, fmtMoney, getSavedUser } from '../../api.js';
 import { categoryLabel } from '../../components/Cards.jsx';
 import { PageTitle } from './AdminUI.jsx';
+import { usePerm } from '../../usePerm.js';
 import { useSite } from '../../hooks/useSite.jsx';
 
 const METHOD_LABELS = {
@@ -23,6 +24,7 @@ const STATUS_META = {
 const KPI = [
   {
     key: 'articles',
+    perm: 'stats.content',
     to: '/admin/articles',
     label: 'Articles',
     hintKey: 'articles_drafts',
@@ -32,6 +34,7 @@ const KPI = [
   },
   {
     key: 'campaigns',
+    perm: 'stats.content',
     to: '/admin/campagnes',
     label: 'Campagnes',
     hint: () => 'Collectes actives',
@@ -40,6 +43,7 @@ const KPI = [
   },
   {
     key: 'donations',
+    perm: 'stats.donations',
     to: '/admin/dons',
     label: 'Dons',
     hintKey: 'donations_pending',
@@ -49,6 +53,7 @@ const KPI = [
   },
   {
     key: 'messages',
+    perm: 'stats.inbox',
     to: '/admin/messages',
     label: 'Messages',
     hintKey: 'unread_messages',
@@ -225,6 +230,10 @@ function Card({ title, action, children, className = '' }) {
 export default function Dashboard() {
   const [d, setD] = useState(null);
   const { site } = useSite();
+  const permContent = usePerm('stats.content', ['super_admin', 'admin', 'editor']);
+  const permDonations = usePerm('stats.donations', ['super_admin', 'admin']);
+  const permInbox = usePerm('stats.inbox', ['super_admin', 'admin']);
+  const permCreate = usePerm('content.create', ['super_admin', 'admin', 'editor']);
   const user = getSavedUser();
   const firstName = (user?.full_name || '').trim().split(/\s+/)[0] || 'Admin';
   const today = new Date().toLocaleDateString('fr-FR', {
@@ -271,6 +280,22 @@ export default function Dashboard() {
   if (!d) return <PageTitle title="Tableau de bord" />;
 
   const unread = d.unread_messages || 0;
+  const kpiPerms = { articles: permContent, campaigns: permContent, donations: permDonations, messages: permInbox };
+  const visibleKpis = KPI.filter((c) => kpiPerms[c.key]);
+
+  if (!permContent && !permDonations && !permInbox) {
+    return (
+      <div className="mx-auto max-w-7xl space-y-4">
+        <PageTitle title="Tableau de bord" />
+        <div className="rounded-2xl bg-white p-8 text-center ring-1 ring-ink-100">
+          <p className="font-display text-base font-bold text-ink-900">Aucune statistique visible</p>
+          <p className="mt-2 text-sm text-ink-500">
+            Votre rôle ne permet pas de consulter les statistiques de contenu, des dons ou de contact.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-7xl space-y-4">
@@ -282,30 +307,37 @@ export default function Dashboard() {
           </h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link to="/admin/articles" className="btn-primary !px-4 !py-2 text-sm">
-            + Article
-          </Link>
-          <Link to="/admin/dons" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-ink-700 ring-1 ring-ink-100">
-            Dons
-            {(d.donations_pending || 0) > 0 && (
-              <span className="ml-1.5 rounded-full bg-accent-400 px-1.5 py-0.5 text-[10px] font-extrabold text-ink-950">
-                {d.donations_pending}
-              </span>
-            )}
-          </Link>
-          <Link to="/admin/messages" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-ink-700 ring-1 ring-ink-100">
-            Messages
-            {unread > 0 && (
-              <span className="ml-1.5 rounded-full bg-accent-400 px-1.5 py-0.5 text-[10px] font-extrabold text-ink-950">
-                {unread}
-              </span>
-            )}
-          </Link>
+          {permCreate && (
+            <Link to="/admin/articles" className="btn-primary !px-4 !py-2 text-sm">
+              + Article
+            </Link>
+          )}
+          {permDonations && (
+            <Link to="/admin/dons" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-ink-700 ring-1 ring-ink-100">
+              Dons
+              {(d.donations_pending || 0) > 0 && (
+                <span className="ml-1.5 rounded-full bg-accent-400 px-1.5 py-0.5 text-[10px] font-extrabold text-ink-950">
+                  {d.donations_pending}
+                </span>
+              )}
+            </Link>
+          )}
+          {permInbox && (
+            <Link to="/admin/messages" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-ink-700 ring-1 ring-ink-100">
+              Messages
+              {unread > 0 && (
+                <span className="ml-1.5 rounded-full bg-accent-400 px-1.5 py-0.5 text-[10px] font-extrabold text-ink-950">
+                  {unread}
+                </span>
+              )}
+            </Link>
+          )}
         </div>
       </div>
 
+      {visibleKpis.length > 0 && (
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {KPI.map((c) => (
+        {visibleKpis.map((c) => (
           <Link
             key={c.key}
             to={c.to}
@@ -326,7 +358,9 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
+      )}
 
+      {permDonations && (
       <div className="grid gap-3 lg:grid-cols-3">
         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-700 via-brand-800 to-ink-900 p-5 text-white lg:col-span-1">
           <div
@@ -362,12 +396,17 @@ export default function Dashboard() {
           )}
         </Card>
       </div>
+      )}
 
+      {(permInbox || permDonations) && (
       <div className="grid gap-3 lg:grid-cols-3">
+        {permInbox && (
         <Card title="Messages — 14 jours">
           <BarChart series={msgSeries} valueKey="n" color="#fc7a03" />
         </Card>
+        )}
 
+        {permDonations && (
         <Card title="Statut des dons">
           {statusSlices.length === 0 ? (
             <p className="py-10 text-center text-sm text-ink-400">Aucun don enregistré.</p>
@@ -388,7 +427,9 @@ export default function Dashboard() {
             </div>
           )}
         </Card>
+        )}
 
+        {permDonations && (
         <Card title="Modes de paiement" action={<span className="text-[11px] font-bold text-ink-400">Confirmés</span>}>
           {methods.length === 0 ? (
             <p className="py-10 text-center text-sm text-ink-400">Pas encore de don confirmé.</p>
@@ -411,8 +452,11 @@ export default function Dashboard() {
             </ul>
           )}
         </Card>
+        )}
       </div>
+      )}
 
+      {permContent && (
       <div className="grid gap-3 lg:grid-cols-2">
         <Card
           title="Progression des collectes"
@@ -471,8 +515,11 @@ export default function Dashboard() {
           )}
         </Card>
       </div>
+      )}
 
+      {(permDonations || permInbox) && (
       <div className="grid gap-3 lg:grid-cols-2">
+        {permDonations && (
         <Card
           title="Derniers dons"
           action={
@@ -499,7 +546,9 @@ export default function Dashboard() {
             )}
           </ul>
         </Card>
+        )}
 
+        {permInbox && (
         <Card
           title="Derniers messages"
           action={
@@ -529,7 +578,9 @@ export default function Dashboard() {
             )}
           </ul>
         </Card>
+        )}
       </div>
+      )}
     </div>
   );
 }

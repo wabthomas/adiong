@@ -376,6 +376,38 @@ export default function UsersAdmin() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [q, setQ] = useState('');
+  const [empQ, setEmpQ] = useState('');
+  const [empResults, setEmpResults] = useState(null);
+  const [empBusy, setEmpBusy] = useState(false);
+  const [empPicked, setEmpPicked] = useState('');
+
+  useEffect(() => {
+    if (!editing || editing.id || !empQ.trim()) {
+      setEmpResults(null);
+      return undefined;
+    }
+    setEmpBusy(true);
+    const t = setTimeout(() => {
+      api.employeeSuggestions(empQ.trim())
+        .then((rows) => { setEmpResults(rows); setEmpBusy(false); })
+        .catch(() => setEmpBusy(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [empQ, editing]);
+
+  const pickEmployee = (e) => {
+    setEditing((prev) => ({
+      ...prev,
+      full_name: e.full_name,
+      phone: e.phone || prev.phone || '',
+      job_title: e.position || prev.job_title || '',
+      photo: e.photo || prev.photo || '',
+      email: e.email || prev.email || ''
+    }));
+    setEmpPicked(e.full_name);
+    setEmpQ('');
+    setEmpResults(null);
+  };
 
   const [invites, setInvites] = useState([]);
   const [inviteModal, setInviteModal] = useState(null);
@@ -543,7 +575,7 @@ export default function UsersAdmin() {
             >
               + Invitation
             </button>
-            <button type="button" className="btn-primary !px-4 !py-2 text-sm" onClick={() => setEditing({ ...emptyUser })}>
+            <button type="button" className="btn-primary !px-4 !py-2 text-sm" onClick={() => { setEmpPicked(''); setEmpQ(''); setEmpResults(null); setEditing({ ...emptyUser }); }}>
               + Compte
             </button>
           </div>
@@ -620,6 +652,11 @@ export default function UsersAdmin() {
                             {u.full_name}
                             {meUser?.email === u.email && (
                               <span className="ml-1.5 rounded bg-accent-400/80 px-1.5 py-0.5 text-[9px] font-extrabold text-ink-950">vous</span>
+                            )}
+                            {u.employee_position && (
+                              <span className="ml-1.5 rounded bg-brand-100 px-1.5 py-0.5 text-[9px] font-extrabold text-brand-700" title={`Employé GRH — ${u.employee_position}`}>
+                                Employé
+                              </span>
                             )}
                           </p>
                           <p className="truncate text-[11px] text-ink-400">{u.job_title || u.email}</p>
@@ -878,6 +915,54 @@ export default function UsersAdmin() {
         {editing && (
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_200px]">
             <div>
+              {!editing.id && (
+                <div className="mb-5 rounded-2xl border border-dashed border-brand-200 bg-brand-50/40 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-brand-700">Depuis un employé</p>
+                  {empPicked ? (
+                    <p className="mt-2 text-sm font-semibold text-ink-700">
+                      ✓ Compte rattaché à {empPicked} par son email.
+                      <span className="ml-1 font-normal text-ink-400">Son dossier GRH sera retrouvé automatiquement à la connexion.</span>
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mt-1 text-xs text-ink-500">
+                        Pré-remplit le compte depuis un dossier GRH actif — évite de créer un doublon.
+                      </p>
+                      <input
+                        className="input mt-3"
+                        placeholder="Rechercher un employé (nom, fonction, email)…"
+                        value={empQ}
+                        onChange={(e) => setEmpQ(e.target.value)}
+                      />
+                      {empBusy && <p className="mt-2 text-xs text-ink-400">Recherche…</p>}
+                      {empResults && empResults.length === 0 && !empBusy && (
+                        <p className="mt-2 text-xs text-ink-400">Aucun employé actif trouvé.</p>
+                      )}
+                      {empResults && empResults.length > 0 && (
+                        <ul className="mt-2 max-h-44 divide-y divide-ink-50 overflow-y-auto rounded-xl border border-ink-100 bg-white">
+                          {empResults.map((e) => (
+                            <li key={e.id}>
+                              <button
+                                type="button"
+                                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-brand-50"
+                                onClick={() => pickEmployee(e)}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate text-sm font-semibold text-ink-800">{e.full_name}</span>
+                                  <span className="block truncate text-[11px] text-ink-400">
+                                    {e.position || 'Sans fonction'}{e.email ? ` · ${e.email}` : ' · sans email (à renseigner)'}
+                                  </span>
+                                </span>
+                                <span className="shrink-0 text-[11px] font-bold text-brand-600">Choisir</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               <UserProfileFields
                 value={editing}
                 onChange={setEditing}
