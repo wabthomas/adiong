@@ -377,15 +377,18 @@ const PERM_AREAS = [
   { id: 'content.create', group: 'content', label: 'Créer du contenu' },
   { id: 'content.edit', group: 'content', label: 'Modifier le contenu' },
   { id: 'content.delete', group: 'content', label: 'Supprimer le contenu' },
+  { id: 'stats.content', group: 'content', label: 'Voir les stats contenu' },
   { id: 'media.view', group: 'media', label: 'Consulter la médiathèque' },
   { id: 'media.upload', group: 'media', label: 'Ajouter des médias' },
   { id: 'media.delete', group: 'media', label: 'Supprimer des médias' },
   { id: 'donations.view', group: 'donations', label: 'Consulter les dons' },
   { id: 'donations.edit', group: 'donations', label: 'Traiter les dons' },
   { id: 'donations.delete', group: 'donations', label: 'Supprimer des dons' },
+  { id: 'stats.donations', group: 'donations', label: 'Voir les stats dons' },
   { id: 'inbox.view', group: 'inbox', label: 'Lire les messages' },
   { id: 'inbox.edit', group: 'inbox', label: 'Répondre aux messages' },
   { id: 'inbox.delete', group: 'inbox', label: 'Supprimer des messages' },
+  { id: 'stats.inbox', group: 'inbox', label: 'Voir les stats contact' },
   { id: 'chat.view', group: 'chat', label: 'Accéder à la messagerie' },
   { id: 'chat.send', group: 'chat', label: 'Envoyer des messages' },
   { id: 'chat.groups', group: 'chat', label: 'Créer et administrer les groupes' },
@@ -415,6 +418,9 @@ const permParent = (id) => {
   if (id === 'security.view' || id === 'roles.manage' || id.startsWith('users.')) return 'users';
   if (id === 'modules.manage' || id.startsWith('settings.')) return 'settings';
   if (id === 'dashboard.view') return 'dashboard';
+  if (id === 'stats.content') return 'content.view';
+  if (id === 'stats.donations') return 'donations.view';
+  if (id === 'stats.inbox') return 'inbox.view';
   if (id.startsWith('compta.')) return 'compta';
   const base = id.split('.')[0];
   return base === id ? null : base;
@@ -1212,9 +1218,14 @@ app.post('/api/donations/proof', proofLimiter, proofUpload.single('file'), (req,
 });
 
 app.get('/api/admin/dashboard', authRequired, requirePerm('dashboard.view'), (req, res) => {
+  const can = {
+    content: permEnabled(req.user.role, 'stats.content'),
+    donations: permEnabled(req.user.role, 'stats.donations'),
+    inbox: permEnabled(req.user.role, 'stats.inbox')
+  };
   const q = (s) => db.prepare(s).get();
-  const confirmed = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status = 'confirmee'`);
-  const pending = q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status IN ('nouvelle', 'preuve')`);
+  const confirmed = can.donations ? q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status = 'confirmee'`) : { n: 0, t: 0 };
+  const pending = can.donations ? q(`SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM donations WHERE status IN ('nouvelle', 'preuve')`) : { n: 0, t: 0 };
 
   const fillDays = (rows, days = 14) => {
     const map = new Map((rows || []).map((r) => [String(r.day).slice(0, 10), r]));
@@ -1253,13 +1264,13 @@ app.get('/api/admin/dashboard', authRequired, requirePerm('dashboard.view'), (re
     14
   );
 
-  const donationsByStatus = db.prepare(`
+  const donationsByStatus = can.donations ? db.prepare(`
     SELECT status, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
     FROM donations
     GROUP BY status
-  `).all();
+  `).all() : [];
 
-  const donationsByMethod = db.prepare(`
+  const donationsByMethod = can.donations ? db.prepare(`
     SELECT COALESCE(NULLIF(TRIM(method), ''), 'autre') AS method,
            COUNT(*) AS n,
            COALESCE(SUM(amount), 0) AS total
@@ -1267,45 +1278,52 @@ app.get('/api/admin/dashboard', authRequired, requirePerm('dashboard.view'), (re
     WHERE status = 'confirmee'
     GROUP BY COALESCE(NULLIF(TRIM(method), ''), 'autre')
     ORDER BY total DESC
-  `).all();
+  `).all() : [];
 
-  const campaignsProgress = db.prepare(`
+  const campaignsProgress = can.content ? db.prepare(`
     SELECT id, slug, title, goal_amount, collected_amount, deadline
     FROM campaigns
     WHERE published = 1
     ORDER BY CASE WHEN goal_amount > 0 THEN collected_amount * 1.0 / goal_amount ELSE 0 END DESC
     LIMIT 6
-  `).all();
+  `).all() : [];
 
-  const articlesByCategory = db.prepare(`
+  const articlesByCategory = can.content ? db.prepare(`
     SELECT category, COUNT(*) AS n
     FROM articles
     WHERE published = 1
     GROUP BY category
     ORDER BY n DESC
-  `).all();
+  `).all() : [];
 
   res.json({
-    articles: q('SELECT COUNT(*) AS n FROM articles WHERE published = 1').n,
-    articles_drafts: q('SELECT COUNT(*) AS n FROM articles WHERE published = 0').n,
-    causes: q('SELECT COUNT(*) AS n FROM causes WHERE published = 1').n,
-    campaigns: q('SELECT COUNT(*) AS n FROM campaigns WHERE published = 1').n,
-    donations: q('SELECT COUNT(*) AS n FROM donations').n,
-    donations_confirmed: confirmed.n,
-    donations_pending: pending.n,
-    donations_total: confirmed.t,
-    donations_pending_total: pending.t,
-    campaigns_collected: confirmed.t,
-    messages: q('SELECT COUNT(*) AS n FROM messages').n,
-    unread_messages: q('SELECT COUNT(*) AS n FROM messages WHERE read = 0').n,
-    donations_series: donationsSeries,
-    messages_series: messagesSeries,
-    donations_by_status: donationsByStatus,
-    donations_by_method: donationsByMethod,
-    campaigns_progress: campaignsProgress,
-    articles_by_category: articlesByCategory,
-    latest_messages: db.prepare('SELECT * FROM messages ORDER BY created_at DESC LIMIT 5').all(),
-    latest_donations: db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC LIMIT 5').all()
+    sections: can,
+    ...(can.content ? {
+      articles: q('SELECT COUNT(*) AS n FROM articles WHERE published = 1').n,
+      articles_drafts: q('SELECT COUNT(*) AS n FROM articles WHERE published = 0').n,
+      causes: q('SELECT COUNT(*) AS n FROM causes WHERE published = 1').n,
+      campaigns: q('SELECT COUNT(*) AS n FROM campaigns WHERE published = 1').n,
+      campaigns_progress: campaignsProgress,
+      articles_by_category: articlesByCategory
+    } : {}),
+    ...(can.donations ? {
+      donations: q('SELECT COUNT(*) AS n FROM donations').n,
+      donations_confirmed: confirmed.n,
+      donations_pending: pending.n,
+      donations_total: confirmed.t,
+      donations_pending_total: pending.t,
+      campaigns_collected: confirmed.t,
+      donations_series: donationsSeries,
+      donations_by_status: donationsByStatus,
+      donations_by_method: donationsByMethod,
+      latest_donations: db.prepare('SELECT d.*, c.title AS campaign_title FROM donations d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.created_at DESC LIMIT 5').all()
+    } : {}),
+    ...(can.inbox ? {
+      messages: q('SELECT COUNT(*) AS n FROM messages').n,
+      unread_messages: q('SELECT COUNT(*) AS n FROM messages WHERE read = 0').n,
+      messages_series: messagesSeries,
+      latest_messages: db.prepare('SELECT * FROM messages ORDER BY created_at DESC LIMIT 5').all()
+    } : {})
   });
 });
 
@@ -1878,9 +1896,28 @@ app.get('/api/admin/security/alerts', authRequired, (req, res) => {
 });
 
 app.get('/api/admin/users', authRequired, requirePerm('users.view'), (req, res) => {
+  const posByEmail = new Map(db.prepare("SELECT email, position FROM grh_employees WHERE email IS NOT NULL AND TRIM(email) <> ''").all()
+    .map((r) => [r.email.toLowerCase().trim(), r.position]));
   const users = db.prepare('SELECT * FROM users ORDER BY created_at').all()
     .filter((u) => !hiddenSuper(u.role, req.user.role));
-  res.json(users.map(publicUser));
+  res.json(users.map((u) => {
+    const pu = publicUser(u);
+    pu.employee_position = posByEmail.get(String(u.email || '').toLowerCase().trim()) || '';
+    return pu;
+  }));
+});
+
+// Suggestions GRH actives pour rattachement d'un compte (recherche dans la création)
+app.get('/api/admin/employees-for-account', authRequired, requirePerm('users.create'), (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const rows = db.prepare(`
+    SELECT id, full_name, position, email, phone, photo
+    FROM grh_employees
+    WHERE status = 'actif' AND (lower(full_name) LIKE ? OR lower(COALESCE(position, '')) LIKE ? OR lower(COALESCE(email, '')) LIKE ?)
+    ORDER BY full_name
+    LIMIT 15
+  `).all(`%${q}%`, `%${q}%`, `%${q}%`);
+  res.json(rows);
 });
 
 app.post('/api/admin/users', authRequired, requirePerm('users.create'), (req, res) => {
