@@ -946,6 +946,7 @@ function ensureComptaSeed() {
   const insA = db.prepare('INSERT OR IGNORE INTO acc_accounts (code, name, nature, class, is_system) VALUES (?, ?, ?, ?, 1)');
   for (const [code, name, nature, cls] of ACCOUNTS) insA.run(code, name, nature, cls);
 }
+ensureArticleCategories();
 ensureComptaSeed();
 
 export const getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
